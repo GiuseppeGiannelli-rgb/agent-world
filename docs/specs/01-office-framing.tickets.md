@@ -13,7 +13,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
 | Ticket | Titolo | Spec | Dimensione | Dipende da |
 |---|---|---|---|---|
 | T0 | Baseline "prima" e riproduzione dei bug dei cubi | S6, A9 | S | — |
-| T1 | `Fx`: un'animazione per oggetto (`track` e `stop`) | S4.1, S4.2, A5 | S | — |
+| T1 | `Fx`: un'animazione per oggetto (`track` e `stop`), ciclo che regge le aggiunte durante l'aggiornamento | S4.1, S4.2, S4.5, A5 | S | — |
 | T2 | Cubi: lo stato logico cambia subito, i voli si possono annullare | S5, A9 | M | T1 |
 | T3 | `framing.js` (matematica pura) ed `ENVELOPE` | S1.4, S2.1–S2.4, A1–A4 | M | — |
 | T4 | Camera: un'unica animazione per `panTo`, `focus` e `focusRoom` | S4.3 | S | T1 |
@@ -65,13 +65,16 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    - alla fine naturale di `item`, rimuove la voce dalla mappa solo se punta ancora a lui.
 3. `stop(obj)`: segna l'animazione come annullata. `update()` la scarta senza chiamarla più, quindi `done` non parte mai. Chiama `dispose` se esiste.
 4. `fly()` restituisce `this.track(obj, …)`. Nessun cambio di firma.
-5. `scripts/world-test.js` con la suite `fx`:
+5. *(S4.5, dopo T0)* `update()` non sostituisce più l'array mentre lo scorre: gli effetti aggiunti durante il ciclo partono dal frame successivo, e quelli annullati vengono scartati senza `done`.
+6. `scripts/world-test.js` con la suite `fx`:
    - un volo completato chiama `done` una volta e lascia l'oggetto a destinazione;
    - un secondo `fly` sullo stesso oggetto annulla il primo, senza `done` del primo;
    - `stop()` annulla senza `done`;
    - oggetti diversi non si annullano a vicenda;
-   - lo stop di un'animazione già finita non ha effetti.
-6. `npm test` diventa `node scripts/world-test.js && …` (prima gli altri script, perché è il più veloce).
+   - lo stop di un'animazione già finita non ha effetti;
+   - un effetto aggiunto dentro l'`update` o il `done` di un altro viene aggiornato e poi eliminato (`dispose` chiamato, mesh tolte dalla scena);
+   - un `fly` avviato dentro il `done` di un altro `fly` sullo stesso oggetto parte davvero e non viene annullato dalla pulizia del primo.
+7. `npm test` diventa `node scripts/world-test.js && …` (prima gli altri script, perché è il più veloce).
 
 **Fatto quando:** A5 è verde e `npm test` parte con la nuova suite.
 

@@ -127,6 +127,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 - **S4.2** `fly()` passa da `track`.
 - **S4.3** Le animazioni della camera (fit, ⌂, `panTo`, `focus`, `focusRoom`) diventano un'unica animazione di camera registrata su `this.camera`: target, offset, zoom, lente e scala insieme. `focus` oggi lancia due animazioni separate e va unificato.
 - **S4.4** Un'interazione dell'utente (S3.2) chiama `fx.stop(this.camera)`, così l'animazione non combatte con i controlli.
+- **S4.5** *(aggiunta dopo T0, difetto N1 del report)* `Fx.update()` deve reggere gli effetti creati durante l'aggiornamento di un altro effetto: vanno aggiornati dal frame successivo, non persi. Oggi si perdono gli anelli d'arrivo dei fasci e le scintille delle consegne, le cui mesh restano congelate nella scena (144 anelli e 170 particelle dopo un run). Lo stesso vale per `track` e `stop` chiamati dentro un `done`.
 
 ### S5 — Cubi
 
@@ -166,7 +167,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 | A2 | Il target appare al centro dell'area libera (±1 px) a zoom 0,5, 1, 2,2 e 4. | `world-test.js` |
 | A3 | Pan 1:1: `(right - left) / zoom / w === unitsPerPx / zoom`. | `world-test.js`, più il controllo nel browser: un punto afferrato resta sotto il cursore (±2 px) con la lente attiva |
 | A4 | Se l'area libera scende sotto 240×160 px, gli ingombri vengono ignorati. | `world-test.js` |
-| A5 | `fly` su un oggetto già in volo annulla il volo precedente senza chiamarne il `done`. `stop()` fa lo stesso. Un volo completato chiama `done` una sola volta. | `world-test.js` |
+| A5 | `fly` su un oggetto già in volo annulla il volo precedente senza chiamarne il `done`. `stop()` fa lo stesso. Un volo completato chiama `done` una sola volta. Un effetto creato dentro l'aggiornamento di un altro effetto viene aggiornato ed eliminato (S4.5). | `world-test.js` |
 | A6 | In modalità automatica, aprire o chiudere un pannello riadatta la vista con un'animazione di circa 0,35 s, senza frame deformati. | browser |
 | A7 | Dopo un trascinamento, la rotella, un clic su un agente, sulla minimappa o su una stanza, aprire o chiudere un pannello non muove la vista. ⌂ ripristina la modalità automatica con un'animazione. | browser |
 | A8 | Il focus su un agente lo porta al centro dell'area libera, con la stessa grandezza a schermo di oggi (±5%). | browser, con la misura di `unitsPerPx / zoom` |
