@@ -10,6 +10,19 @@ import { NavGrid } from './nav.js';
 
 export const WORLD = { minX: -25, maxX: 25, minZ: -18, maxZ: 18 };
 export const FLOOR = { minX: -24, maxX: 24, minZ: -17, maxZ: 17 };
+// The diorama's outer box as the camera sees it: the base and plinth under the floor
+// (0.65 past its edge, down to y -1.66) and the top of the back walls with their cap
+// (y 5.14). The camera framing fits these points (framing.js).
+export const ENVELOPE = (() => {
+  const bx = FLOOR.maxX + 0.65;
+  const bz = FLOOR.maxZ + 0.65;
+  const wx = FLOOR.maxX + 0.45;
+  const wz = FLOOR.maxZ + 0.45;
+  const points = [];
+  for (const x of [-bx, bx]) for (const z of [-bz, bz]) for (const y of [-1.66, 0]) points.push(new THREE.Vector3(x, y, z));
+  points.push(new THREE.Vector3(-wx, 5.14, -wz), new THREE.Vector3(wx, 5.14, -wz), new THREE.Vector3(-wx, 5.14, wz));
+  return Object.freeze(points);
+})();
 export const CEO_DESK = { x: 0, z: -10.2 };
 export const BRAIN = { x: 0, z: -11.6, y: 3.5, r: 3.3 };
 export const BOARD = { x: 0, z: -16.9, width: 18, columns: ['DA FARE', 'IN CORSO', 'REVISIONE', 'FATTO'] };

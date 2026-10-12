@@ -1,8 +1,10 @@
-// Checks the parts of the 3D world that run without a browser:
-// the effect loop (one tracked motion per object, nested effects).
+// Checks the parts of the 3D world that run without a browser: the effect loop
+// (one tracked motion per object, nested effects) and the camera framing math.
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import { applyFrustum, fitOffice, GAP, MARGIN, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET } from '../public/js/world/framing.js';
 import { Fx } from '../public/js/world/fx.js';
+import { ENVELOPE } from '../public/js/world/office.js';
 
 const v = (x, y, z) => new THREE.Vector3(x, y, z);
 const step = (fx, seconds, dt = 1 / 60) => {
@@ -127,5 +129,92 @@ const near = (obj, p) => obj.position.distanceTo(p) < 1e-6;
   assert.equal(fx.tracks.has(obj), false);
   console.log('ok  chained flies on one object');
 }
+
+// ---------- framing ----------
+
+// The UI as app.css lays it out: topbar down to 58 px, roster 62 px tall at the
+// bottom, panels 330/400 px wide (300/360 at <=1250 px) with a 12 px margin, and
+// panels ignored as full-screen overlays at <=900 px.
+function cssInsets(width, { left, right }) {
+  if (width <= 900) return { top: 54, right: 0, bottom: 58, left: 0 };
+  const small = width <= 1250;
+  return { top: 58, right: right ? 12 + (small ? 360 : 400) : 0, bottom: 62, left: left ? 12 + (small ? 300 : 330) : 0 };
+}
+function cameraFor(fit, width, height, zoom = 1) {
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+  camera.position.copy(fit.position);
+  camera.lookAt(fit.target);
+  camera.zoom = zoom;
+  applyFrustum(camera, width, height, fit.unitsPerPx, fit.lensX, fit.lensY);
+  camera.updateMatrixWorld();
+  return camera;
+}
+const toPx = (camera, p, width, height) => {
+  const n = p.clone().project(camera);
+  return [((n.x + 1) / 2) * width, ((1 - n.y) / 2) * height];
+};
+const SIZES = [[1920, 1080], [2560, 1440], [1440, 900], [1280, 800], [800, 600]];
+const PANELS = [{ left: true, right: true }, { left: true, right: false }, { left: false, right: true }, { left: false, right: false }];
+const cases = SIZES.flatMap(([width, height]) => PANELS.map((panels) => ({ width, height, panels, insets: cssInsets(width, panels) })));
+
+// 7. A1: the whole office lands inside the free area, centred, filling the tighter axis
+{
+  for (const { width, height, panels, insets } of cases) {
+    const name = `${width}x${height} ${panels.left ? 'L' : '-'}${panels.right ? 'R' : '-'}`;
+    const fit = fitOffice({ width, height, insets, envelope: ENVELOPE });
+    const s = fit.safe;
+    assert.equal(s.fallback, false, name);
+    assert.ok(Math.abs(fit.target.y) < 1e-9, `${name}: target on the floor`);
+    assert.ok(fit.position.clone().sub(fit.target).distanceTo(VIEW_OFFSET) < 1e-9, `${name}: same camera angle`);
+    const px = ENVELOPE.map((p) => toPx(cameraFor(fit, width, height), p, width, height));
+    const xs = px.map(([x]) => x);
+    const ys = px.map(([, y]) => y);
+    const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    assert.ok(minX >= s.x0 - 1 && maxX <= s.x1 + 1 && minY >= s.y0 - 1 && maxY <= s.y1 + 1, `${name}: inside the free area`);
+    assert.ok(Math.abs((minX + maxX) / 2 - s.cx) <= 2 && Math.abs((minY + maxY) / 2 - s.cy) <= 2, `${name}: centred`);
+    const fill = Math.max((maxX - minX) / s.w, (maxY - minY) / s.h);
+    assert.ok(fill >= 0.95 && fill <= 1, `${name}: fills ${(fill * 100).toFixed(1)}% of the tighter axis`);
+    assert.ok(Math.abs(fill - 1 / (1 + MARGIN)) < 1e-6, `${name}: margin`);
+  }
+  console.log(`ok  office framed in the free area (${cases.length} layouts)`);
+}
+
+// 8. A2 + A3: the target stays at the centre of the free area at any zoom,
+//    and one px of drag moves the picture by exactly one px (pan stays 1:1)
+{
+  for (const { width, height, insets } of cases) {
+    const fit = fitOffice({ width, height, insets, envelope: ENVELOPE });
+    for (const zoom of [0.5, 1, 2.2, 4]) {
+      const camera = cameraFor(fit, width, height, zoom);
+      const [x, y] = toPx(camera, fit.target, width, height);
+      assert.ok(Math.abs(x - fit.safe.cx) <= 1 && Math.abs(y - fit.safe.cy) <= 1, `${width}x${height} zoom ${zoom}: target at the centre`);
+      // what OrbitControls uses for an orthographic pan, against the real px size
+      const panUnitsPerPx = (camera.right - camera.left) / camera.zoom / width;
+      assert.ok(Math.abs(panUnitsPerPx - fit.unitsPerPx / zoom) < 1e-12);
+      const screenRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+      const [x2] = toPx(camera, fit.target.clone().addScaledVector(screenRight, panUnitsPerPx * 100), width, height);
+      assert.ok(Math.abs(x2 - x - 100) < 1e-6, `${width}x${height} zoom ${zoom}: 100 px of pan moves the picture 100 px`);
+    }
+  }
+  console.log('ok  target fixed under zoom, pan 1:1 with the lens shift');
+}
+
+// 9. A4: a window too small for its panels frames the whole canvas
+{
+  const insets = cssInsets(1920, { left: true, right: true });
+  const s = safeRect(640, 480, insets);
+  assert.equal(s.fallback, true);
+  assert.deepEqual([s.x0, s.y0, s.x1, s.y1], [GAP, GAP, 640 - GAP, 480 - GAP]);
+  const fit = fitOffice({ width: 640, height: 480, insets, envelope: ENVELOPE });
+  const px = ENVELOPE.map((p) => toPx(cameraFor(fit, 640, 480), p, 640, 480));
+  assert.ok(px.every(([x, y]) => x >= 0 && x <= 640 && y >= 0 && y <= 480));
+  assert.equal(safeRect(1920, 1080, insets).fallback, false);
+  // degenerate sizes never produce NaN
+  assert.ok(Number.isFinite(fitOffice({ width: 0, height: 0, insets, envelope: ENVELOPE }).unitsPerPx));
+  console.log('ok  small windows ignore the panels');
+}
+
+// 10. the reference scale is the old framing at 1920x1080 (62 units across)
+assert.ok(Math.abs(REF_UNITS_PER_PX - Math.max(31, 62 / (1920 / 1080)) / 1080) < 1e-12);
 
 console.log('ALL OK');

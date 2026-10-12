@@ -82,9 +82,11 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 
 ### S2 — Inquadratura (fit)
 
-- **S2.1** L'ingombro dell'ufficio (`ENVELOPE`) è formato da 7 punti:
-  - i 4 angoli esterni del pavimento con lo spessore delle pareti: `(±24.4, 0, ±17.4)`;
-  - le 3 cime delle pareti, a `y = 5.14` (cima del cordolo): `(-24.4, 5.14, -17.4)`, `(24.4, 5.14, -17.4)`, `(-24.4, 5.14, 17.4)`.
+- **S2.1** L'ingombro dell'ufficio (`ENVELOPE`) è formato da 11 punti *(corretto in T3: la prima versione aveva 7 punti e ignorava la base del diorama)*:
+  - gli 8 angoli della base e del plinto sotto il pavimento: `(±24.65, -1.66…0, ±17.65)`. La base sporge di 0,65 oltre il pavimento e scende fino a `y = -1.66`; la sua faccia anteriore è visibile dalla camera;
+  - le 3 cime delle pareti, a `y = 5.14` (cima del cordolo): `(-24.45, 5.14, -17.45)`, `(24.45, 5.14, -17.45)`, `(-24.45, 5.14, 17.45)`.
+
+  Con i 7 punti originali e i pannelli chiusi, a 1920×1080 l'altezza è l'asse più stretto: il fondo della base sarebbe finito 6–20 px sotto il bordo dell'area libera, cioè sotto il roster.
 - **S2.2** Il fit sceglie:
   - il **target** sul pavimento (`y = 0`) in modo che `ENVELOPE` sia centrato nello spazio della vista;
   - la **scala** `unitsPerPx`, cioè le unità di mondo per pixel a zoom 1, in modo che `ENVELOPE` occupi l'area libera con un margine del 4% sull'asse più stretto.

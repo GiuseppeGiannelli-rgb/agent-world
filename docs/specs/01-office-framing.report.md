@@ -110,3 +110,33 @@ Gli screenshot leggibili richiedono un pannello browser più largo. Le verifiche
 - **un cubo lasciato su una scrivania a fine run** (`w1.3` dal lead `rino`): `onDespawn` rimuove il sub-agente con un `setTimeout` di 800 ms (tempo reale) prima che la sua coda arrivi alla presa del cubo.
 
 A velocità reale non succede (0 affondamenti, 0 cubi rimasti). Lo propongo come ticket separato dopo questa spec, per esempio con il recupero del ritardo al ritorno visibile e la rimozione del sub-agente legata alla fine della sua coda.
+
+### T3 — `framing.js` ed `ENVELOPE`
+
+**Correzione di S2.1.** Sotto il pavimento c'è la base del diorama: un blocco alto 1,6 più un plinto, fino a `y = -1.66`, che sporge di 0,65 oltre il bordo. La sua faccia anteriore è visibile dalla camera, e i 7 punti della prima versione della spec la ignoravano. Con i pannelli chiusi, quando l'altezza è l'asse più stretto, il fondo della base sarebbe finito sotto il roster:
+
+| Viewport | Pannelli | Fondo della base con l'ingombro a 7 punti | Con `ENVELOPE` (11 punti) |
+|---|---|---|---|
+| 1920×1080 | -R | 6 px sotto l'area libera | dentro |
+| 1920×1080 | -- | 20 px sotto l'area libera | dentro |
+| 1440×900 | -- | 16 px sotto l'area libera | dentro |
+| 1920×1080 | LR | dentro (è la larghezza a vincolare) | dentro |
+
+**Larghezza dell'ufficio con la nuova inquadratura** (calcolata, da verificare a schermo in T5):
+
+| Viewport | LR | -R | -- |
+|---|---|---|---|
+| 1920×1080 | 1098 px (scala 0,61 di oggi) | 1422 px (0,79) | 1422 px (0,79) |
+| 1440×900 | 637 px (0,35) | 965 px (0,54) | 1148 px (0,64) |
+
+**Test** (`world-test.js`, suite `framing`):
+- A1 su 20 layout (5 risoluzioni × 4 combinazioni di pannelli): tutto l'ingombro dentro l'area libera, centrato (±2 px), il 96,2% dell'asse più stretto occupato (margine 4%), target sul pavimento, angolo di camera invariato;
+- A2 a zoom 0,5, 1, 2,2 e 4: il target resta al centro dell'area libera (±1 px);
+- A3: lo spostamento usato da `OrbitControls` per il pan coincide con la dimensione reale di un pixel, e 100 px di trascinamento spostano l'immagine di 100 px (±1e-6), con la lente attiva;
+- A4: sotto la soglia minima gli ingombri vengono ignorati, e le dimensioni nulle non producono NaN.
+
+**Prova che i test colgono gli errori**, con due errori introdotti apposta in `framing.js`:
+- con il segno della lente invertito fallisce "inside the free area";
+- senza riportare il target sul pavimento fallisce "target on the floor".
+
+Il modulo non è ancora collegato alla `World`: nessun cambiamento visibile fino a T5.

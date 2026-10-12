@@ -105,7 +105,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
 **File:** `public/js/world/framing.js` (nuovo), `public/js/world/office.js`, `scripts/world-test.js`.
 
 **Attività**
-1. `office.js`: `export const ENVELOPE`, i 7 punti di S2.1, con un commento su pareti e cordolo.
+1. `office.js`: `export const ENVELOPE`, gli 11 punti di S2.1 (base del diorama e cime delle pareti), con un commento sull'origine dei numeri.
 2. `framing.js` importa solo `three` ed esporta:
 
    | Nome | Cosa fa |
@@ -114,7 +114,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    | `REF_UNITS_PER_PX = 0.0323` | scala di riferimento (S2.5) |
    | `VIEW_DIR`, `VIEW_DIST` | direzione e distanza della camera (S2.4) |
    | `safeRect(w, h, insets)` | restituisce `{ x0, y0, x1, y1, cx, cy }`, con il fallback di S1.4 |
-   | `fitOffice({ width, height, insets, envelope = ENVELOPE })` | restituisce `{ target, position, unitsPerPx, lensX, lensY }` |
+   | `fitOffice({ width, height, insets, envelope })` | restituisce `{ target, position, unitsPerPx, lensX, lensY, safe }`. L'ingombro lo passa la `World`, così `framing.js` non dipende da `office.js` |
    | `applyFrustum(camera, w, h, unitsPerPx, lensX, lensY)` | imposta la proiezione (S2.3) |
 
 3. Suite `framing` in `world-test.js`:
