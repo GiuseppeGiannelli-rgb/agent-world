@@ -30,6 +30,11 @@ export class Fx {
     if (item) this.retire(item);
   }
 
+  // The motion currently moving obj, if any.
+  active(obj) {
+    return this.tracks.get(obj);
+  }
+
   retire(item) {
     if (item[DEAD]) return;
     item[DEAD] = true;

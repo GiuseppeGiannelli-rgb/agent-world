@@ -177,6 +177,7 @@ export class World {
   }
 
   resetView() {
+    this.fx.stop(this.camera); // a focus still running would otherwise undo the reset
     this.controls.target.set(0, 0, -0.5);
     this.camera.position.set(15, 40, 44.5);
     this.camera.zoom = 1;
@@ -346,54 +347,62 @@ export class World {
     return { x: target.seat.x, z: target.seat.z - 1.1 };
   }
 
-  panTo(x, z) {
-    const from = this.controls.target.clone();
-    const to = new THREE.Vector3(x, 0, z);
-    const camFrom = this.camera.position.clone();
+  // The one camera animation: target, orbit offset and zoom eased together. A newer
+  // move takes over from wherever the camera is, and what it leaves unset keeps
+  // heading where the replaced move was going (a pan during a focus still zooms in).
+  moveCamera({ target, offset, zoom, duration = 0.7 } = {}) {
+    const goal = this.fx.active(this.camera)?.goal;
+    const fromTarget = this.controls.target.clone();
+    const fromOffset = this.camera.position.clone().sub(fromTarget);
+    const fromZoom = this.camera.zoom;
+    const to = {
+      target: (target ?? goal?.target ?? fromTarget).clone(),
+      offset: (offset ?? goal?.offset ?? fromOffset).clone(),
+      zoom: zoom ?? goal?.zoom ?? fromZoom,
+    };
+    // the orbit turns the short way round; an unchanged offset is kept exactly
+    const turning = !to.offset.equals(fromOffset);
+    const a = new THREE.Spherical().setFromVector3(fromOffset);
+    const b = new THREE.Spherical().setFromVector3(to.offset);
+    const dTheta = ((b.theta - a.theta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+    const step = (e) => {
+      this.controls.target.lerpVectors(fromTarget, to.target, e);
+      if (turning) this.camera.position.setFromSphericalCoords(a.radius + (b.radius - a.radius) * e, a.phi + (b.phi - a.phi) * e, a.theta + dTheta * e);
+      else this.camera.position.copy(fromOffset);
+      this.camera.position.add(this.controls.target);
+      this.camera.zoom = fromZoom + (to.zoom - fromZoom) * e;
+      this.camera.updateProjectionMatrix();
+    };
+    if (!(duration > 0)) {
+      this.fx.stop(this.camera);
+      step(1);
+      return;
+    }
     let t = 0;
-    this.fx.add({
+    this.fx.track(this.camera, {
+      goal: to,
       update: (dt) => {
-        t = Math.min(1, t + dt / 0.7);
-        const e = 1 - (1 - t) ** 3;
-        const target = from.clone().lerp(to, e);
-        this.camera.position.copy(camFrom).add(target.clone().sub(from));
-        this.controls.target.copy(target);
+        t = Math.min(1, t + dt / duration);
+        step(1 - (1 - t) ** 3);
         return t < 1;
       },
     });
+  }
+
+  panTo(x, z) {
+    this.moveCamera({ target: new THREE.Vector3(x, 0, z) });
   }
 
   focus(agentId) {
     const a = this.actors.get(agentId);
     if (!a) return;
-    this.panTo(a.position.x, a.position.z);
-    const zoomFrom = this.camera.zoom;
-    const zoomTo = Math.max(zoomFrom, 2.2);
-    let t = 0;
-    this.fx.add({
-      update: (dt) => {
-        t = Math.min(1, t + dt / 0.7);
-        this.camera.zoom = zoomFrom + (zoomTo - zoomFrom) * (1 - (1 - t) ** 3);
-        this.camera.updateProjectionMatrix();
-        return t < 1;
-      },
-    });
+    this.moveCamera({ target: new THREE.Vector3(a.position.x, 0, a.position.z), zoom: Math.max(this.camera.zoom, 2.2) });
   }
 
   focusRoom(team) {
     const r = this.layout.rooms.find((x) => x.team === team);
     if (!r) return;
-    this.panTo(r.x, r.z);
-    const zoomFrom = this.camera.zoom;
-    let t = 0;
-    this.fx.add({
-      update: (dt) => {
-        t = Math.min(1, t + dt / 0.7);
-        this.camera.zoom = zoomFrom + (Math.max(zoomFrom, 2) - zoomFrom) * (1 - (1 - t) ** 3);
-        this.camera.updateProjectionMatrix();
-        return t < 1;
-      },
-    });
+    this.moveCamera({ target: new THREE.Vector3(r.x, 0, r.z), zoom: Math.max(this.camera.zoom, 2) });
   }
 
   // ---------- cards & cubes ----------

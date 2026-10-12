@@ -140,3 +140,30 @@ A velocità reale non succede (0 affondamenti, 0 cubi rimasti). Lo propongo come
 - senza riportare il target sul pavimento fallisce "target on the floor".
 
 Il modulo non è ancora collegato alla `World`: nessun cambiamento visibile fino a T5.
+
+### T4 — Un'unica animazione della camera
+
+**Cosa cambia:**
+- `moveCamera({ target, offset, zoom, duration })` è registrata con `fx.track(this.camera)` e anima insieme target, orbita e zoom (0,7 s, rallentamento cubico come prima). `panTo`, `focus` e `focusRoom` la usano: il focus ora è un'unica animazione invece di due.
+- **Scelta che conserva il comportamento di oggi:** un movimento nuovo parte da dove si trova la camera, e i valori che non imposta continuano verso la meta del movimento che sostituisce. Oggi un clic sulla minimappa durante un focus sposta la vista ma lascia finire lo zoom a 2,2; con uno slot unico "ingenuo" lo zoom si sarebbe fermato a metà.
+- **L'orbita gira per la via breve**, in coordinate sferiche: il raggio resta costante e un offset invariato viene copiato esatto, senza errori di arrotondamento. Nessun chiamante la usa ancora; servirà a ⌂ in T5.
+- `resetView()` ferma l'animazione in corso. **Bug preesistente corretto:** ⌂ premuto durante un focus veniva annullato dal focus, che continuava e riportava la camera sull'agente.
+- `Fx.active(obj)` restituisce l'animazione attiva di un oggetto, così la `World` legge la meta corrente senza toccare le strutture interne di `Fx`.
+
+**Equivalenza** con lo snippet `__camTest()`, che fa avanzare la `World` a 60 fps fissi e confronta vecchio e nuovo `world.js` nelle stesse condizioni:
+
+| Scenario | Vecchio | Nuovo |
+|---|---|---|
+| Focus su un agente | ✔ zoom 2,2, salto massimo per frame 0,701 | ✔ identico |
+| Focus su una stanza | ✔ zoom 2 | ✔ identico |
+| Pan dalla minimappa | ✔ zoom e orbita invariati | ✔ identico |
+| Focus su A, poi su B a metà | ✔ salto massimo 0,701, zoom mai in calo | ✔ identico |
+| Pan dalla minimappa durante un focus | ✔ finisce a zoom 2,2, salto massimo 1,331 | ✔ identico |
+| ⌂ durante un focus | ✖ finisce sulla CEO a zoom 2,2 | ✔ vista iniziale, zoom 1 |
+
+**Rotazione dell'orbita** (nuova, misurata dal secondo frame in poi):
+- da 170° a -170° la camera percorre +18,6°, cioè +20° per la via breve, di cui il primo frame non registrato copre circa il 7%;
+- il raggio resta costante a 62,05;
+- l'offset finale è esatto (errore circa 1e-14).
+
+`world-test.js` controlla anche `Fx.active`. `npm test` è verde.
