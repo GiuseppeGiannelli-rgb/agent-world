@@ -147,11 +147,11 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
 **File:** `public/js/world/world.js`, `public/js/main.js`.
 
 **Attività**
-1. Nuovo stato della `World`: `insets`, `unitsPerPx`, `lens {x, y}`, `viewDirty`, `lastSize`, `framedOnce`.
+1. Nuovo stato della `World`: `insets`, `view { unitsPerPx, lensX, lensY }`, `width`/`height`, `framedOnce`, `resizedAt` (numero del frame dell'ultimo resize).
 2. `moveCamera` accetta anche `lens` e `unitsPerPx`. Durante l'animazione la scala resta quella vecchia e lo zoom va verso `vecchia / nuova`. Alla fine si normalizza a `unitsPerPx = nuova` e `zoom = 1`, senza differenze visibili.
-3. `resize()`: `setSize`, `applyFrustum` immediato con i parametri correnti, `viewDirty = true` (S3.6).
-4. `setInsets(i)`: se gli ingombri non cambiano non fa nulla; altrimenti li salva e imposta `viewDirty = true`.
-5. `frame()`: se `viewDirty`, chiama `relayout()` una sola volta. `relayout()` (in modalità automatica, l'unica che esiste fino a T6) chiama `resetView` con l'animazione decisa da S3.4: istantanea la prima volta o se il canvas ha cambiato dimensione, 0,35 s altrimenti.
+3. `resize()`: `setSize`, fit immediato e ridisegno immediato (`renderNow()`), per non mostrare mai un canvas vuoto o deformato (S3.6).
+4. `setInsets(i)`: se gli ingombri non cambiano (tolleranza 0,5 px) non fa nulla; altrimenti li salva e riadatta la vista.
+5. L'animazione segue S3.4: istantanea (con ridisegno immediato) la prima volta o se il canvas ha cambiato dimensione nello stesso frame, 0,35 s altrimenti. *(Rivisto in T5: niente flag di frame, vedi S3.6.)*
 6. `resetView({ animate, duration })`: `fitOffice` e poi, a seconda dei casi, `moveCamera` o un'applicazione diretta.
 7. `main.js`:
    - `measureInsets()` secondo S1.1 (in modalità stretta i pannelli sono ignorati);
@@ -172,7 +172,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
 2. Le azioni dell'utente passano a manuale e chiamano `fx.stop(this.camera)`:
    - sul canvas: `pointermove` con tasti premuti oltre 5 px dal `pointerdown`, oppure `wheel`;
    - `focus()`, `focusRoom()` e il clic sulla minimappa.
-3. `relayout()` in modalità manuale applica solo `applyFrustum` con i parametri correnti (S3.5).
+3. In modalità manuale `resize()` e `setInsets()` applicano solo `applyView()` con i parametri correnti (S3.5).
 4. `resetView()` rimette `autoFrame = true`.
 
 **Fatto quando:** A7 è verde. Un semplice clic sul pavimento, senza trascinamento, non passa a manuale.

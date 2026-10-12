@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Actor } from './character.js';
+import { applyFrustum, fitOffice, REF_UNITS_PER_PX, VIEW_OFFSET } from './framing.js';
 import { Fx } from './fx.js';
-import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, groundAt, SPOTS, WORLD } from './office.js';
+import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
 
 const TOOL_ICON = {
   list_files: '📂',
@@ -143,7 +144,12 @@ export class World {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
     this.controls = new MapControls(this.camera, canvas);
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, screenSpacePanning: false, minZoom: 0.5, maxZoom: 4, minPolarAngle: 0.3, maxPolarAngle: 1.15, zoomToCursor: true });
-    this.resetView();
+    // Framing (framing.js): the panels float over the canvas, so the office is fitted
+    // into the free area and the projection draws the camera target at its centre.
+    this.insets = { top: 0, right: 0, bottom: 0, left: 0 }; // UI over the canvas, px per edge
+    this.view = { unitsPerPx: REF_UNITS_PER_PX, lensX: 0, lensY: 0 }; // projection now applied
+    this.framedOnce = false; // insets received at least once
+    this.resizedAt = -1;
 
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
@@ -176,24 +182,50 @@ export class World {
     renderer.setAnimationLoop(() => this.frame());
   }
 
-  resetView() {
-    this.fx.stop(this.camera); // a focus still running would otherwise undo the reset
-    this.controls.target.set(0, 0, -0.5);
-    this.camera.position.set(15, 40, 44.5);
-    this.camera.zoom = 1;
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+  // The whole office in the area the panels leave free, seen from the usual angle.
+  resetView({ animate = false, duration = 0.6 } = {}) {
+    const fit = fitOffice({ width: this.width, height: this.height, insets: this.insets, envelope: ENVELOPE });
+    this.moveCamera({
+      target: fit.target,
+      offset: VIEW_OFFSET,
+      zoom: 1,
+      view: { unitsPerPx: fit.unitsPerPx, lensX: fit.lensX, lensY: fit.lensY },
+      duration: animate ? duration : 0,
+    });
+  }
+
+  // How far the UI reaches into the canvas from each edge (measured by main.js).
+  // A panel opening or closing re-frames the office smoothly; the first insets and
+  // those that change together with the window size apply at once.
+  setInsets(insets) {
+    const sides = ['top', 'right', 'bottom', 'left'];
+    if (this.framedOnce && sides.every((k) => Math.abs((insets[k] ?? 0) - this.insets[k]) < 0.5)) return;
+    this.insets = Object.fromEntries(sides.map((k) => [k, insets[k] ?? 0]));
+    const instant = !this.framedOnce || this.resizedAt === this.frameNo;
+    this.framedOnce = true;
+    this.resetView({ animate: !instant, duration: 0.35 });
+    if (instant) this.renderNow();
   }
 
   resize() {
     const el = this.canvas.parentElement;
-    const w = el.clientWidth;
-    const h = el.clientHeight;
-    this.renderer.setSize(w, h, false);
-    const aspect = w / h;
-    const view = Math.max(31, 62 / aspect);
-    Object.assign(this.camera, { left: (-view * aspect) / 2, right: (view * aspect) / 2, top: view / 2, bottom: -view / 2 });
-    this.camera.updateProjectionMatrix();
+    this.width = el.clientWidth;
+    this.height = el.clientHeight;
+    this.renderer.setSize(this.width, this.height, false);
+    this.resizedAt = this.frameNo;
+    this.resetView();
+    // setSize cleared the canvas after this frame was drawn: draw it again before
+    // the browser paints, or a resize flashes an empty or stretched picture
+    this.renderNow();
+  }
+
+  applyView() {
+    applyFrustum(this.camera, this.width, this.height, this.view.unitsPerPx, this.view.lensX, this.view.lensY);
+  }
+
+  renderNow() {
+    this.renderer.render(this.scene, this.camera);
+    this.updateLabels();
   }
 
   setTheme(night) {
@@ -347,31 +379,38 @@ export class World {
     return { x: target.seat.x, z: target.seat.z - 1.1 };
   }
 
-  // The one camera animation: target, orbit offset and zoom eased together. A newer
-  // move takes over from wherever the camera is, and what it leaves unset keeps
-  // heading where the replaced move was going (a pan during a focus still zooms in).
-  moveCamera({ target, offset, zoom, duration = 0.7 } = {}) {
+  // The one camera animation: target, orbit offset, zoom and projection (scale and
+  // lens shift, see framing.js) eased together. A newer move takes over from wherever
+  // the camera is, and what it leaves unset keeps heading where the replaced move was
+  // going (a pan during a focus still zooms in). Zoom is relative to the final scale.
+  moveCamera({ target, offset, zoom, view, duration = 0.7 } = {}) {
+    this.settleControls();
     const goal = this.fx.active(this.camera)?.goal;
     const fromTarget = this.controls.target.clone();
     const fromOffset = this.camera.position.clone().sub(fromTarget);
     const fromZoom = this.camera.zoom;
+    const fromView = { ...this.view };
     const to = {
       target: (target ?? goal?.target ?? fromTarget).clone(),
       offset: (offset ?? goal?.offset ?? fromOffset).clone(),
       zoom: zoom ?? goal?.zoom ?? fromZoom,
+      view: { ...(view ?? goal?.view ?? fromView) },
     };
     // the orbit turns the short way round; an unchanged offset is kept exactly
     const turning = !to.offset.equals(fromOffset);
     const a = new THREE.Spherical().setFromVector3(fromOffset);
     const b = new THREE.Spherical().setFromVector3(to.offset);
     const dTheta = ((b.theta - a.theta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+    const lerp = (x, y, e) => x + (y - x) * e;
     const step = (e) => {
       this.controls.target.lerpVectors(fromTarget, to.target, e);
-      if (turning) this.camera.position.setFromSphericalCoords(a.radius + (b.radius - a.radius) * e, a.phi + (b.phi - a.phi) * e, a.theta + dTheta * e);
+      if (turning) this.camera.position.setFromSphericalCoords(lerp(a.radius, b.radius, e), lerp(a.phi, b.phi, e), a.theta + dTheta * e);
       else this.camera.position.copy(fromOffset);
       this.camera.position.add(this.controls.target);
-      this.camera.zoom = fromZoom + (to.zoom - fromZoom) * e;
-      this.camera.updateProjectionMatrix();
+      this.camera.lookAt(this.controls.target); // the controls only re-aim on their next update
+      this.camera.zoom = lerp(fromZoom, to.zoom, e);
+      for (const k of ['unitsPerPx', 'lensX', 'lensY']) this.view[k] = lerp(fromView[k], to.view[k], e);
+      this.applyView();
     };
     if (!(duration > 0)) {
       this.fx.stop(this.camera);
@@ -387,6 +426,15 @@ export class World {
         return t < 1;
       },
     });
+  }
+
+  // Lets the controls finish any drag inertia at once, so it cannot pull against a move.
+  settleControls() {
+    const { controls } = this;
+    if (!controls.enableDamping) return;
+    controls.enableDamping = false;
+    controls.update();
+    controls.enableDamping = true;
   }
 
   panTo(x, z) {

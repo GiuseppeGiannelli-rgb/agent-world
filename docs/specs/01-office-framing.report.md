@@ -167,3 +167,39 @@ Il modulo non è ancora collegato alla `World`: nessun cambiamento visibile fino
 - l'offset finale è esatto (errore circa 1e-14).
 
 `world-test.js` controlla anche `Fx.active`. `npm test` è verde.
+
+### T5 — Inquadratura collegata ai pannelli
+
+**Cosa cambia:**
+- **`main.js`:** `measureInsets()` legge topbar, pannelli e roster; un solo `ResizeObserver` li osserva e chiama `world.setInsets()`. Scatta anche quando un pannello viene nascosto, perché la sua dimensione scende a 0. Sotto i 900 px i pannelli non contano. ⌂ chiama `resetView({ animate: true })`.
+- **`world.js`:**
+  - `resetView()` usa `fitOffice()` e `moveCamera()`;
+  - `moveCamera()` anima anche la proiezione (scala e spostamento) insieme a target, orbita e zoom;
+  - ogni passo dell'animazione fa il proprio `lookAt`, così l'orientamento non è in ritardo di un frame rispetto ai controlli;
+  - prima di ogni movimento, `settleControls()` esaurisce l'inerzia rimasta da un trascinamento.
+
+**Scelte contro gli sfarfallii:**
+- **Fit e ridisegno subito, dentro il `ResizeObserver`.** `renderer.setSize()` svuota il canvas dopo che il frame è già stato disegnato, e il browser esegue quei callback prima di dipingere: rimandare il fit al frame dopo, come prevedeva la prima versione del ticket, avrebbe mostrato un frame vuoto o deformato. Per lo stesso motivo anche la prima applicazione dei pannelli, al caricamento, ridisegna subito. S3.6 e il ticket sono aggiornati.
+- **Scala animata direttamente invece del trucco sullo zoom.** `OrbitControls.update()` riporta lo zoom dentro [0,5, 4] a ogni frame (riga 895 di r186). Animare lo zoom fino a `vecchia / nuova` scala si sarebbe potuto scontrare con quel limite.
+
+**Verifiche nel browser** (viewport emulato, misure numeriche):
+
+| Verifica | Esito |
+|---|---|
+| A1: pavimento coperto con i layout LR, -R e -- | **0%** a 1920×1080, 2560×1440 e 1440×900 (prima: 21/14/0, 10/6/0, 38/23/0). Nessuno degli 11 punti dell'ingombro sotto l'interfaccia. |
+| A1 su schermo stretto (800×600) | 0%; i pannelli sono ignorati, l'ufficio sta tra topbar e roster |
+| Larghezza dell'ufficio a 1920×1080 | LR 1098 px, -R 1403 px, -- 1419 px |
+| A6: apertura e chiusura dei pannelli | salto al momento del clic: **0 px**; animazione di 0,35 s esatti; larghezza monotona (1098 → 1403 e ritorno); finisce sul fit esatto |
+| Ridimensionamento a 1600×900 | subito dopo il resize, aspetto della proiezione = aspetto del canvas, buffer di disegno aggiornato, vista già sul fit |
+| A3: pan | 100 px di trascinamento = 100 px sullo schermo (calcolo di `OrbitControls` contro la proiezione reale) |
+| Target al centro dell'area libera | scarto (0, 0) px |
+| Click sugli agenti con lo spostamento della proiezione | 16/16 |
+| ⌂ dopo un focus | animazione di 0,6 s fino al fit |
+| Scenari di T4 | 6/6 ok (lo scenario 6 ora finisce sul fit) |
+| Errori in console | nessuno nuovo dopo il ricaricamento |
+
+**Limiti noti fino ai ticket successivi:**
+- **Fino a T6** non c'è la modalità manuale: dopo un trascinamento, aprire o chiudere un pannello o ridimensionare la finestra ricentra comunque la vista.
+- **Fino a T7:**
+  - etichette e primi piani sono ancora relativi al fit, quindi con i pannelli aperti le etichette sembrano più grandi rispetto all'ufficio e il focus è meno ravvicinato di prima;
+  - nella minimappa l'impronta della camera copre tutto il canvas.

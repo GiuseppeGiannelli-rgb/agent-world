@@ -118,7 +118,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
   - un cambio di ingombri a canvas invariato (apertura o chiusura di un pannello) anima in 0,35 s;
   - un cambio di dimensione del canvas è istantaneo.
 - **S3.5** In modalità manuale, un cambio di ingombri non muove nulla. Un cambio di dimensione del canvas mantiene `unitsPerPx`, `lens` e il target: il contenuto non si deforma e non salta.
-- **S3.6** `resize()` applica subito la proiezione con i parametri correnti, così non c'è mai un frame deformato. Il nuovo fit avviene al frame successivo, una sola volta anche se il frame riceve più notifiche.
+- **S3.6** *(rivisto in T5)* Il nuovo fit e il ridisegno avvengono subito, dentro il callback del `ResizeObserver`. Il browser esegue quei callback dopo il frame e prima di disegnare, e `renderer.setSize()` svuota il canvas: rimandare il fit al frame successivo, come prevedeva la prima versione, mostrerebbe per un frame un canvas vuoto o deformato, e al caricamento l'inquadratura senza pannelli. Più notifiche nello stesso frame producono più fit; il calcolo costa pochi microsecondi e vince l'ultimo.
 
 ### S4 — Animazioni esclusive per oggetto
 
@@ -157,7 +157,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 | `public/js/world/framing.js` (nuovo) | Matematica pura, senza DOM: `safeRect(w, h, insets)`, `fitOffice({ width, height, insets, envelope, dir, distance })` che restituisce `{ target, position, unitsPerPx, lensX, lensY }`, `applyFrustum(camera, w, h, unitsPerPx, lensX, lensY)`. Costanti `GAP`, `MARGIN`, `REF_UNITS_PER_PX`, `VIEW_DIR`, `VIEW_DIST`. Importa solo `three`. |
 | `public/js/world/office.js` | Esporta `ENVELOPE` vicino a `FLOOR`, con un commento sull'origine dei numeri. Nessun'altra modifica. |
 | `public/js/world/fx.js` | `track()`, `stop()`, `fly()` tramite `track()`. |
-| `public/js/world/world.js` | `setInsets()`, `resize()`, `resetView({ animate })`, un `relayout()` con flag di frame, `moveCamera()` come unica animazione di camera (usata da `panTo`, `focus`, `focusRoom` e dal fit), rilevamento delle interazioni manuali, etichette e minimappa basate sulla scala assoluta, invarianti dei cubi (S5). |
+| `public/js/world/world.js` | `setInsets()`, `resize()`, `resetView({ animate })`, un fit sincrono con ridisegno immediato (S3.6), `moveCamera()` come unica animazione di camera (usata da `panTo`, `focus`, `focusRoom` e dal fit), rilevamento delle interazioni manuali, etichette e minimappa basate sulla scala assoluta, invarianti dei cubi (S5). |
 | `public/js/main.js` | `measureInsets()`, il `ResizeObserver` di S1.3, ⌂ che chiama `resetView({ animate: true })`. |
 | `scripts/world-test.js` (nuovo) | Test in Node di `framing.js` e `fx.js` (sezione 6), aggiunto a `npm test`. |
 

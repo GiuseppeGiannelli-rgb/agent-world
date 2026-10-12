@@ -853,7 +853,7 @@ $('#goal').addEventListener('keydown', (e) => {
 });
 $('#goal-mic').addEventListener('click', (e) => listen(e.currentTarget, (text) => ($('#goal').value = text)));
 $('#btn-settings').addEventListener('click', openSettings);
-$('#btn-home').addEventListener('click', () => world.resetView());
+$('#btn-home').addEventListener('click', () => world.resetView({ animate: true }));
 $('#btn-theme').addEventListener('click', () => setTheme(!document.body.classList.contains('night')));
 
 function setTheme(night) {
@@ -876,6 +876,29 @@ function togglePanel(id, other) {
 }
 $('#btn-left').addEventListener('click', () => togglePanel('#left', '#right'));
 $('#btn-right').addEventListener('click', () => togglePanel('#right', '#left'));
+
+// How far the UI reaches into the 3D canvas from each edge, so the camera frames the
+// office in the free area. On narrow screens the panels are full-screen overlays and
+// do not count. The observer also fires when a panel is hidden (its size drops to 0).
+function measureInsets() {
+  const c = $('#scene').getBoundingClientRect();
+  const box = (el, counts = true) => {
+    const r = el.getBoundingClientRect();
+    return counts && r.width > 0 && r.height > 0 ? r : null;
+  };
+  const top = box($('.topbar'));
+  const left = box($('#left'), !narrow.matches);
+  const right = box($('#right'), !narrow.matches);
+  const roster = box($('#roster'));
+  return {
+    top: top ? top.bottom - c.top : 0,
+    right: right ? c.right - right.left : 0,
+    bottom: roster ? c.bottom - roster.top : 0,
+    left: left ? left.right - c.left : 0,
+  };
+}
+const insetsObserver = new ResizeObserver(() => world.setInsets(measureInsets()));
+for (const el of [$('.topbar'), $('#left'), $('#right'), $('#roster')]) insetsObserver.observe(el);
 $('#examples').innerHTML = EXAMPLES.map((x) => `<button class="chip">${esc(x)}</button>`).join('');
 
 // ---------- live data ----------
