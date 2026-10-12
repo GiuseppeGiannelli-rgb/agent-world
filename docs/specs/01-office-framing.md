@@ -97,9 +97,10 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 - **S2.4** La direzione della camera resta invariata: `normalize(15, 40, 45)`, distanza 62,05.
 - **S2.5** Le scale assolute di oggi si conservano. Riferimento `REF = 0.0323` unità/px, cioè la vista attuale a 1920×1080 con zoom 1.
   - `minZoom` = 0,5, relativo al fit;
-  - `maxZoom` = `unitsPerPx / (REF / 4)`: il primo piano più stretto resta quello di oggi;
+  - `maxZoom` = `unitsPerPx / (REF / 4)`: il primo piano più stretto resta quello di oggi. *(Precisato in T7)* `maxZoom` segue la scala della proiezione **a ogni passo** di un movimento (in `applyView()`), perché `OrbitControls.update()` riporta lo zoom nei limiti a ogni frame. Con un limite fissato per la fine del movimento, un trascinamento che interrompe ⌂ subito dopo l'inizio fa saltare la grandezza a schermo del 12%. Il limite non scende mai sotto 1, così il fit resta sempre raggiungibile;
   - il focus su un agente usa zoom `max(zoom, unitsPerPx / (REF / 2.2))`, il focus su una stanza `unitsPerPx / (REF / 2)`, entrambi limitati a `maxZoom`.
 - **S2.6** Dimensione delle etichette e classe `far` dipendono dalla scala assoluta e non da `camera.zoom`. Zoom effettivo = `REF / (unitsPerPx / zoom)`. Le etichette restano coerenti con le dimensioni reali sullo schermo.
+  - *(Soglia rivista in T7)* `far` scatta sotto lo zoom effettivo **0,55** invece di 0,95. La vecchia soglia significava "più lontano della vista iniziale", che valeva 1. Misurato con gli agenti alle scrivanie: le etichette dei worker inattivi iniziano a sovrapporsi a quelle dei lead sotto 0,52. Con 0,95 la vista completa a 1920×1080 (zoom effettivo 0,61–0,79) avrebbe nascosto 8 etichette su 16 in tutti i layout, senza nessuna sovrapposizione da evitare.
 - **S2.7** L'impronta della camera nella minimappa disegna l'area libera, non tutto il canvas.
 
 ### S3 — Modalità automatica e manuale
@@ -195,5 +196,5 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 ## 8. Rischi
 
 - **`setViewOffset` usato come lente.** È un uso meno comune: three lo documenta per configurazioni multi-monitor. La matematica è verificata nel codice di r186 (sezione S2.3) e coperta da A2 e A3. Se un aggiornamento di three cambiasse `_pan`, A3 lo segnalerebbe.
-- **Etichette e zoom effettivo (S2.6).** Con entrambi i pannelli aperti, lo zoom effettivo della vista completa è circa 0,62. Le etichette dei worker inattivi spariscono (`far`), come succede oggi allontanandosi con lo zoom. Va verificato negli screenshot: la soglia è regolabile.
+- **Etichette e zoom effettivo (S2.6).** Con entrambi i pannelli aperti, lo zoom effettivo della vista completa è circa 0,62. Le etichette dei worker inattivi spariscono (`far`), come succede oggi allontanandosi con lo zoom. Va verificato negli screenshot: la soglia è regolabile. *(T7: la soglia è stata misurata e portata a 0,55, vedi S2.6 e il report.)*
 - **Pannello del browser dell'app.** Il rendering si ferma quando il pannello è nascosto (bug noto). Gli screenshot vanno fatti con il pannello visibile.

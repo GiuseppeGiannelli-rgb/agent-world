@@ -191,6 +191,8 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    - entrambi limitati a `maxZoom`.
 3. `updateLabels()`: zoom effettivo `ez = REF / (unitsPerPx / zoom)`, usato per la scala delle etichette e per la classe `far`.
 4. `drawMinimap()`: l'impronta della camera si calcola dagli angoli dell'area libera, convertiti in coordinate normalizzate (NDC), invece che dagli angoli del canvas.
+5. *(precisato in T7)* `maxZoom` si aggiorna in `applyView()`, cioè a ogni passo di un movimento, non solo a ogni fit. La matematica pura sta in `framing.js` (`maxZoomFor`, `zoomFor`) ed è testata in `world-test.js`. `moveCamera` accetta `scale`, una grandezza a schermo in unità per px, convertita in zoom rispetto alla scala finale.
+6. *(rivisto in T7, S2.6)* La soglia di `far` è misurata invece che ereditata: 0,55.
 
 **Fatto quando:**
 - A8: dopo un focus, `unitsPerPx / zoom` vale `REF / 2.2` ±5%, con e senza pannelli;

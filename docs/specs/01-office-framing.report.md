@@ -275,3 +275,89 @@ Sul codice di T5 falliscono 15 controlli su 25, su quello nuovo nessuno. Gli alt
 - **Pressione tenuta ferma durante un'animazione.** Se dopo la fine del movimento il puntatore si sposta di meno di 5 px, `MapControls` riporta sotto il cursore il punto afferrato all'inizio, e la vista scorre del tragitto dell'animazione senza passare a manuale. Correggerlo richiederebbe di toccare lo stato interno dei controlli (`_panWorldStart`). Il caso è raro, e il riadattamento successivo o ⌂ lo annullano.
 - **Verifica con mouse reale non fatta:** il pannello browser dell'app è nascosto. Gli eventi sintetici passano dagli stessi ascoltatori, ma va confermato nel QA visivo a schermo intero.
 - **Fino a T7:** restano i limiti scritti sopra per T5 (scala delle etichette, zoom dei primi piani, impronta nella minimappa).
+
+**QA visivo dell'utente a 1920×1080:** superato. Le correzioni S3.7 e S4.6 sono approvate.
+
+### T7 — Scala assoluta: primi piani, etichette, minimappa
+
+**Cosa cambia:**
+- **`framing.js`**, matematica pura:
+  - `CLOSEST_UNITS_PER_PX` = `REF / 4` e `MIN_ZOOM` = 0,5;
+  - `maxZoomFor(unitsPerPx)` = `max(1, unitsPerPx / (REF / 4))`: il limite non scende sotto 1, così il fit resta raggiungibile anche su schermi enormi;
+  - `zoomFor(scale, unitsPerPx)` converte una grandezza a schermo in zoom, dentro i limiti.
+- **`world.js`:**
+  - `applyView()` imposta `controls.maxZoom` insieme alla proiezione, quindi a ogni passo di un movimento;
+  - `moveCamera` accetta `scale`, cioè unità del mondo per px sullo schermo, e la converte rispetto alla scala **finale** del movimento;
+  - il focus su un agente chiede `min(grandezza attuale, REF / 2,2)`, quindi non si allontana mai da una vista più vicina; il focus su una stanza chiede `REF / 2`;
+  - `updateLabels()` usa lo zoom effettivo `REF / (unitsPerPx / zoom)`;
+  - `footprint()` restituisce gli angoli dell'area libera proiettati sul pavimento, e la minimappa disegna quelli.
+
+**La trappola del limite di zoom.** `OrbitControls.update()` riporta `camera.zoom` dentro `[minZoom, maxZoom]` a ogni chiamata. Un movimento interpola linearmente sia lo zoom sia `unitsPerPx`, quindi:
+- **con un limite che segue la scala interpolata**, il vincolo `zoom ≤ unitsPerPx / (REF / 4)` è lineare nello stesso parametro e vale a ogni passo, se vale agli estremi;
+- **con un limite fissato una volta per la fine del movimento**, lo zoom viene tagliato finché resta sopra il limite finale.
+
+Le misure mostrano anche come si manifesta. Nell'ordine di `frame()` (prima `controls.update()`, poi l'animazione) il passo successivo sovrascrive il valore tagliato, quindi finché il movimento continua lo scatto non si vede. Diventa visibile quando l'utente lo interrompe, perché da quel momento nessuno ripristina lo zoom. Per questo il controllo è doppio:
+
+| Verifica | Limite fisso per la fine (mutazione) | T7 |
+|---|---|---|
+| `world-test.js`: 31.941 passi interpolati tra le scale dei 20 layout | 2.783 passi tagliati | 0 |
+| Browser: ⌂ dal primo piano più stretto, da LR a -- | 4 tagli (zoom da 6,535 a 5,056) | 0 |
+| Browser: trascinamento che interrompe quel ⌂ dopo 2 frame | la grandezza a schermo salta del **12%** | 0% |
+
+La mutazione è applicata a runtime nello snippet `__a8({ mutate: true })`: `applyView` senza il limite e `maxZoom` impostato alla fine di ogni `moveCamera`. Il file non viene toccato.
+
+**A8 e limiti di zoom.** Lo snippet `__a8()` usa la stessa tecnica di `__a7()` e ha 17 controlli per viewport, tutti verdi a 1920×1080, 1440×900 e 2560×1440. Il rapporto è la grandezza a schermo dopo il focus divisa per `REF / 2,2`; lo scarto è la distanza del punto del focus dal centro dell'area libera.
+
+| Viewport | Layout | Zoom del focus | Rapporto | Scarto |
+|---|---|---|---|---|
+| 1920×1080 | LR / -R / -- | 3,594 / 2,812 / 2,781 | 1 | 0 px |
+| 1440×900 | LR / -R / -- | 6,201 / 4,088 / 3,493 | 1 | 0 px |
+| 2560×1440 | LR / -R / -- | 2,303 / 2,008 / 2,008 | 1 | 0 px |
+
+In ogni viewport e layout:
+- il focus su una stanza vale `REF / 2` con rapporto 1;
+- con la rotella, il primo piano più stretto vale `REF / 4` e quello più lontano il doppio del fit (rapporto 1,000000);
+- un focus fatto da più vicino di `REF / 2,2` mantiene la vista più vicina;
+- l'impronta nella minimappa, riproiettata sullo schermo, cade sugli angoli dell'area libera con errore 0 px.
+
+I movimenti che cambiano scala non hanno tagli e la grandezza a schermo varia in modo monotono:
+
+| Movimento (1920×1080) | Frame | Passo massimo per frame |
+|---|---|---|
+| ⌂ dal primo piano più stretto, da LR a -- | 38 | 7,0% |
+| ⌂ dal primo piano più stretto, da -- a LR | 38 | 9,5% |
+| Focus avviato durante un riadattamento | 44 | 17,4% (finisce a `REF / 2,2` esatto) |
+| Focus su una stanza dal primo piano più stretto | 44 | 3,6% |
+
+**Etichette (S2.6) e soglia di `far`, misurate.** Lo zoom effettivo della vista completa dipende dalla risoluzione e dai pannelli:
+
+| Viewport | LR | -R | -- |
+|---|---|---|---|
+| 1920×1080 | 0,612 | 0,782 | 0,791 |
+| 1440×900 | 0,355 | 0,538 | 0,630 |
+| 2560×1440 | 0,955 | 1,096 | 1,096 |
+
+Con la soglia 0,95 della spec, la vista completa a 1920×1080 nascondeva le etichette di 8 worker inattivi su 16 **in tutti i layout**, non solo con LR come prevedeva la sezione rischi. Scansione delle sovrapposizioni con tutte le etichette visibili e gli agenti alle scrivanie (dipende solo dallo zoom effettivo, uguale con LR e --):
+
+| Zoom effettivo | 1,0 | 0,8 | 0,7 | 0,6 | da 0,62 a 0,53 | 0,52–0,50 | 0,49–0,48 | 0,45 e meno |
+|---|---|---|---|---|---|---|---|---|
+| Coppie sovrapposte | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 6 |
+| Spazio minimo | 34 px | 20 px | 12 px | 5 px | — | — | — | — |
+
+Le prime sovrapposizioni sono sempre tra un lead e un suo worker alla stessa scrivania (luna/dario, bruno/vera). La soglia è ora **0,55**, poco sopra l'inizio. Risultato nella vista completa:
+- 1920×1080 e 2560×1440: tutte le 16 etichette in ogni layout, 0 sovrapposizioni;
+- 1440×900: `far` con LR e -R. Con LR resta 1 sovrapposizione tra due lead, che sono sempre visibili: la scala minima delle etichette (0,62) le rende grandi rispetto a un ufficio così piccolo. Prima di questo branch succedeva lo stesso allontanandosi con lo zoom.
+
+La scala delle etichette segue `0,5 + 0,28 × zoom effettivo`, con il minimo a 0,62. Nella vista completa a 1920×1080 vale 0,671 (LR) e 0,72 (--), contro lo 0,78 della vecchia vista fissa, e in proporzione ai personaggi le etichette tornano alla grandezza di prima.
+
+**Non regressione:**
+- `__a7()` (T6): 25/25 verdi a 1920×1080;
+- A1 con LR: nessun punto dell'ingombro fuori dall'area libera;
+- A6: 0 px di salto al clic, 0,35 s, fine sul fit;
+- clic: 16 agenti su 16;
+- `npm test` verde con il nuovo test 11, nessun errore in console.
+
+**Da sapere:**
+- **Focus su una stanza.** Segue la formula della spec, `REF / 2`, senza il `max` con lo zoom attuale che c'era prima. Da una vista più vicina, ora il focus si allontana per mostrare tutta la stanza; prima restava vicino.
+- **Velocità percepita del focus.** Dalla vista completa con LR il focus ingrandisce 3,6 volte, mentre prima ingrandiva 2,2 volte. Con lo stesso rallentamento cubico di 0,7 s, il primo frame ingrandisce di circa il 18% (prima circa l'8%). Interpolare la scala in modo logaritmico renderebbe uniforme la velocità; non l'ho cambiato perché è fuori dal perimetro.
+- **QA visivo da fare:** leggibilità delle etichette a scala 0,67 e soglia di `far` a schermo intero.

@@ -15,8 +15,25 @@ export const VIEW_OFFSET = Object.freeze(new THREE.Vector3(15, 40, 45));
 // World units per CSS px of the old fixed framing at 1920×1080 (62 units across
 // 1920 px). Close-ups and labels measure against it to keep today's on-screen size.
 export const REF_UNITS_PER_PX = 62 / 1920;
+// Zoom limits as sizes on screen (world units per px, unitsPerPx / zoom): never closer
+// than the old closest close-up (zoom 4 at the reference scale), never farther than
+// twice the fit.
+export const CLOSEST_UNITS_PER_PX = REF_UNITS_PER_PX / 4;
+export const MIN_ZOOM = 0.5;
 
 const UP = new THREE.Vector3(0, 1, 0);
+
+// The controls' maxZoom for a projection of unitsPerPx at zoom 1. The fit itself
+// (zoom 1) stays within reach even on a screen so large that it is closer than that.
+export function maxZoomFor(unitsPerPx) {
+  return Math.max(1, unitsPerPx / CLOSEST_UNITS_PER_PX);
+}
+
+// The zoom at which a projection of unitsPerPx shows `scale` world units per px,
+// kept within the controls' limits.
+export function zoomFor(scale, unitsPerPx) {
+  return Math.min(maxZoomFor(unitsPerPx), Math.max(MIN_ZOOM, unitsPerPx / scale));
+}
 
 // The canvas area the UI leaves free, in CSS px from the canvas' top-left corner.
 // insets: how far the UI reaches into the canvas from each edge.

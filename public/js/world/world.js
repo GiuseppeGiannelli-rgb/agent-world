@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Actor } from './character.js';
-import { applyFrustum, fitOffice, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET } from './framing.js';
+import { applyFrustum, fitOffice, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET, zoomFor } from './framing.js';
 import { Fx } from './fx.js';
 import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
 
@@ -53,6 +53,9 @@ const short = (s, n = 46) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 const LIVE_TASK = ['assigned', 'working', 'review', 'revise'];
+// Below this size on screen (a zoom of the old fixed framing) the labels of idle
+// workers hide: from 0.52 down they overlap their lead's at the desks (T7 report).
+const FAR_ZOOM = 0.55;
 
 function cardTexture(id, title, color, state, isWs) {
   const c = document.createElement('canvas');
@@ -143,7 +146,8 @@ export class World {
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
     this.controls = new MapControls(this.camera, canvas);
-    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, screenSpacePanning: false, minZoom: 0.5, maxZoom: 4, minPolarAngle: 0.3, maxPolarAngle: 1.15, zoomToCursor: true });
+    // maxZoom follows the projection: applyView() sets it
+    Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, screenSpacePanning: false, minZoom: MIN_ZOOM, minPolarAngle: 0.3, maxPolarAngle: 1.15, zoomToCursor: true });
     // Framing (framing.js): the panels float over the canvas, so the office is fitted
     // into the free area and the projection draws the camera target at its centre.
     this.insets = { top: 0, right: 0, bottom: 0, left: 0 }; // UI over the canvas, px per edge
@@ -269,8 +273,19 @@ export class World {
     this.renderNow();
   }
 
+  // The projection in this.view, and the zoom limit that goes with it. OrbitControls
+  // clamps camera.zoom into [minZoom, maxZoom] at every update, so the limit moves
+  // with every step of a move that changes the scale. One set for the end of the move
+  // clamps a zoom that is still above it: the next step hides that, but a drag or a
+  // wheel that stops the move leaves the cut, and the picture jumps.
   applyView() {
+    this.controls.maxZoom = maxZoomFor(this.view.unitsPerPx);
     applyFrustum(this.camera, this.width, this.height, this.view.unitsPerPx, this.view.lensX, this.view.lensY);
+  }
+
+  // World units per CSS px on screen now: what close-ups and labels measure against.
+  screenScale() {
+    return this.view.unitsPerPx / this.camera.zoom;
   }
 
   renderNow() {
@@ -433,19 +448,21 @@ export class World {
   // lens shift, see framing.js) eased together. A newer move takes over from wherever
   // the camera is, and what it leaves unset, down to single view fields, keeps heading
   // where the replaced move was going (a pan during a focus still zooms in). Zoom is
-  // relative to the final scale.
-  moveCamera({ target, offset, zoom, view, duration = 0.7 } = {}) {
+  // relative to the final scale; `scale` asks instead for a size on screen (world
+  // units per px) whatever the framing, within the zoom limits.
+  moveCamera({ target, offset, zoom, scale, view, duration = 0.7 } = {}) {
     this.settleControls();
     const goal = this.fx.active(this.camera)?.goal;
     const fromTarget = this.controls.target.clone();
     const fromOffset = this.camera.position.clone().sub(fromTarget);
     const fromZoom = this.camera.zoom;
     const fromView = { ...this.view };
+    const toView = { ...(goal?.view ?? fromView), ...view };
     const to = {
       target: (target ?? goal?.target ?? fromTarget).clone(),
       offset: (offset ?? goal?.offset ?? fromOffset).clone(),
-      zoom: zoom ?? goal?.zoom ?? fromZoom,
-      view: { ...(goal?.view ?? fromView), ...view },
+      zoom: scale ? zoomFor(scale, toView.unitsPerPx) : (zoom ?? goal?.zoom ?? fromZoom),
+      view: toView,
     };
     // the orbit turns the short way round; an unchanged offset is kept exactly
     const turning = !to.offset.equals(fromOffset);
@@ -514,18 +531,21 @@ export class World {
 
   // A focus is the user's choice of what to look at: the view goes manual. The move
   // takes over the running one instead of stopping it, so it keeps its unfinished goal.
+  // Close-ups keep the size on screen they had with the old fixed framing (S2.5); an
+  // agent focus never backs away from a closer view.
   focus(agentId) {
     const a = this.actors.get(agentId);
     if (!a) return;
     this.autoFrame = false;
-    this.moveCamera({ target: new THREE.Vector3(a.position.x, 0, a.position.z), zoom: Math.max(this.camera.zoom, 2.2), view: this.centreLens() });
+    const scale = Math.min(this.screenScale(), REF_UNITS_PER_PX / 2.2);
+    this.moveCamera({ target: new THREE.Vector3(a.position.x, 0, a.position.z), scale, view: this.centreLens() });
   }
 
   focusRoom(team) {
     const r = this.layout.rooms.find((x) => x.team === team);
     if (!r) return;
     this.autoFrame = false;
-    this.moveCamera({ target: new THREE.Vector3(r.x, 0, r.z), zoom: Math.max(this.camera.zoom, 2), view: this.centreLens() });
+    this.moveCamera({ target: new THREE.Vector3(r.x, 0, r.z), scale: REF_UNITS_PER_PX / 2, view: this.centreLens() });
   }
 
   // ---------- cards & cubes ----------
@@ -1186,10 +1206,12 @@ export class World {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     const now = performance.now();
-    const zoom = this.camera.zoom;
+    // the zoom of the old fixed framing that would show the office this size (S2.6):
+    // labels keep their size next to the characters whatever the panels leave free
+    const zoom = REF_UNITS_PER_PX / this.screenScale();
     const scale = Math.min(1.1, Math.max(0.62, 0.5 + zoom * 0.28));
     this.labelsEl.style.setProperty('--label-scale', String(scale));
-    this.labelsEl.classList.toggle('far', zoom < 0.95);
+    this.labelsEl.classList.toggle('far', zoom < FAR_ZOOM);
     const project = (v) => {
       v.project(this.camera);
       return [(v.x * 0.5 + 0.5) * w, (-v.y * 0.5 + 0.5) * h];
@@ -1253,18 +1275,22 @@ export class World {
       g.arc(sx(a.position.x), sz(a.position.z), a.state && a.state !== 'idle' ? 3 : 2, 0, Math.PI * 2);
       g.fill();
     }
-    // camera footprint
-    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => {
-      const v = new THREE.Vector3(x, y, 0).unproject(this.camera);
-      const dir = new THREE.Vector3();
-      this.camera.getWorldDirection(dir);
-      const t = -v.y / dir.y;
-      return [sx(v.x + dir.x * t), sz(v.z + dir.z * t)];
-    });
+    const corners = this.footprint().map((p) => [sx(p.x), sz(p.z)]);
     g.strokeStyle = this.night ? 'rgba(255,255,255,0.8)' : 'rgba(40,40,40,0.7)';
     g.beginPath();
     corners.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
     g.closePath();
     g.stroke();
+  }
+
+  // The floor the user can see (S2.7): the corners of the area the panels leave free,
+  // cast from the canvas down to y 0. The rest of the canvas is under the UI.
+  footprint() {
+    const s = safeRect(this.width, this.height, this.insets);
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    return [[s.x0, s.y0], [s.x1, s.y0], [s.x1, s.y1], [s.x0, s.y1]].map(([x, y]) => {
+      const v = new THREE.Vector3((x / this.width) * 2 - 1, 1 - (y / this.height) * 2, 0).unproject(this.camera);
+      return v.addScaledVector(dir, -v.y / dir.y);
+    });
   }
 }
