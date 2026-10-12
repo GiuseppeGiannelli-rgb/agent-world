@@ -74,7 +74,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    - lo stop di un'animazione già finita non ha effetti;
    - un effetto aggiunto dentro l'`update` o il `done` di un altro viene aggiornato e poi eliminato (`dispose` chiamato, mesh tolte dalla scena);
    - un `fly` avviato dentro il `done` di un altro `fly` sullo stesso oggetto parte davvero e non viene annullato dalla pulizia del primo.
-7. `npm test` diventa `node scripts/world-test.js && …` (prima gli altri script, perché è il più veloce).
+7. `npm test` diventa `node scripts/world-test.js && …` (prima degli altri script, perché è il più veloce).
 
 **Fatto quando:** A5 è verde e `npm test` parte con la nuova suite.
 

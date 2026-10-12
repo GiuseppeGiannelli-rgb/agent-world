@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 
+const DEAD = Symbol('dead');
+const OWNER = Symbol('owner');
+
 // Short-lived visual effects. Each effect returns false from update() when done.
+// An object moves under at most one tracked effect: starting another one, or
+// stop(), cancels it for good, so its done callback never runs.
 export class Fx {
   constructor(scene) {
     this.scene = scene;
     this.items = [];
+    this.tracks = new WeakMap(); // object -> its active motion
   }
 
   add(item) {
@@ -12,12 +18,35 @@ export class Fx {
     return item;
   }
 
+  track(obj, item) {
+    this.stop(obj);
+    item[OWNER] = obj;
+    this.tracks.set(obj, item);
+    return this.add(item);
+  }
+
+  stop(obj) {
+    const item = this.tracks.get(obj);
+    if (item) this.retire(item);
+  }
+
+  retire(item) {
+    if (item[DEAD]) return;
+    item[DEAD] = true;
+    if (item[OWNER] && this.tracks.get(item[OWNER]) === item) this.tracks.delete(item[OWNER]);
+    item.dispose?.();
+  }
+
   update(dt) {
-    this.items = this.items.filter((fx) => {
-      const alive = fx.update(dt);
-      if (!alive) fx.dispose?.();
-      return alive;
+    const running = this.items;
+    // effects started during this pass (an arrival ring, a done callback) land here and run from the next frame
+    this.items = [];
+    const alive = running.filter((fx) => {
+      if (!fx[DEAD] && fx.update(dt) && !fx[DEAD]) return true;
+      this.retire(fx);
+      return false;
     });
+    this.items = alive.concat(this.items);
   }
 
   // A glowing packet travelling on an arc between two moving points.
@@ -207,11 +236,12 @@ export class Fx {
   }
 
   // Moves an object along an arc to a destination, then calls done.
+  // A newer fly (or stop) on the same object takes over from where it is.
   fly(obj, toFn, { duration = 0.9, height = 2, spin = true, done } = {}) {
     const from = obj.position.clone();
     let t = 0;
     const to = new THREE.Vector3();
-    return this.add({
+    return this.track(obj, {
       update: (dt) => {
         t = Math.min(1, t + dt / duration);
         const e = 1 - (1 - t) ** 3;
