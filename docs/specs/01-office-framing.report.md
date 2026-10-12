@@ -69,3 +69,44 @@ Per questo lo includo in T1 come aggiunta **S4.5** alla spec, con un test dedica
 ### Cosa resta da osservare a schermo
 
 Gli screenshot leggibili richiedono un pannello browser più largo. Le verifiche numeriche coprono i criteri della spec. Una conferma visiva da parte dell'utente su un monitor a 1920×1080 resta utile in T8.
+
+## Verifiche per ticket
+
+### T1 — `Fx` (commit `a64d8b2`)
+
+- `scripts/world-test.js`: 6 controlli verdi, tra cui il caso degli effetti annidati di N1 e i voli concatenati sullo stesso oggetto. La suite parte per prima in `npm test`.
+- Controprova sull'`Fx` precedente: nello stesso scenario restavano 11 mesh nella scena (un anello e 10 scintille) e un volo annullato chiamava comunque `done`. Con la versione nuova: 0 e 0.
+- `npm test` completo verde.
+
+### T2 — Cubi
+
+**Stress A9**, con lo snippet `__cubeStress()` reso deterministico: la `World` avanza a 60 fps fissi chiamando `frame()`, così il risultato non dipende dal ritmo del browser. Il pannello nascosto gira a 0,7–2 fps.
+
+| Caso | Solo T1 (vecchio `world.js`) | T1 + T2 |
+|---|---|---|
+| R1: lo split viene superato dalla presa | ✔ (il volo nuovo sostituisce il vecchio) | ✔ cubo in mano |
+| R2: pickup in volo, poi split | ✖ `teo` porta il cubo grande eliminato | ✔ split rimandato ed eseguito |
+| R3: consegna o affondamento durante la presa | ✖ solo l'affondamento: `dario` porta il cubo affondato | ✔ |
+| R4: reset durante la presa | ✖ `vera` porta un cubo del run precedente | ✔ |
+| R5: seconda presa con un cubo già in mano | ✖ il primo cubo resta attaccato al personaggio | ✔ il primo va sulla scrivania, il secondo in mano |
+
+**Run completo** con T1 + T2: stessa missione di T0, simulazione a velocità reale. Il rendering è spento durante la pompa, perché il pannello nascosto non disegna.
+
+| Verifica | T0 | T1 + T2 |
+|---|---|---|
+| Esito | `completed`, 6 workstream, 17/17 task | identico |
+| Cubi: pickup, split, prese, consegne, drop | 6 / 6 / 17 / 17 / 23 | 6 / 6 / 17 / 17 / 23 |
+| Anomalie dei cubi durante il run | 1 (R1, `research-sub1`) | **0** |
+| Cubi rimasti a fine run | 0 | 0 |
+| Effetti congelati a fine run (anelli / ottaedri) | 144 / 170 | **0 / 0** |
+| Verdetti con il revisore alla scrivania | 23/23 (distanza 1,0–1,1) | 23/23 (distanza 1,0–1,1) |
+
+`npm test` completo verde. `node --check` verde su `world.js` e `fx.js`.
+
+### Difetto N2: il client resta indietro quando la scheda è nascosta (osservato, fuori perimetro)
+
+È un difetto preesistente e non è stato corretto. Il rendering si ferma a pannello o scheda nascosti (bug noto in HANDOFF). Gli eventi del server invece arrivano in tempo reale, quindi le code di azioni dei personaggi si allungano. In un run fatto a 0,7 fps sono comparsi due effetti:
+- **cubi che affondano invece di essere consegnati:** lo stato `idle` arriva mentre la consegna è ancora in coda dietro la camminata, e `applyState` (ramo `idle`) affonda il cubo;
+- **un cubo lasciato su una scrivania a fine run** (`w1.3` dal lead `rino`): `onDespawn` rimuove il sub-agente con un `setTimeout` di 800 ms (tempo reale) prima che la sua coda arrivi alla presa del cubo.
+
+A velocità reale non succede (0 affondamenti, 0 cubi rimasti). Lo propongo come ticket separato dopo questa spec, per esempio con il recupero del ritardo al ritorno visibile e la rimozione del sub-agente legata alla fine della sua coda.

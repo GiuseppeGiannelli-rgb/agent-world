@@ -401,7 +401,10 @@ export class World {
   resetRun(runId) {
     this.runId = runId;
     for (const c of this.cards.values()) this.scene.remove(c.mesh);
-    for (const c of this.cubes.values()) c.mesh.parent?.remove(c.mesh);
+    for (const c of this.cubes.values()) {
+      this.fx.stop(c.mesh);
+      c.mesh.parent?.remove(c.mesh);
+    }
     for (const a of this.actors.values()) a.carrying = null;
     this.cards.clear();
     this.cubes.clear();
@@ -471,10 +474,15 @@ export class World {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6, roughness: 0.35, flatShading: true }));
     mesh.castShadow = true;
     mesh.add(new THREE.Mesh(new THREE.BoxGeometry(size * 1.45, size * 1.45, size * 1.45), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending })));
+    mesh.userData.cube = true;
     return mesh;
   }
 
+  // Frees a cube from whatever moves it (a hand, a flight still running) and leaves it
+  // in the scene where it is. Every cube hand-over starts here, so no stale flight
+  // can land later and put the cube back in someone's hands.
   toScene(mesh) {
+    this.fx.stop(mesh);
     if (mesh.parent === this.scene) return;
     const p = mesh.getWorldPosition(new THREE.Vector3());
     mesh.parent?.remove(mesh);
@@ -482,14 +490,16 @@ export class World {
     this.scene.add(mesh);
   }
 
+  // The actor owns the cube as soon as the flight starts: the flight is only the picture.
   carryInto(actor, mesh) {
+    if (actor.carrying && actor.carrying !== mesh) this.dropCube(actor);
     this.toScene(mesh);
+    actor.carrying = mesh;
     this.fx.fly(mesh, () => actor.root.localToWorld(new THREE.Vector3(0, 0.86, 0.42)), {
       duration: 0.45,
       height: 0.6,
       done: () => {
-        this.scene.remove(mesh);
-        actor.carry(mesh);
+        if (actor.carrying === mesh) actor.carry(mesh);
       },
     });
   }
@@ -497,10 +507,9 @@ export class World {
   dropCube(actor) {
     const mesh = actor.release();
     if (!mesh) return;
-    actor.root.remove(mesh);
+    this.toScene(mesh);
     const onDesk = [...this.cubes.values()].filter((c) => c.owner === actor.id && c.mesh !== mesh && c.mesh.parent === this.scene).length;
     mesh.position.copy(this.deskSpot(actor.id, onDesk));
-    this.scene.add(mesh);
   }
 
   pickupWs(lead, wsId) {
@@ -548,6 +557,8 @@ export class World {
       cube = { mesh, owner: actor.id };
       this.cubes.set(taskId, cube);
     }
+    const prev = this.actors.get(cube.owner);
+    if (prev !== actor && prev?.carrying === cube.mesh) prev.release();
     cube.owner = actor.id;
     this.carryInto(actor, cube.mesh);
   }
