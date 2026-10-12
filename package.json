@@ -1,0 +1,19 @@
+{
+  "name": "agent-world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A multi-agent team you can watch: an orchestrator plans, taskers loop until the work passes review, and everyone moves around a 3D office.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch-path=server --watch-path=config server/index.js",
+    "smoke": "node scripts/smoke.js",
+    "test": "node scripts/router-test.js && node scripts/smoke.js && node scripts/flows-test.js"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}
