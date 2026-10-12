@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Actor } from './character.js';
-import { applyFrustum, fitOffice, REF_UNITS_PER_PX, VIEW_OFFSET } from './framing.js';
+import { applyFrustum, fitOffice, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET } from './framing.js';
 import { Fx } from './fx.js';
 import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
 
@@ -150,19 +150,61 @@ export class World {
     this.view = { unitsPerPx: REF_UNITS_PER_PX, lensX: 0, lensY: 0 }; // projection now applied
     this.framedOnce = false; // insets received at least once
     this.resizedAt = -1;
+    // Automatic: the view follows the panels and the window. Once the user moves it
+    // (drag, wheel, pinch, focus, minimap) it stays where they put it until ⌂ (S3).
+    this.autoFrame = true;
 
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
-    let down = null;
-    canvas.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
-    canvas.addEventListener('pointerup', (e) => {
-      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5) {
-        const id = this.pick(e);
-        if (id) this.onPick?.(id);
-      }
-      down = null;
+    // Presses on the canvas by pointer: where each went down and where it is now. One
+    // released within CLICK px of where it went down is a click and picks an agent. One
+    // that travels CLICK px, or two that pinch by as much, while the controls run a
+    // gesture, takes the view; so does a wheel step the controls zoom with. The
+    // controls' canvas listeners were added first: here their state is already set.
+    const CLICK = 5;
+    const presses = new Map(); // pointerId -> { x0, y0, x, y }
+    let multi = false; // more than one pointer down since the last full release: no click
+    let spread0 = 0; // distance between the first two presses since the set last changed
+    const spread = () => {
+      const [a, b] = presses.values();
+      return b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+    const takeView = () => {
+      this.autoFrame = false;
+      this.fx.stop(this.camera); // the controls own the camera now
+    };
+    const release = (e) => {
+      const p = presses.get(e.pointerId);
+      presses.delete(e.pointerId);
+      const click = p && !multi && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) < CLICK;
+      if (!presses.size) multi = false;
+      spread0 = spread();
+      return click;
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      presses.set(e.pointerId, { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
+      multi ||= presses.size > 1;
+      spread0 = spread();
     });
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('pointerup', (e) => {
+      if (!release(e)) return;
+      const id = this.pick(e);
+      if (id) this.onPick?.(id);
+    });
+    canvas.addEventListener('wheel', (e) => {
+      // the controls cancel the page scroll for the wheel steps they zoom with
+      if (e.defaultPrevented && e.deltaY) takeView();
+    }, { passive: true });
     canvas.addEventListener('pointermove', (e) => {
+      const p = presses.get(e.pointerId);
+      if (p && !e.buttons) release(e); // its release never reached the canvas
+      else if (p) {
+        p.x = e.clientX;
+        p.y = e.clientY;
+        const travelled = Math.hypot(p.x - p.x0, p.y - p.y0) >= CLICK || Math.abs(spread() - spread0) >= CLICK;
+        if (travelled && this.controls.state !== -1) takeView(); // -1: no gesture (Controls.state)
+      }
       const id = this.pick(e);
       if (id !== this.hovered) {
         this.hovered = id;
@@ -174,6 +216,7 @@ export class World {
       const r = minimap.getBoundingClientRect();
       const x = WORLD.minX + ((e.clientX - r.left) / r.width) * (WORLD.maxX - WORLD.minX);
       const z = WORLD.minZ + ((e.clientY - r.top) / r.height) * (WORLD.maxZ - WORLD.minZ);
+      this.autoFrame = false;
       this.panTo(x, z);
     });
 
@@ -183,7 +226,9 @@ export class World {
   }
 
   // The whole office in the area the panels leave free, seen from the usual angle.
+  // It hands the view back to the automatic framing (⌂).
   resetView({ animate = false, duration = 0.6 } = {}) {
+    this.autoFrame = true;
     const fit = fitOffice({ width: this.width, height: this.height, insets: this.insets, envelope: ENVELOPE });
     this.moveCamera({
       target: fit.target,
@@ -196,13 +241,15 @@ export class World {
 
   // How far the UI reaches into the canvas from each edge (measured by main.js).
   // A panel opening or closing re-frames the office smoothly; the first insets and
-  // those that change together with the window size apply at once.
+  // those that change together with the window size apply at once. In manual mode
+  // the view stays: the insets only wait for ⌂ and for the moves that centre a point.
   setInsets(insets) {
     const sides = ['top', 'right', 'bottom', 'left'];
     if (this.framedOnce && sides.every((k) => Math.abs((insets[k] ?? 0) - this.insets[k]) < 0.5)) return;
     this.insets = Object.fromEntries(sides.map((k) => [k, insets[k] ?? 0]));
     const instant = !this.framedOnce || this.resizedAt === this.frameNo;
     this.framedOnce = true;
+    if (!this.autoFrame) return;
     this.resetView({ animate: !instant, duration: 0.35 });
     if (instant) this.renderNow();
   }
@@ -213,7 +260,10 @@ export class World {
     this.height = el.clientHeight;
     this.renderer.setSize(this.width, this.height, false);
     this.resizedAt = this.frameNo;
-    this.resetView();
+    // manual mode keeps scale, lens and target: the picture keeps its size and its
+    // place around the canvas centre (S3.5)
+    if (this.autoFrame) this.resetView();
+    else this.applyView();
     // setSize cleared the canvas after this frame was drawn: draw it again before
     // the browser paints, or a resize flashes an empty or stretched picture
     this.renderNow();
@@ -381,8 +431,9 @@ export class World {
 
   // The one camera animation: target, orbit offset, zoom and projection (scale and
   // lens shift, see framing.js) eased together. A newer move takes over from wherever
-  // the camera is, and what it leaves unset keeps heading where the replaced move was
-  // going (a pan during a focus still zooms in). Zoom is relative to the final scale.
+  // the camera is, and what it leaves unset, down to single view fields, keeps heading
+  // where the replaced move was going (a pan during a focus still zooms in). Zoom is
+  // relative to the final scale.
   moveCamera({ target, offset, zoom, view, duration = 0.7 } = {}) {
     this.settleControls();
     const goal = this.fx.active(this.camera)?.goal;
@@ -394,7 +445,7 @@ export class World {
       target: (target ?? goal?.target ?? fromTarget).clone(),
       offset: (offset ?? goal?.offset ?? fromOffset).clone(),
       zoom: zoom ?? goal?.zoom ?? fromZoom,
-      view: { ...(view ?? goal?.view ?? fromView) },
+      view: { ...(goal?.view ?? fromView), ...view },
     };
     // the orbit turns the short way round; an unchanged offset is kept exactly
     const turning = !to.offset.equals(fromOffset);
@@ -423,34 +474,58 @@ export class World {
       update: (dt) => {
         t = Math.min(1, t + dt / duration);
         step(1 - (1 - t) ** 3);
-        return t < 1;
+        if (t < 1) return true;
+        this.settleControls(); // a click made during the move leaves no drift behind
+        return false;
       },
     });
   }
 
-  // Lets the controls finish any drag inertia at once, so it cannot pull against a move.
+  // Drops what the controls still mean to apply and keeps the camera as it is on
+  // screen. With damping, a drag leaves inertia, and MapControls pulls the point a
+  // press grabbed back under the pointer: if a move shifted the view under a click,
+  // applying that pull would make the view jump or drift away from where it went.
   settleControls() {
-    const { controls } = this;
-    if (!controls.enableDamping) return;
+    const { camera, controls } = this;
+    const target = controls.target.clone();
+    const position = camera.position.clone();
+    const { zoom } = camera;
+    const damping = controls.enableDamping;
     controls.enableDamping = false;
-    controls.update();
-    controls.enableDamping = true;
+    controls.update(); // spends the pending pan, rotation and zoom, and zeroes them
+    controls.enableDamping = damping;
+    controls.target.copy(target);
+    camera.position.copy(position);
+    camera.lookAt(target);
+    camera.zoom = zoom;
+    camera.updateProjectionMatrix();
+  }
+
+  // The lens shift that draws the camera target at the centre of the free area as the
+  // panels are now: in manual mode the view may still be framed for older insets.
+  centreLens() {
+    const safe = safeRect(this.width, this.height, this.insets);
+    return { lensX: safe.cx - this.width / 2, lensY: safe.cy - this.height / 2 };
   }
 
   panTo(x, z) {
-    this.moveCamera({ target: new THREE.Vector3(x, 0, z) });
+    this.moveCamera({ target: new THREE.Vector3(x, 0, z), view: this.centreLens() });
   }
 
+  // A focus is the user's choice of what to look at: the view goes manual. The move
+  // takes over the running one instead of stopping it, so it keeps its unfinished goal.
   focus(agentId) {
     const a = this.actors.get(agentId);
     if (!a) return;
-    this.moveCamera({ target: new THREE.Vector3(a.position.x, 0, a.position.z), zoom: Math.max(this.camera.zoom, 2.2) });
+    this.autoFrame = false;
+    this.moveCamera({ target: new THREE.Vector3(a.position.x, 0, a.position.z), zoom: Math.max(this.camera.zoom, 2.2), view: this.centreLens() });
   }
 
   focusRoom(team) {
     const r = this.layout.rooms.find((x) => x.team === team);
     if (!r) return;
-    this.moveCamera({ target: new THREE.Vector3(r.x, 0, r.z), zoom: Math.max(this.camera.zoom, 2) });
+    this.autoFrame = false;
+    this.moveCamera({ target: new THREE.Vector3(r.x, 0, r.z), zoom: Math.max(this.camera.zoom, 2), view: this.centreLens() });
   }
 
   // ---------- cards & cubes ----------

@@ -119,6 +119,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
   - un cambio di dimensione del canvas è istantaneo.
 - **S3.5** In modalità manuale, un cambio di ingombri non muove nulla. Un cambio di dimensione del canvas mantiene `unitsPerPx`, `lens` e il target: il contenuto non si deforma e non salta.
 - **S3.6** *(rivisto in T5)* Il nuovo fit e il ridisegno avvengono subito, dentro il callback del `ResizeObserver`. Il browser esegue quei callback dopo il frame e prima di disegnare, e `renderer.setSize()` svuota il canvas: rimandare il fit al frame successivo, come prevedeva la prima versione, mostrerebbe per un frame un canvas vuoto o deformato, e al caricamento l'inquadratura senza pannelli. Più notifiche nello stesso frame producono più fit; il calcolo costa pochi microsecondi e vince l'ultimo.
+- **S3.7** *(aggiunta in T6)* I movimenti che centrano un punto (`focus()`, `focusRoom()`, clic sulla minimappa) portano la lente al centro dell'area libera **attuale**, calcolata dagli ultimi ingombri. In modalità manuale la vista può essere ancora inquadrata per ingombri vecchi (S3.5). Senza questa regola, aprire il pannello destro e poi fare un focus metteva l'agente circa 200 px fuori dal centro dell'area visibile (1920×1080).
 
 ### S4 — Animazioni esclusive per oggetto
 
@@ -130,6 +131,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 - **S4.3** Le animazioni della camera (fit, ⌂, `panTo`, `focus`, `focusRoom`) diventano un'unica animazione di camera registrata su `this.camera`: target, offset, zoom, lente e scala insieme. `focus` oggi lancia due animazioni separate e va unificato.
 - **S4.4** Un'interazione dell'utente (S3.2) chiama `fx.stop(this.camera)`, così l'animazione non combatte con i controlli.
 - **S4.5** *(aggiunta dopo T0, difetto N1 del report)* `Fx.update()` deve reggere gli effetti creati durante l'aggiornamento di un altro effetto: vanno aggiornati dal frame successivo, non persi. Oggi si perdono gli anelli d'arrivo dei fasci e le scintille delle consegne, le cui mesh restano congelate nella scena (144 anelli e 170 particelle dopo un run). Lo stesso vale per `track` e `stop` chiamati dentro un `done`.
+- **S4.6** *(aggiunta in T6, difetto N3 del report)* Vale anche il contrario di S4.4: i controlli non combattono con un'animazione. All'inizio di ogni movimento di camera e alla sua fine naturale, ciò che i controlli devono ancora applicare (l'inerzia di un trascinamento, il richiamo di `MapControls` verso il punto afferrato) viene **scartato**, non applicato, e la camera resta com'è sullo schermo. Prima, un clic su un agente durante un focus faceva saltare la camera di 48–134 px.
 
 ### S5 — Cubi
 

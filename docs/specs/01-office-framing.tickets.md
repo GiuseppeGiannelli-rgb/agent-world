@@ -174,6 +174,8 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    - `focus()`, `focusRoom()` e il clic sulla minimappa.
 3. In modalità manuale `resize()` e `setInsets()` applicano solo `applyView()` con i parametri correnti (S3.5).
 4. `resetView()` rimette `autoFrame = true`.
+5. *(aggiunta in T6, S3.7)* `focus()`, `focusRoom()` e `panTo()` passano a `moveCamera` la lente dell'area libera attuale (`centreLens()`); `moveCamera` accetta anche una `view` parziale.
+6. *(aggiunta in T6, S4.6)* `settleControls()` scarta la spinta residua dei controlli invece di applicarla, all'inizio e alla fine naturale di ogni movimento.
 
 **Fatto quando:** A7 è verde. Un semplice clic sul pavimento, senza trascinamento, non passa a manuale.
 

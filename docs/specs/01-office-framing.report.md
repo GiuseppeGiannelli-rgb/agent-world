@@ -203,3 +203,75 @@ Il modulo non è ancora collegato alla `World`: nessun cambiamento visibile fino
 - **Fino a T7:**
   - etichette e primi piani sono ancora relativi al fit, quindi con i pannelli aperti le etichette sembrano più grandi rispetto all'ufficio e il focus è meno ravvicinato di prima;
   - nella minimappa l'impronta della camera copre tutto il canvas.
+
+### T6 — Modalità automatica e manuale
+
+**Cosa cambia** (solo `world.js`):
+- `autoFrame` parte `true`. In modalità manuale `setInsets()` salva gli ingombri senza muovere la camera, e `resize()` applica solo `applyView()`: scala, lente, target e zoom restano quelli di prima. `resetView()`, cioè ⌂, rimette la modalità automatica.
+- `focus()`, `focusRoom()` e il clic sulla minimappa passano a manuale. Il loro movimento **sostituisce** quello in corso senza fermarlo prima, così ne eredita la meta non ancora raggiunta: per esempio la proiezione di un riadattamento a metà.
+- Un trascinamento, un pinch o la rotella passano a manuale e fermano l'animazione della camera (S4.4).
+
+**Come si riconosce il controllo manuale.** Le regole sono ricavate dai sorgenti di `OrbitControls` e `MapControls` r186:
+- **Ordine degli ascoltatori.** I controlli registrano `pointerdown` e `wheel` sul canvas alla loro creazione, quindi prima dei nostri. `pointermove` e `pointerup` invece li registrano sul documento, quindi dopo i nostri. Il primo puntatore viene catturato dal canvas: i nostri ascoltatori vedono tutto il gesto, anche fuori dal canvas.
+- **Trascinamento.** Un puntatore che si allontana di almeno 5 px dal punto in cui è sceso (la stessa soglia del clic: 4,9 px è un clic, 5 px un trascinamento), mentre `controls.state !== -1`. `state` è una proprietà pubblica e documentata di `Controls`, e -1 significa "nessun gesto". Copre pan (sinistro), rotazione (destro, o sinistro con un modificatore), dolly (centrale) e pan touch. Esclude i tasti che i controlli ignorano.
+- **Pinch.** Due puntatori la cui distanza cambia di almeno 5 px, anche se ogni dito si muove di meno: in un pinch simmetrico bastano 3 px per dito.
+- **Rotella.** Contano solo gli scatti che i controlli usano davvero. Chiamano `preventDefault()` solo dopo i loro controlli (abilitati, zoom attivo, nessun trascinamento in corso), quindi basta leggere `defaultPrevented`. Serve anche `deltaY ≠ 0`: uno scorrimento solo orizzontale non zooma. Il pinch del trackpad arriva come rotella con `ctrlKey` ed è coperto.
+- **Clic.** Ora è valutato per puntatore. Un gesto con due puntatori non è mai un clic, come già succedeva prima con l'unica variabile `down`: un tocco con due dita non selezionava nulla.
+- **Difesa.** Una pressione chiusa da `pointercancel`, o il cui rilascio non è arrivato al canvas (un `pointermove` senza tasti premuti), viene scartata e non resta "appesa".
+
+**Due difetti trovati durante l'implementazione e corretti nel perimetro** (spec aggiornata):
+- **S3.7, centratura in modalità manuale.** Senza una regola, dopo l'apertura di un pannello in modalità manuale la lente resta quella degli ingombri vecchi, e un focus centrava l'agente fuori dal centro dell'area visibile: 206 px con il pannello destro a 1920×1080. Ora `focus`, `focusRoom` e la minimappa passano a `moveCamera` la lente dell'area libera attuale (`centreLens()`), e `moveCamera` accetta una `view` parziale. In modalità automatica non cambia nulla, perché la lente è già quella.
+- **N3 → S4.6, salto dopo un clic durante un movimento.** `MapControls` fa il pan "verso il punto afferrato": a ogni `pointermove` ricalcola lo spostamento che riporta sotto il cursore il punto del mondo catturato al `pointerdown`. Se un'animazione sposta la vista sotto una pressione, anche 1 px di tremolio produce uno spostamento pari a tutto il tragitto dell'animazione. `settleControls()` (T5) lo applicava di colpo al movimento successivo. Misure a 1920×1080, con il codice di T5:
+  - un clic su un altro agente durante un focus faceva saltare la camera di 47,6 px (pressione di 0,05 s) e di 134,2 px (0,15 s);
+  - un clic sul pavimento lasciava una deriva di 1,7–4,4 px dopo la fine del movimento.
+
+  Ora la spinta residua viene **scartata**: si salva la camera, `update()` senza smorzamento consuma e azzera i residui, poi la camera viene ripristinata. Succede all'inizio e alla fine naturale di ogni movimento. Risultato: 0 e 0.
+
+**Verifica A7.** Lo snippet `__a7()` in console fa questo:
+- invia eventi sintetici di puntatore e rotella sul canvas. La cattura del puntatore è sostituita da una funzione vuota, perché il browser la rifiuta per i puntatori sintetici;
+- usa i veri pulsanti dei pannelli e misura gli ingombri come `main.js`;
+- fa avanzare la `World` a 60 fps fissi con il disegno sospeso, perché il pannello nascosto non disegna frame.
+
+La misura è lo spostamento massimo, in px sullo schermo, dei 4 angoli del pavimento e del target prima e dopo la chiusura e la riapertura del pannello destro. Prima della misura l'inerzia del trascinamento si esaurisce per 3 s (0,92¹⁸⁰ ≈ 3e-7). Lo stesso snippet gira sul `world.js` di T5 e su quello nuovo:
+
+| Caso | T5 | T6 |
+|---|---|---|
+| Trascinamento (pan) | la vista si sposta di 214 px | manuale, 0 px |
+| Rotazione (tasto destro) | 836 px | manuale, 0 px |
+| Dolly (tasto centrale) | 376 px | manuale, 0 px |
+| Trascinamento di 5 px esatti | 386 px | manuale, 0 px |
+| Trascinamento di andata e ritorno | 391 px | manuale, 0 px |
+| Rotella | 364 px | manuale, 0 px |
+| Pinch del trackpad (ctrl + rotella) | 398 px | manuale, 0 px |
+| Pinch touch, 3 px per dito | 375 px | manuale, 0 px |
+| Clic su un agente | 833 px | manuale, 0 px |
+| Clic sull'etichetta di una stanza | 737 px | manuale, 0 px |
+| Clic sulla minimappa | 259 px | manuale, 0 px |
+| Clic sul pavimento con 2 px di tremolio | si riadatta | resta automatica, si riadatta |
+| Trascinamento di 4,9 px | si riadatta | resta automatica, si riadatta |
+| Rotella solo orizzontale (`deltaY` 0) | si riadatta | resta automatica, si riadatta |
+| Rotella con un tasto premuto (i controlli la ignorano) | si riadatta | resta automatica, si riadatta |
+| Tocco con due dita | si riadatta | resta automatica, si riadatta |
+| Pressione annullata, oppure rilascio perso, poi hover | si riadatta | resta automatica, si riadatta |
+| ⌂ dopo un trascinamento | anima e torna al fit | torna automatica, anima (24 px al primo frame), finisce sul fit; poi i pannelli riadattano di nuovo |
+| Resize in manuale (da 1920×1080 a 1760×990) | rifà il fit | scala, lente, target e zoom invariati; aspetto della proiezione uguale a quello del canvas; fermi anche nei frame successivi |
+| Resize in automatico | rifà il fit | rifà il fit |
+| Focus in manuale dopo l'apertura di un pannello | (non applicabile) | agente al centro dell'area libera, scarto (0, 0) px |
+| Trascinamento durante un riadattamento automatico | l'animazione continua | sotto soglia (4,2 px) l'animazione continua, a 8,4 px si ferma; il punto afferrato finisce sotto il cursore (scarto 0,01 px) |
+| Clic durante un focus, pressione di 0,05 s | deriva 1,7 px, salto 47,6 px | 0 px, 0 px |
+| Clic durante un focus, pressione di 0,15 s | deriva 4,4 px, salto 134,2 px | 0 px, 0 px |
+
+Sul codice di T5 falliscono 15 controlli su 25, su quello nuovo nessuno. Gli altri 10 si dividono così:
+- 9 casi che devono restare automatici (le 7 pressioni che non prendono la vista, ⌂ e il resize in automatico) danno lo stesso risultato su T5 e su T6, come previsto;
+- il focus centrato passa anche su T5, perché senza modalità manuale la lente coincide sempre con gli ingombri: diventa significativo solo con T6.
+
+**Non regressione:**
+- A1 con i pannelli LR a 1920×1080: nessuno degli 11 punti dell'ingombro fuori dall'area libera;
+- un clic reale, attraverso la nuova gestione dei puntatori, seleziona 16 agenti su 16;
+- A6, chiusura del pannello destro: 0 px di salto al clic, 0,35 s esatti, fine sul fit;
+- `npm test` verde, `node --check` verde, nessun errore in console.
+
+**Limiti noti:**
+- **Pressione tenuta ferma durante un'animazione.** Se dopo la fine del movimento il puntatore si sposta di meno di 5 px, `MapControls` riporta sotto il cursore il punto afferrato all'inizio, e la vista scorre del tragitto dell'animazione senza passare a manuale. Correggerlo richiederebbe di toccare lo stato interno dei controlli (`_panWorldStart`). Il caso è raro, e il riadattamento successivo o ⌂ lo annullano.
+- **Verifica con mouse reale non fatta:** il pannello browser dell'app è nascosto. Gli eventi sintetici passano dagli stessi ascoltatori, ma va confermato nel QA visivo a schermo intero.
+- **Fino a T7:** restano i limiti scritti sopra per T5 (scala delle etichette, zoom dei primi piani, impronta nella minimappa).
