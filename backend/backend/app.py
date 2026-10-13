@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import types
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,10 +11,12 @@ from fastapi import FastAPI
 from backend.brain import Brain
 from backend.bus import Bus
 from backend.config import Config
+from backend.media import Media
 from backend.router.index import Router
-from backend.routes import api_state, events, gateway, skills_brain, static
+from backend.routes import api_state, events, gateway, runs, skills_brain, static
 from backend.skills import SkillLibrary
 from backend.store import Store
+from backend.team import Team
 
 ROOT = Path(__file__).resolve().parents[2]  # agent-world/
 
@@ -23,7 +26,7 @@ def data_home() -> Path:
     return home / "data"
 
 
-def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary):
+def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary, media: Media):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async def boot_skills():
@@ -39,11 +42,12 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
         # hang waiting for connections that would otherwise never close (S3).
         shutdown.set()
         await router.client.aclose()
+        await media.client.aclose()
 
     return lifespan
 
 
-def create_app(*, config=None, store=None, bus=None, router=None, skills=None, brain=None) -> FastAPI:
+def create_app(*, config=None, store=None, bus=None, router=None, skills=None, brain=None, team=None, media=None) -> FastAPI:
     config = config or Config(ROOT / "config")
     home = data_home()
     store = store or Store(home)
@@ -51,11 +55,22 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     router = router or Router(config, home, bus)
     skills = skills or SkillLibrary(ROOT, config, bus)
     brain = brain or Brain(home / "brain.json", bus)
+    team = team or Team(bus)
+    team.load(config.get()["staff"])  # same as server/index.js at boot
+    media = media or Media(config=config, bus=bus)
+    # The same shared context object the Node server hands to every Run.
+    ctx = types.SimpleNamespace(
+        config=config, bus=bus, store=store, router=router, team=team,
+        brain=brain, skills=skills, media=media, workspace_root=str(home / "workspace"),
+    )
+    live: dict = {}  # runId -> Run while it is active
+    chats: dict = {}  # agentId -> chat history (capped at 60 by talk())
     shutdown = asyncio.Event()
-    app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills))
+    app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media))
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
-    api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain)
+    api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)
+    runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx)
     skills_brain.mount(app, skills=skills, brain=brain)
     events.mount(app, bus=bus, shutdown=shutdown)
     gateway.mount(app, config=config, router=router)
@@ -65,6 +80,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
         three_build=ROOT / "node_modules" / "three" / "build",
         three_addons=ROOT / "node_modules" / "three" / "examples" / "jsm",
         store=store,
+        live=live,
     )
     app.state.config = config
     app.state.store = store
@@ -72,5 +88,10 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     app.state.router = router
     app.state.skills = skills
     app.state.brain = brain
+    app.state.team = team
+    app.state.media = media
+    app.state.ctx = ctx
+    app.state.live = live
+    app.state.chats = chats
     app.state.shutdown = shutdown
     return app

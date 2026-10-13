@@ -48,7 +48,7 @@ def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache"):
     return FileResponse(target, media_type=media_type, headers={"cache-control": cache_control})
 
 
-def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None) -> None:
+def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None, live=None) -> None:
     @app.get("/vendor/three/{path:path}")
     async def vendor_three(path: str):
         return serve_from(three_build, path)
@@ -63,7 +63,12 @@ def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, stor
 
     @app.get("/preview/{run_id}/{rest:path}")
     async def preview_file(run_id: str, rest: str = ""):
+        # Node: store.get(id) ?? live.get(id)?.data -- a running mission's
+        # workspace is previewable before it lands in the store.
         run = store.get(run_id) if store is not None else None
+        if run is None and live is not None:
+            active = live.get(run_id)
+            run = active.data if active is not None else None
         if run is None:
             return PlainTextResponse("Run non trovato", status_code=404)
         return serve_from(Path(run["workspace"]), rest)

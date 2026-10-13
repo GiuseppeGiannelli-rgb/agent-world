@@ -70,7 +70,15 @@ class Team:
         return a
 
     def try_acquire(self, team: str, run_id, *, allow_lead: bool = True, spawn_limit: int = 0) -> dict | None:
+        # Deviation from Node's team.js (tryAcquire): Node takes a free worker
+        # first and spawns a sub only when nobody is free. Here a positive
+        # spawn_limit means sub-agents take the parallel work FIRST, so the
+        # named staff stays available for coordination; staff is the fallback
+        # once the spawn limit is reached. Contract fixed by test_team.py.
         members = self.of_team(team)
+        subs = [a for a in members if a["kind"] == "sub"]
+        if len(subs) < spawn_limit:
+            return self.take(self.spawn(team, run_id, subs), run_id)
         worker = next((a for a in members if not a["busy"] and a["kind"] in ("worker", "sub")), None)
         if worker:
             return self.take(worker, run_id)
@@ -78,9 +86,6 @@ class Team:
             lead = next((a for a in members if not a["busy"] and a["kind"] == "lead"), None)
             if lead:
                 return self.take(lead, run_id)
-        subs = [a for a in members if a["kind"] == "sub"]
-        if len(subs) < spawn_limit:
-            return self.take(self.spawn(team, run_id, subs), run_id)
         return None
 
     def try_acquire_lead(self, team: str, run_id) -> dict | None:

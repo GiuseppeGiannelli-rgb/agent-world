@@ -12,10 +12,12 @@ def _bad_combo_message(name: str) -> str:
     return f'Combo "{name}": "models" deve essere una lista di "provider/modello"'
 
 
-def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None) -> None:
+def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None, team=None, media=None, live=None) -> None:
     @app.get("/api/state")
     async def api_state():
-        return build_state(config, store, router=router, skills=skills, brain=brain)
+        # Node: activeRun()?.data ?? store.list()[0] ?? null
+        live_run = next(iter(live.values())).data if live else None
+        return build_state(config, store, live_run, router=router, skills=skills, brain=brain, team=team, media=media)
 
     @app.get("/api/config")
     async def api_config_get():
@@ -42,12 +44,8 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None)
 
         return run_list(store)
 
-    @app.get("/api/runs/{run_id}")
-    async def api_run_get(run_id: str):
-        run = store.get(run_id)
-        if run is None:
-            return JSONResponse({"error": "Run non trovato"}, status_code=404)
-        return run
+    # GET /api/runs/{id} lives in routes/runs.py (P5): it must prefer the live
+    # run's mutable data over the stored snapshot.
 
     @app.get("/api/router")
     async def api_router_snapshot():

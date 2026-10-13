@@ -31,12 +31,15 @@ async def test_api_state_has_stub_and_real_fields(client):
         body = res.json()
         assert set(body.keys()) == {"mode", "config", "agents", "run", "runs", "router", "media", "skills", "brain"}
         assert body["config"]["ceo"]["id"] == "ada"
-        assert body["agents"] == []
+        # P5 replaced the agents stub with the real loaded team (ceo + leads
+        # + workers from config staff).
+        assert any(a["id"] == "ada" and a["kind"] == "ceo" for a in body["agents"])
         assert body["run"] is None
         assert body["runs"] == []
         # P3 replaced the router stub with Router.snapshot() -- same shape, real data.
         assert set(body["router"].keys()) == {"mode", "providers", "combos", "recent"}
-        assert body["media"] == {"ready": False, "image": [], "speech": []}
+        # P5 replaced the media stub with Media.status().
+        assert set(body["media"].keys()) == {"image", "speech", "providers"}
         # P4 replaced the skills stub with SkillLibrary.summary() -- real
         # sources, count still 0 because this app wasn't reindexed.
         assert set(body["skills"].keys()) == {"count", "sources"}

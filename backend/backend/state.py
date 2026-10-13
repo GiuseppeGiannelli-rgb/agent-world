@@ -36,17 +36,18 @@ def run_list(store) -> list[dict]:
     return out
 
 
-def build_state(config, store, live_run=None, *, router=None, skills=None, brain=None) -> dict:
+def build_state(config, store, live_run=None, *, router=None, skills=None, brain=None, team=None, media=None) -> dict:
     runs = store.list()
     current = live_run if live_run is not None else (runs[0] if runs else None)
     return {
         "mode": router.mode() if router is not None else "demo",
         "config": public_config(config),
-        "agents": STUB_AGENTS,
+        # P5: real team roster and media status replaced the A1 stubs.
+        "agents": team.list() if team is not None else STUB_AGENTS,
         "run": current,
         "runs": run_list(store),
         "router": router.snapshot() if router is not None else STUB_ROUTER,
-        "media": STUB_MEDIA,
+        "media": media.status() if media is not None else STUB_MEDIA,
         "skills": skills.summary() if skills is not None else STUB_SKILLS,
         "brain": {"count": brain.count, "recent": brain.list(40)} if brain is not None else STUB_BRAIN,
     }
