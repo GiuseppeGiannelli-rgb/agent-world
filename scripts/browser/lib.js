@@ -181,17 +181,24 @@ window.__t = (() => {
     return fn();
   };
   t.inspectorOpen = () => !$('#inspector').classList.contains('hidden');
-  // The tallest inspector a user gets: 6 events in the timeline (main.js shows no more)
-  // and a chat long enough to reach its own max-height. A render of the inspector puts
-  // its own content back, so callers fill it right before they measure, in one task.
+  // The tallest and widest inspector a user gets: 6 events in the timeline (main.js shows
+  // no more), a chat long enough to reach the inspector's max-height, and the longest
+  // strings with no place to break a line (no space, no hyphen): a file path cut at 36
+  // characters as renderInspector cuts it, a model id, a link pasted in the chat. A render of the
+  // inspector puts its own content back, so callers fill it right before they measure.
   t.tallInspector = () => {
     const el = $('#inspector');
     if (!t.inspectorOpen()) return;
-    const ev ='<div class="ev"><span class="t">t3</span><div>Scrive <code>site/menu-pizze-fritte.html</code></div></div>'.repeat(6);
+    const path = 'site/assets/img/menu_pizze_fritte_napoletane.webp'.slice(0, 36);
+    el.querySelector('.now').innerHTML = `<b>Al lavoro</b> · Scrive un file
+      <div>Task <b>ws2.t3</b>: Pagina del menu con prezzi, allergeni e foto dei piatti</div>
+      <div class="muted" style="margin-top:4px">Sto scrivendo la sezione delle pizze fritte</div>
+      <div class="muted" style="margin-top:4px;font-family:var(--mono);font-size:11px">openrouter/anthropic/claude_sonnet_4.5_20250929</div>`;
     const timeline = el.querySelector('.timeline') ?? el.querySelector('.col-title').insertAdjacentElement('beforebegin', document.createElement('div'));
     timeline.className = 'timeline';
-    timeline.innerHTML = ev;
-    el.querySelector('#chat-log').innerHTML = Array.from({ length: 8 }, (_, i) => `<div class="b ${i % 2 ? 'them' : 'me'}">${i % 2 ? 'Ok, aggiungo la sezione e poi ricontrollo i prezzi con il lead.' : 'Aggiungi anche le pizze fritte, per favore.'}</div>`).join('');
+    timeline.innerHTML = `<div class="ev"><span class="t">t3</span><div>Scrive <code>${path}</code></div></div>`.repeat(6);
+    const said = (i) => (i === 6 ? 'Guarda qui: https://www.pizzeriaesempio.it/menu/pizzefritte/napoletane_tradizionali.html' : i % 2 ? 'Ok, aggiungo la sezione e poi ricontrollo i prezzi con il lead.' : 'Aggiungi anche le pizze fritte, per favore.');
+    el.querySelector('#chat-log').innerHTML = Array.from({ length: 8 }, (_, i) => `<div class="b ${i % 2 ? 'them' : 'me'}">${said(i)}</div>`).join('');
   };
   return t;
 })();

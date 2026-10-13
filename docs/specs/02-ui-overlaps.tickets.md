@@ -233,6 +233,8 @@ La fase gira dentro `t.session`: orologio a 60 fps e disegno sospeso. `updateLab
 
 **File:** `public/css/app.css`, `scripts/browser/known-red.json`.
 
+*(Aggiunto in T2, Q6.)* Prima della colonna, una correzione a sé, con il suo commit. Il contenuto di prova dell'inspector ora porta le stringhe più lunghe che non si spezzano: un percorso di 36 caratteri, un id del modello, un link in chat, senza spazi né trattini. P2 controlla anche lo scorrimento interno della chat. Il test fallisce già a 340 px (la chat scorre di lato) e `overflow-wrap: anywhere` sull'inspector lo corregge.
+
 **Attività**
 1. `.inspector { left: var(--col-left); right: var(--col-right); width: auto; max-width: 340px; }`. In modalità stretta si aggiunge `max-width: none` alle regole attuali (8 px dai bordi, larghezza automatica).
 2. **Passaggio avversario:**

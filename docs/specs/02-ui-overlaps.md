@@ -42,6 +42,7 @@ body.right-closed .minimap { right: 12px; }
 | **Q2** | pannelli chiusi in modalità larga, poi finestra a 800 px | roster 12–572 invece di 8–792, cioè 220 px più corto; inspector a 12 px dal bordo invece che a 8 | le regole sul body valgono anche in modalità stretta e battono le sue |
 | **Q3** | entrambi i pannelli aperti, finestra tra 901 e 1035 px, inspector aperto | a 1000 px l'inspector (324–664) copre il pannello destro (628–988) per 36 px, su tutta la sua altezza (316 px con il contenuto misurato); il suo z-index (6) è sopra quello del pannello (4) | larghezza fissa di 340 px |
 | **Q4** *(nuovo)* | entrambi i pannelli aperti, finestra tra 1251 e 1321 px, inspector alto | a 1280×800, con 6 eventi e 8 messaggi l'inspector arriva al suo massimo di 630 px: 354–694 × 70–700, sopra la minimappa (652–856 × 604–788) per 42 × 96 px. *(T0: con il contenuto reale più alto, 6 eventi e 8 messaggi, 42 × 46 px)* | come Q3; la minimappa c'è solo sopra 1250 px |
+| **Q6** *(trovato in T2)* | inspector aperto, con una parola che non ha punti di a capo (un link incollato in chat, senza spazi né trattini) | a ogni dimensione larga, con l'inspector largo 340 px, la chat scorre di lato: 489 px di contenuto in 306 | nessuna regola spezza le parole lunghe; nella timeline la colonna `1fr` prende la larghezza minima del contenuto |
 
 Note su Q3 e Q4:
 - **Q3.** Tra 901 e 1035 px l'inspector copre il pannello. Il resto dell'interfaccia tiene 12 px di distanza dagli altri elementi: con questa regola (P2) il difetto arriva fino a 1047 px.

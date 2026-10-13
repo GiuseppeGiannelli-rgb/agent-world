@@ -364,6 +364,7 @@ body:not(.night) .primary { background: var(--ink); }
   position: fixed; left: var(--col-left); top: 70px; width: 340px; max-height: calc(100vh - 170px); overflow-y: auto;
   background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 14px 16px; z-index: 6;
+  overflow-wrap: anywhere; /* a path, a model id, a link: nothing scrolls sideways (spec 02, P2) */
 }
 .inspector .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .inspector .hd .av { width: 40px; height: 40px; font-size: 15px; }

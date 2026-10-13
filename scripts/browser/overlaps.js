@@ -45,14 +45,18 @@ window.__checks.overlaps = (() => {
     // how far an element is from where it should be, in px (Infinity: shown or hidden wrongly)
     const off = (got, want) => (want ? (got ? Math.max(Math.abs(got.x0 - want[0]), Math.abs(got.x1 - want[1])) : Infinity) : got ? Infinity : 0);
     const miss = (name, want) => (off(f[name], want) > 0.5 ? `${name} ${JSON.stringify(range(f[name]))}, expected ${JSON.stringify(want)}` : null);
-    const el = $('#inspector');
+    // P2: nothing in the inspector scrolls sideways, the inspector itself or its chat
+    const sideways = () => {
+      const scrolling = [['inspector', $('#inspector')], ['chat', $('#chat-log')]].filter(([, x]) => x && x.scrollWidth > x.clientWidth);
+      return scrolling.length ? scrolling.map(([n, x]) => `${n} scrolls sideways: ${x.scrollWidth} > ${x.clientWidth}`).join('; ') : null;
+    };
     const out = {
       state: state(),
       inspector,
       P1: pairs.filter((p) => !p.includes('inspector')),
       P1i: pairs.filter((p) => p.includes('inspector')),
       P2: miss('roster', e.roster),
-      P2i: inspector ? miss('inspector', e.inspector) ?? (el.scrollWidth > el.clientWidth ? `inspector scrolls sideways: ${el.scrollWidth} > ${el.clientWidth}` : null) : null,
+      P2i: inspector ? miss('inspector', e.inspector) ?? sideways() : null,
       P3: miss('minimap', e.minimap),
     };
     if (ref) {
