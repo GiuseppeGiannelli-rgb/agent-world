@@ -3,6 +3,7 @@ node_modules/
 config/local.json
 data/
 workspace/
+skills/vendor/
 .vscode
 HANDOFF.md
 .claude/

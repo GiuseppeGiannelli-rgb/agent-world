@@ -77,7 +77,8 @@
   },
 
   "skills": {
-    "sources": ["skills", "~/.claude/skills", "~/.claude/plugins", "~/.agents/skills", "~/.codex/skills", "../Claudio/claudio-skills"],
+    "sources": ["skills", "~/.claude/skills", "~/.claude/plugins", "~/.agents/skills", "~/.codex/skills"],
+    "repos": ["https://github.com/vercel-labs/skills"],
     "perTask": 3
   },
 

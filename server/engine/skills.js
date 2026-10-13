@@ -1,13 +1,24 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readdir, readFile } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { Bm25 } from './search.js';
 
-const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.venv', 'venv']);
+// '.incoming' holds default repos while they are being cloned (ensureRepos).
+const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.venv', 'venv', '.incoming']);
 const MAX_FILES = 8000;
+
+function git(args) {
+  return new Promise((res, rej) => {
+    const child = spawn('git', args, { windowsHide: true });
+    let err = '';
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', rej);
+    child.on('close', (code) => (code === 0 ? res() : rej(new Error(`git ha risposto ${code}: ${err.slice(-300)}`))));
+  });
+}
 
 function expand(p, root) {
   if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2));
@@ -141,22 +152,55 @@ export class SkillLibrary {
     return { count: this.skills.length, sources: this.sources.map((s) => ({ label: s.label, dir: s.dir, exists: existsSync(s.dir), count: bySource[s.label] ?? 0 })) };
   }
 
+  // A new clone must not join an indexing pass that started before it.
+  async refresh() {
+    await this.indexing;
+    return this.reindex();
+  }
+
+  // "https://github.com/owner/repo" -> its folder in skills/vendor, or null.
+  repo(url) {
+    const m = String(url ?? '').trim().match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+    return m ? { slug: `${m[1]}/${m[2]}`, url: `https://github.com/${m[1]}/${m[2]}.git`, dir: join(this.vendorDir, `${m[1]}-${m[2]}`) } : null;
+  }
+
   // Clones (or updates) a GitHub repository of skills into skills/vendor.
   async addRepo(url) {
-    const m = String(url ?? '').trim().match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
-    if (!m) throw new Error('Serve un indirizzo GitHub del tipo https://github.com/utente/repo');
-    const target = join(this.vendorDir, `${m[1]}-${m[2]}`);
+    const repo = this.repo(url);
+    if (!repo) throw new Error('Serve un indirizzo GitHub del tipo https://github.com/utente/repo');
     await mkdir(this.vendorDir, { recursive: true });
-    const args = existsSync(target) ? ['-C', target, 'pull', '--ff-only'] : ['clone', '--depth', '1', `https://github.com/${m[1]}/${m[2]}.git`, target];
-    await new Promise((res, rej) => {
-      const child = spawn('git', args, { windowsHide: true });
-      let err = '';
-      child.stderr.on('data', (d) => (err += d));
-      child.on('error', rej);
-      child.on('close', (code) => (code === 0 ? res() : rej(new Error(`git ha risposto ${code}: ${err.slice(-300)}`))));
-    });
+    await git(existsSync(repo.dir) ? ['-C', repo.dir, 'pull', '--ff-only'] : ['clone', '--depth', '1', repo.url, repo.dir]);
     const before = this.skills.length;
-    await this.reindex();
-    return { repo: `${m[1]}/${m[2]}`, path: target, added: this.skills.length - before, total: this.skills.length };
+    await this.refresh();
+    return { repo: repo.slug, path: repo.dir, added: this.skills.length - before, total: this.skills.length };
+  }
+
+  // The repos in skills.repos ship with the app: each missing one is cloned
+  // once, into skills/vendor/.incoming first, so a clone cut short never looks
+  // installed. Clones already there are left alone (the Skill tab updates them).
+  // Never throws: without network the app starts with the skills it has.
+  async ensureRepos() {
+    const added = [];
+    for (const url of this.config.get().skills?.repos ?? []) {
+      const repo = this.repo(url);
+      if (!repo) {
+        console.warn(`Skill Hub    →  repo ignorata, non è un indirizzo GitHub: ${url}`);
+        continue;
+      }
+      if (existsSync(repo.dir)) continue;
+      const tmp = join(this.vendorDir, '.incoming', basename(repo.dir));
+      try {
+        await rm(tmp, { recursive: true, force: true });
+        await mkdir(dirname(tmp), { recursive: true });
+        await git(['clone', '--depth', '1', repo.url, tmp]);
+        await rename(tmp, repo.dir);
+        added.push(repo.slug);
+      } catch (err) {
+        await rm(tmp, { recursive: true, force: true }).catch(() => {});
+        if (!existsSync(repo.dir)) console.warn(`Skill Hub    →  ${repo.slug} non scaricata: ${err.message.split('\n')[0]}`);
+      }
+    }
+    if (added.length) await this.refresh();
+    return added;
   }
 }

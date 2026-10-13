@@ -33,6 +33,7 @@ const brain = new Brain(join(dataDir, 'brain.json'), bus);
 const skills = new SkillLibrary({ root: ROOT, config, bus });
 const media = new Media({ config, bus });
 skills.reindex().then((n) => console.log(`Skill Hub    →  ${n} skill indicizzate`));
+skills.ensureRepos().then((added) => added.length && console.log(`Skill Hub    →  scaricate le repo predefinite ${added.join(', ')} (${skills.skills.length} skill)`));
 
 const ctx = { config, bus, store, router, team, brain, skills, media, workspaceRoot: join(home, 'workspace') };
 const chats = new Map(); // agentId -> [{ from, text, ts }]

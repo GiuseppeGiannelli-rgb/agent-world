@@ -159,6 +159,39 @@ assert.deepEqual([...png.subarray(1, 4)], [80, 78, 71]);
 assert.equal(demoWav('x').subarray(0, 4).toString(), 'RIFF');
 console.log('ok  demo PNG and WAV');
 
+// 11. default skill repos: a clone already there is kept, a half clone is never indexed
+{
+  const { mkdirSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { SkillLibrary } = await import('../server/engine/skills.js');
+  const skillMd = (dir, name) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} test skill\n---\n# ${name}\n`);
+  };
+  const root = join(dataDir, 'skill-root');
+  skillMd(join(root, 'skills', 'vendor', 'acme-present', 'tool'), 'present-skill');
+  skillMd(join(root, 'skills', 'vendor', '.incoming', 'acme-half', 'tool'), 'half-skill');
+  const config = { get: () => ({ skills: { sources: ['skills'], repos: ['https://github.com/acme/present', 'not a github url'] } }) };
+  const lib = new SkillLibrary({ root, config, bus: new EventEmitter() });
+  assert.equal(lib.repo('https://github.com/vercel-labs/skills.git/')?.dir, join(root, 'skills', 'vendor', 'vercel-labs-skills'));
+  assert.equal(lib.repo('https://gitlab.com/acme/present'), null);
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (msg) => warnings.push(msg);
+  try {
+    assert.deepEqual(await lib.ensureRepos(), [], 'nothing to clone: the repo is there, the bad url is skipped');
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /not a github url/);
+  await lib.reindex();
+  assert.deepEqual(lib.skills.map((s) => s.name), ['present-skill'], 'a clone in .incoming is not installed yet');
+  const shipped = JSON.parse(readFileSync(new URL('../config/default.json', import.meta.url), 'utf8')).skills.repos;
+  assert.ok(shipped.length > 0 && shipped.every((u) => lib.repo(u)), 'every default repo is a GitHub url');
+}
+console.log('ok  default skill repos');
+
 upstream.close();
 await removeDir(dataDir);
 console.log('ALL OK');
