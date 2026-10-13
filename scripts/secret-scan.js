@@ -8,10 +8,11 @@
 // Exits 1 and prints "where: rule" lines when something is found. Matches are
 // never printed in full: a scan log must not leak what it found.
 //
-// Personal words (real name, e-mail) are never written in this repo: they come
-// from `git config user.name` / `user.email` and from the untracked file
-// .git/info/personal-words (one word per line), so they keep working after the
-// git identity is changed to a pseudonym.
+// Personal words (real name, e-mail) are never written in this repo. They come
+// from the untracked file .git/info/personal-words (one word per line) when it
+// exists; otherwise from `git config user.name` / `user.email`, which protects a
+// fresh clone. The file wins so that a pseudonymous identity ("agent-world-dev")
+// does not turn common words into findings.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -57,6 +58,11 @@ export function personalWords(root = process.cwd()) {
     w = String(w ?? '').trim().toLowerCase();
     if (w.length >= 4 && !/^(noreply|users|github|example|claude|test|user)$/.test(w)) words.add(w);
   };
+  const file = join(root, gitText(['-C', root, 'rev-parse', '--git-dir']).trim(), 'info', 'personal-words');
+  if (existsSync(file)) {
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) if (line.trim() && !line.startsWith('#')) add(line);
+    return [...words];
+  }
   for (const key of ['user.name', 'user.email']) {
     let v = '';
     try {
@@ -68,9 +74,6 @@ export function personalWords(root = process.cwd()) {
     for (const part of v.split(/[^\p{L}\p{N}]+/u)) add(part);
     if (key === 'user.email') add(v.replace(/[^\p{L}\p{N}]/gu, ''));
   }
-  const file = join(root, gitText(['-C', root, 'rev-parse', '--git-dir']).trim(), 'info', 'personal-words');
-  const local = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  for (const line of local.split(/\r?\n/)) if (line.trim() && !line.startsWith('#')) add(line);
   return [...words];
 }
 

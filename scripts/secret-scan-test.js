@@ -40,7 +40,6 @@ try {
   git('init', '-q');
   git('config', 'user.name', realName.join(' '));
   git('config', 'user.email', `${realName[1].toLowerCase()}@example.invalid`);
-  writeFileSync(join(repo, '.git', 'info', 'personal-words'), '# local\nmarmellatone\n');
 
   stageOnly({ 'README.md': '# Demo\nNo secrets here. Paths are relative: ../other-repo, ~/ComfyUI.\n' });
   let r = scan('--staged');
@@ -75,10 +74,6 @@ try {
   r = scan('--staged');
   check('the name from git config is blocked', r.code === 1 && /personal word/.test(r.out), r);
 
-  stageOnly({ 'docs/retro.md': 'A note about Marmellatone.\n' });
-  r = scan('--staged');
-  check('a word from .git/info/personal-words is blocked', r.code === 1 && /personal word/.test(r.out), r);
-
   stageOnly({ 'config/local.json': '{}\n', 'data/runs/x.json': '{}\n' });
   r = scan('--staged');
   check('local config and runtime data are blocked', r.code === 1 && /local config/.test(r.out) && /runtime data/.test(r.out), r);
@@ -98,6 +93,17 @@ try {
   r = scan('--history');
   check('the history scan finds a key that was removed later', r.code === 1 && /old\.txt:1 \(blob [0-9a-f]{7}\): anthropic key/.test(r.out), r);
   check('the history scan reports the personal identity', /2 commits: personal identity/.test(r.out), r);
+
+  // .git/info/personal-words, when present, is the list: a pseudonymous identity
+  // must not turn its common words into findings
+  writeFileSync(join(repo, '.git', 'info', 'personal-words'), '# local\nmarmellatone\n');
+  git('config', 'user.name', 'agent-world-dev');
+  stageOnly({ 'docs/retro.md': 'A note about Marmellatone.\n' });
+  r = scan('--staged');
+  check('a word from .git/info/personal-words is blocked', r.code === 1 && /personal word/.test(r.out), r);
+  stageOnly({ 'docs/agents.md': 'Every agent in the world has a desk.\n' });
+  r = scan('--staged');
+  check('with the file, the pseudonymous git name is not a personal word', r.code === 0, r);
 } finally {
   await removeDir(repo);
 }
