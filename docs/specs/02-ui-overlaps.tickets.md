@@ -117,6 +117,7 @@ Dimensioni della finestra:
 7. **Contenuto dell'inspector.** A ogni dimensione, con l'inspector aperto e alto, non deve comparire lo scorrimento orizzontale (V2).
 8. **Nomi delle verifiche** (peggior caso nei dati): `P1 <dim>`, `P1 <dim> inspector`, `P2 <dim>`, `P2 <dim> inspector`, `P3 <dim>`, `P4 <dim>`, `P5 <dim>`, `walk <n>`. Così i rossi di T1 e quelli di T2 restano separati.
 9. **Alla fine** la pagina si ricarica a 1920×1080 con LR, e le fasi successive partono pulite.
+10. *(Aggiunto in T0)* **Ingressi applicati.** Una verifica `inputs <dim>` controlla che ogni ingresso della matrice sia stato applicato davvero: senza la sua precondizione, "Vai alla stanza" o ✕ verrebbero saltati in silenzio.
 
 ### D. Fase `labels` (E1–E7 e le varianti)
 
@@ -160,7 +161,8 @@ La fase gira dentro `t.session`: orologio a 60 fps e disegno sospeso. `updateLab
      - `Input.dispatchMouseEvent` di tipo `mouseWheel` con `deltaY` −120 sul centro del nome di una stanza;
      - per confronto, lo stesso evento su un punto libero del canvas, partendo entrambe le volte dalla stessa vista (⌂);
      - atteso: stesso rapporto di scala (±2%) e `autoFrame` falso. Oggi è rosso.
-6. **Tabella delle varianti (per D8).** Per oggi, A, B e C riporta il peggior caso su tutta la matrice di E1 (con l'ordine di oggi), E2, E3, E4, E5 e della scritta della bay, con lo stato in cui accade. Va nel JSON (`--json`) e nel report.
+6. *(Aggiunto in T0)* **Il modello anche su A, B e C.** Un involucro di `updateLabels()`, solo nella pagina di test, disegna ogni variante con il CSS come farà T3, con il punto della trasformazione sull'ancora. Il modello deve coincidere con il disegno entro ±1 px. Lo stesso involucro dà gli screenshot delle varianti (`02-variante-n4-*`).
+7. **Tabella delle varianti (per D8).** Per oggi, A, B e C riporta il peggior caso su tutta la matrice di E1 (con l'ordine di oggi), E2, E3, E4, E5 e della scritta della bay, con lo stato in cui accade. Va nel JSON (`--json`) e nel report.
 
 ### E. Baseline e report
 
