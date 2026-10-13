@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Oggetto** | `main..feat/office-framing` (`c1312ff..973fba3`), 31 file, +2991 / −79 |
+| **Oggetto** | `main..feat/office-framing` (`33d9361..da55a4d`), 31 file, +2991 / −79 |
 | **Data** | 2026-10-13 |
 | **Stato** | concluso. Decisioni dell'utente: R1 approvata (metodo interno di `MapControls` accettato), R3 → ticket N5, R5 sì; R2, R4, R6–R8 da correggere. Esito nella sezione 4 |
 | **Baseline** | `npm test` verde; `npm run test:browser` 123/123, missione demo completata in 153 s, 0 processi Edge rimasti |
@@ -48,7 +48,7 @@ La correzione è stata provata sui tre casi del focus. Gli altri due passano dal
 - Il pan touch è incrementale (`_handleTouchMovePan`) e la rotazione pure: non serve toccarli.
 - **Effetto collaterale positivo:** sparisce anche il limite noto di T6. La riga va tolta dal report.
 
-**Esito** (`2b72e40`). Il pavimento viene riafferrato in `applyView()`, da cui passa ogni cambio dell'immagine fatto dal codice. Il controllo A7 "drag during an automatic re-frame" si aspettava il comportamento vecchio, cioè il punto premuto per primo di nuovo sotto il cursore: ora verifica il punto sotto il cursore all'inizio del trascinamento. È una precisazione di S4.6, annotata nella spec. Sul codice vecchio i quattro casi falliscono (31, 346, 37 e 687 px); ora restano sotto 1 px.
+**Esito** (`a2840e5`). Il pavimento viene riafferrato in `applyView()`, da cui passa ogni cambio dell'immagine fatto dal codice. Il controllo A7 "drag during an automatic re-frame" si aspettava il comportamento vecchio, cioè il punto premuto per primo di nuovo sotto il cursore: ora verifica il punto sotto il cursore all'inizio del trascinamento. È una precisazione di S4.6, annotata nella spec. Sul codice vecchio i quattro casi falliscono (31, 346, 37 e 687 px); ora restano sotto 1 px.
 
 **Test proposto.** In `manual-mode.js`, i casi "pressione durante un movimento, poi 20 px" e "pressione tenuta fino alla fine, poi 3 px", con la soglia di scivolamento < 1 px. Mutazione: senza la ripresa il test deve fallire (253 e 447 px).
 
@@ -84,7 +84,7 @@ function selectTeam(id, focus = false) {
 
 **Test proposto.** Uno scenario A7 con il pannello destro chiuso prima del clic, che verifica il centro della stanza a ±1 px. Mutazione: con l'ordine vecchio lo scarto deve tornare a 206 px.
 
-**Esito** (`b01fd69`): 206 px sul codice vecchio, 0 px ora.
+**Esito** (`65e93f9`): 206 px sul codice vecchio, 0 px ora.
 
 ### R3 — Gli effetti e le card non liberano le risorse GPU (media, fuori perimetro: S6.3)
 
@@ -121,7 +121,7 @@ Prima del branch, con un'eccezione la lista restava intatta.
 - **Gravità:** ipotetica. Oggi nessun effetto lancia, e in r186 `setAnimationLoop` richiede il frame successivo *prima* di chiamare il loop, quindi il rendering non si ferma.
 - **Correzione:** un `try/finally` che rimette in lista gli effetti non ancora aggiornati e ritira quello che ha lanciato. Più un caso in `world-test.js`.
 
-**Esito** (`957018a`). Al posto del `try/finally` c'è un `try/catch` per ogni effetto: è più semplice e non perde l'ordine. L'effetto che lancia viene segnalato in console e ritirato, gli altri continuano. Il caso 7 di `world-test.js` fallisce sul codice vecchio.
+**Esito** (`f2b37d4`). Al posto del `try/finally` c'è un `try/catch` per ogni effetto: è più semplice e non perde l'ordine. L'effetto che lancia viene segnalato in console e ritirato, gli altri continuano. Il caso 7 di `world-test.js` fallisce sul codice vecchio.
 
 ### R5 — Lo zoom delle animazioni è interpolato in modo lineare (bassa, opzionale: è una scelta di resa)
 
@@ -131,7 +131,7 @@ Prima del branch, con un'eccezione la lista restava intatta.
 - **La proposta:** con un'interpolazione geometrica (`z0 · (z1/z0)^e`, e lo stesso per `unitsPerPx`) il primo frame scende al **9%** e la velocità percepita segue la stessa curva del pan.
 - **Il limite di zoom regge:** il vincolo `zoom ≤ unitsPerPx / (REF/4)` resta valido a ogni passo, perché diventa lineare nei logaritmi. La prova del n. 11 in `world-test.js` (ora n. 12) va riscritta di conseguenza.
 
-**Esito** (`565adfe`). `scaleAt()` in `framing.js`, esatta agli estremi. Primo frame del focus dalla vista completa con LR:
+**Esito** (`a394d13`). `scaleAt()` in `framing.js`, esatta agli estremi. Primo frame del focus dalla vista completa con LR:
 
 | Viewport | Prima | Dopo |
 |---|---|---|
@@ -149,7 +149,7 @@ Decidi tu: cambia la sensazione dell'animazione e richiede il tuo QA visivo.
 - **Perché conta:** leggerli dal DOM in un rAF può forzare un layout sincrono.
 - **La correzione:** una riga. La funzione è toccata dal branch, ma la riga è preesistente.
 
-**Esito** (`ec03288`): nessun cambio di comportamento, tutte le suite verdi.
+**Esito** (`ed3e104`): nessun cambio di comportamento, tutte le suite verdi.
 
 ### R7 — La spec nomina costanti che il codice non ha (bassa, documentazione)
 
@@ -164,7 +164,7 @@ Decidi tu: cambia la sensazione dell'animazione e richiede il tuo QA visivo.
 - **Il problema:** il runner usa il `WebSocket` globale, che è stabile solo da Node 22. Su Node 20 fallisce con `WebSocket is not defined`.
 - **La correzione:** un controllo all'avvio con un messaggio chiaro, oppure una nota nel `package.json`. `npm test` non è coinvolto.
 
-**Esito** (`c54618f`). La riproduzione con `node --no-experimental-websocket` ha mostrato un danno più grave del messaggio criptico:
+**Esito** (`c2c941f`). La riproduzione con `node --no-experimental-websocket` ha mostrato un danno più grave del messaggio criptico:
 - il runner avviava server ed Edge e falliva dopo 27 s;
 - senza DevTools non poteva chiudere il browser, e restavano **9 processi Edge** con il profilo bloccato (li ho chiusi).
 
@@ -221,13 +221,13 @@ Un commit atomico per voce. Il test è stato scritto prima e ha fallito sul codi
 
 | Commit | Voce | Il test fallisce senza la correzione |
 |---|---|---|
-| `2b72e40` | R1, la presa segue la camera sotto una pressione | 4 casi A7: 31, 346, 37 e 687 px |
-| `957018a` | R4, un effetto che lancia non porta via gli altri | caso 7 di `world-test.js` |
-| `b01fd69` | R2, l'etichetta di una stanza apre la scheda prima del focus | A7: 206 px |
-| `565adfe` | R5, zoom interpolato in rapporto | caso 13 di `world-test.js`, A8 nei 3 viewport |
-| `7788a29` | controllo A6 reso robusto (sezione 5) | — |
-| `ec03288` | R6 | — (nessun cambio di comportamento) |
-| `c54618f` | R8 | riproduzione con `--no-experimental-websocket` |
+| `a2840e5` | R1, la presa segue la camera sotto una pressione | 4 casi A7: 31, 346, 37 e 687 px |
+| `f2b37d4` | R4, un effetto che lancia non porta via gli altri | caso 7 di `world-test.js` |
+| `65e93f9` | R2, l'etichetta di una stanza apre la scheda prima del focus | A7: 206 px |
+| `a394d13` | R5, zoom interpolato in rapporto | caso 13 di `world-test.js`, A8 nei 3 viewport |
+| `62dd681` | controllo A6 reso robusto (sezione 5) | — |
+| `ed3e104` | R6 | — (nessun cambio di comportamento) |
+| `c2c941f` | R8 | riproduzione con `--no-experimental-websocket` |
 | `docs` | R7, più questo report | — |
 | — | R3 → ticket N5 | — |
 
@@ -235,7 +235,7 @@ R4 è stato fatto prima di R2: il suo test era già scritto, e così `npm test` 
 
 ## 5. Trovati durante le correzioni
 
-- **A6 instabile.** In 1 giro completo su 6 il controllo "clicks on agents through the lens shift" ha dato 15/16. Un agente a spasso passava davanti a un altro, e il clic selezionava giustamente quello davanti. Il codice non c'entrava: nei 3 giri ripetuti subito dopo il risultato è stato 16/16. Ora il controllo si aspetta il primo agente sul raggio lanciato dal punto proiettato, senza coordinate del clic, e ammette al massimo 2 agenti coperti (`7788a29`).
+- **A6 instabile.** In 1 giro completo su 6 il controllo "clicks on agents through the lens shift" ha dato 15/16. Un agente a spasso passava davanti a un altro, e il clic selezionava giustamente quello davanti. Il codice non c'entrava: nei 3 giri ripetuti subito dopo il risultato è stato 16/16. Ora il controllo si aspetta il primo agente sul raggio lanciato dal punto proiettato, senza coordinate del clic, e ammette al massimo 2 agenti coperti (`62dd681`).
 - **N6, fuori perimetro.** `switchTab()` apre il pannello destro senza aggiornare `body.right-closed`. Roster e minimappa restano posizionati per il pannello chiuso e gli finiscono sotto. A 1920×1080:
   - la minimappa (1704–1908 px) sta tutta sotto il pannello (1508–1908 px);
   - il roster lo invade per 184 px.

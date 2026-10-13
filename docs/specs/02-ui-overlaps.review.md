@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Oggetto** | `main..feat/ui-overlaps` (`e14f039..3a83aa7`), 12 commit, 36 file, +2163 / −82. Produzione: 3 file, +48 / −21. Test: 6 file, +1140 / −61 |
+| **Oggetto** | `main..feat/ui-overlaps` (`0914146..eb846b4`), 12 commit, 36 file, +2163 / −82. Produzione: 3 file, +48 / −21. Test: 6 file, +1140 / −61 |
 | **Data** | 2026-10-13 |
 | **Fronti chiesti** | prestazioni di `:has()` (ricalcoli di stile a catena, repaint); solidità dell'inoltro della rotella (costo, perdite di memoria); regressioni nelle regole dei breakpoint |
-| **Esito** | nessun difetto in perimetro da correggere nel codice dell'app. Una correzione di commento nei test (R7, `3a83aa7`). R5 deciso: la sintassi a intervallo resta; N8 annotato come ticket futuro |
+| **Esito** | nessun difetto in perimetro da correggere nel codice dell'app. Una correzione di commento nei test (R7, `eb846b4`). R5 deciso: la sintassi a intervallo resta; N8 annotato come ticket futuro |
 
 **In breve**
 1. **`:has()`.** Nessun ricalcolo a catena: inserimenti nel DOM, classi sulle etichette e `far` ricalcolano gli stessi elementi di `main` (mediana 1). Il clic su un pannello ricalcola tutto il documento (379 elementi contro una mediana di 267), ma in tempo non costa di più: 5,9 ms in mediana contro 7,8 su `main`, misurati su 60 clic, e senza i picchi di `main` (fino a 1011 elementi e 40 ms).
@@ -18,7 +18,7 @@
 
 - **Letto tutto il diff** di produzione e di test.
 - **Letti i sorgenti di three r186** usati dall'inoltro: `OrbitControls.onMouseWheel`, `_customWheelEvent`, `_interceptControlDown`, `connect()`.
-- **Due sonde con DevTools**, nella cartella temporanea della sessione e non nel repo, eseguite su `main` (`e14f039`, estratto con `git archive`, `node_modules` collegato) e su HEAD:
+- **Due sonde con DevTools**, nella cartella temporanea della sessione e non nel repo, eseguite su `main` (`0914146`, estratto con `git archive`, `node_modules` collegato) e su HEAD:
   - `perf-probe.mjs`: tracing di Chrome (`devtools.timeline`). Per ogni azione conta gli elementi ricalcolati (`UpdateLayoutTree.elementCount`) e il tempo di stile, delimitando ogni passo con `console.timeStamp`. Misura anche la durata delle dispatch di `wheel` (`EventDispatch`), separando l'evento esterno da quello inoltrato, e prende `JSEventListeners`, `Nodes` e `JSHeapUsedSize` dopo una garbage collection forzata;
   - `wheel-regions.mjs`: i layer del compositore (`LayerTree`) con le loro zone `WheelEventHandler`, cioè dove la rotella deve passare dal thread principale.
 - **Ogni sospetto è stato misurato**, e ogni modifica provata è stata misurata prima di decidere (R1).
@@ -105,11 +105,11 @@ L'unico ascoltatore in più è l'inoltro stesso, registrato una volta sola: `Wor
 
 ### R6 — `transform-origin: 0 50% !important` tolto da `.room-label` (nessun difetto)
 
-L'`!important` veniva dal commit iniziale `c1312ff`. Nessuno script imposta l'origine della trasformazione (grep di `public/js/`), quindi toglierlo è sicuro. Era anche in conflitto con una seconda dichiarazione (`0 100%`) nella stessa regola, rimasta morta fino a T3.
+L'`!important` veniva dal commit iniziale `33d9361`. Nessuno script imposta l'origine della trasformazione (grep di `public/js/`), quindi toglierlo è sicuro. Era anche in conflitto con una seconda dichiarazione (`0 100%`) nella stessa regola, rimasta morta fino a T3.
 
 ## 3. Strumenti di test
 
-- **R7 — commento (corretto, `3a83aa7`).** L'intestazione di `scripts/browser/lib.js` parlava solo della spec 01.
+- **R7 — commento (corretto, `eb846b4`).** L'intestazione di `scripts/browser/lib.js` parlava solo della spec 01.
 - **R8 — portabilità della guardia sulla scritta della bay (nota).**
   - Il limite di D8 è 27%, la misura 26,68%. La copertura dipende dal font, che determina la larghezza delle etichette.
   - Su una macchina con un font diverso (per esempio Linux senza Segoe UI) la guardia potrebbe dare un falso rosso, o un falso verde.
@@ -132,8 +132,8 @@ L'`!important` veniva dal commit iniziale `c1312ff`. Nessuno script imposta l'or
 ## 5. Esito
 
 - **Codice dell'app:** nessuna modifica dalla review. I tre fronti chiesti reggono, con le misure sopra.
-- **Commit della review:** `3a83aa7`, solo il commento di R7.
-- **Verifiche:** l'ultima suite completa su `6065481` (stesso codice dell'app di oggi) era verde, 226 verifiche. Dopo `3a83aa7`, che cambia un solo commento, basta `node --check`.
+- **Commit della review:** `eb846b4`, solo il commento di R7.
+- **Verifiche:** l'ultima suite completa su `9613ea5` (stesso codice dell'app di oggi) era verde, 226 verifiche. Dopo `eb846b4`, che cambia un solo commento, basta `node --check`.
 - **Decisioni dell'utente** (dopo la review):
   - R5: (a), la sintassi a intervallo resta; senza vincoli nel README si privilegiano pulizia e leggibilità del CSS;
   - N8 (pinch touch sopra le etichette): registrato come ticket futuro nell'handoff; il perimetro del ciclo resta chiuso.

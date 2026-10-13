@@ -4,7 +4,7 @@
 |---|---|
 | **Stato** | bozza per la revisione (step 2, To-spec) |
 | **Data** | 2026-10-13 |
-| **Branch** | `feat/backend-port`, da `main` = `31b2e5e` (contiene la spec 03, congelata) |
+| **Branch** | `feat/backend-port`, da `main` = `0c20a69` (contiene la spec 03, congelata) |
 | **Origine** | Decisione dell'utente di cambiare motore al backend restando identici UX, sistema multi-agente e front-end three.js; piano (step 1) in `HANDOFF.md` §2, approvato con le decisioni D1–D8 (§7) |
 | **Decisioni già prese** (Plan, confermate) | D1: bridge Rust subito, dal modulo BM25 del Brain, con ripiego Python e soglia 5×. D2: PyO3 nello stesso processo, niente microservizi. D3: i due backend crescono in parallelo, cambio alla parità. D4: Python 3.13 gestito da `uv`. D5: toolchain Rust (`rustup`, target MSVC, Visual Studio Build Tools C++) già installata e in `PATH` sulla macchina dell'utente. D6: Node resta solo per `three.js` e gli strumenti di test. D7: `/v1/chat/completions` in streaming risponde con un blocco singolo, come oggi. D8: `feat/memory-stability` unito in `main` e push fatti; si parte da qui |
 
@@ -255,7 +255,7 @@ Si dettagliano allo step 3 (To-tickets), nell'ordine P0 → P1 → P2 (un ticket
 | D5 | Toolchain Rust | `rustup` (target MSVC) e Visual Studio Build Tools C++ già installati e in `PATH`: nessuna preparazione di comandi, si procede diretti quando si arriva a P6 |
 | D6 | Node dopo il cambio | Resta solo per `three.js` e gli strumenti di test |
 | D7 | Streaming di `/v1` | Un blocco singolo, come oggi; lo streaming vero dei token resta un ticket futuro |
-| D8 | Branching | `feat/memory-stability` unito in `main` e `push` fatti (questo documento vive su `feat/backend-port`, da `main` = `31b2e5e`) |
+| D8 | Branching | `feat/memory-stability` unito in `main` e `push` fatti (questo documento vive su `feat/backend-port`, da `main` = `0c20a69`) |
 
 ## 8. Rischi
 

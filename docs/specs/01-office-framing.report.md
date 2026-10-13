@@ -1,6 +1,6 @@
 # Report — Spec 01, inquadratura dell'ufficio v3 e cubi
 
-## Prima (T0, 2026-10-12, codice al commit `c1312ff`)
+## Prima (T0, 2026-10-12, codice al commit `33d9361`)
 
 ### Condizioni
 
@@ -72,7 +72,7 @@ Gli screenshot leggibili richiedono un pannello browser più largo. Le verifiche
 
 ## Verifiche per ticket
 
-### T1 — `Fx` (commit `a64d8b2`)
+### T1 — `Fx` (commit `78d678b`)
 
 - `scripts/world-test.js`: 6 controlli verdi, tra cui il caso degli effetti annidati di N1 e i voli concatenati sullo stesso oggetto. La suite parte per prima in `npm test`.
 - Controprova sull'`Fx` precedente: nello stesso scenario restavano 11 mesh nella scena (un anello e 10 scintille) e un volo annullato chiamava comunque `done`. Con la versione nuova: 0 e 0.
@@ -364,7 +364,7 @@ La scala delle etichette segue `0,5 + 0,28 × zoom effettivo`, con il minimo a 0
 - **Velocità percepita del focus.** Dalla vista completa con LR il focus ingrandisce 3,6 volte, mentre prima ingrandiva 2,2 volte. Con lo stesso rallentamento cubico di 0,7 s, il primo frame ingrandisce di circa il 18% (prima circa l'8%). Interpolare la scala in modo logaritmico renderebbe uniforme la velocità; non l'ho cambiato perché è fuori dal perimetro. *(Fatto nella code-review, R5: zoom e scala sono interpolati in rapporto, `scaleAt()`. Il primo frame ingrandisce del 9,3% invece del 18,1% a 1920×1080, del 13,6% invece del 36,3% a 1440×900.)*
 - **QA visivo da fare:** leggibilità delle etichette a scala 0,67 e soglia di `far` a schermo intero.
 
-## Dopo (T8, 2026-10-13, codice al commit `9e02455`)
+## Dopo (T8, 2026-10-13, codice al commit `9f9f657`)
 
 ### Condizioni
 
@@ -376,7 +376,7 @@ La scala delle etichette segue `0,5 + 0,28 × zoom effettivo`, con il minimo a 0
 - **Cosa cambia rispetto a T0:**
   - un browser headless al posto del pannello dell'app: gli screenshot sono a piena risoluzione e leggibili, la pagina è visibile (i `ResizeObserver` scattano davvero) e il run è disegnato davvero, a 60 fps;
   - la misura dipende dai pixel CSS, quindi il `devicePixelRatio` (1 invece di 1,25) non conta.
-- **Prima rimisurato.** Le stesse misure girano su `c1312ff`, estratto in una cartella temporanea con `git archive`, con lo stesso runner (`--root … --only views,cubes --tag prima`). Riproducono T0:
+- **Prima rimisurato.** Le stesse misure girano su `33d9361`, estratto in una cartella temporanea con `git archive`, con lo stesso runner (`--root … --only views,cubes --tag prima`). Riproducono T0:
   - pavimento coperto: al decimo di punto (21,2 contro 21; 13,8 contro 14; 38,4 contro 38);
   - stress dei cubi: alla lettera (`nina@-9.9,1.0,-2.8`, `teo`, `ugo@0.0,3.0,-16.9`, `dario`, `vera`, più `max` per R5).
 
@@ -402,7 +402,7 @@ Anche senza pannelli la vecchia inquadratura lasciava 1–2 punti dell'ingombro 
 
 **Screenshot a 1920×1080**, presi dal runner a piena risoluzione:
 
-| | Prima (`c1312ff`) | Dopo |
+| | Prima (`33d9361`) | Dopo |
 |---|---|---|
 | Due pannelli | ![](img/01-prima-1920x1080-due-pannelli.jpg) | ![](img/01-dopo-1920x1080-due-pannelli.jpg) |
 | Pannello destro | ![](img/01-prima-1920x1080-pannello-destro.jpg) | ![](img/01-dopo-1920x1080-pannello-destro.jpg) |
@@ -410,7 +410,7 @@ Anche senza pannelli la vecchia inquadratura lasciava 1–2 punti dell'ingombro 
 
 ### Cubi: stress R1–R5 (A9)
 
-| Caso | Prima (`c1312ff`, rimisurato) | Dopo |
+| Caso | Prima (`33d9361`, rimisurato) | Dopo |
 |---|---|---|
 | R1: lo split viene superato dalla presa | ✖ il cubo di `nina` a `(-9.9, 1.0, -2.8)` in coordinate locali | ✔ |
 | R2: pickup ancora in volo allo split | ✖ `teo` porta il cubo grande eliminato | ✔ |
@@ -424,7 +424,7 @@ Stessa missione di T0 ("Il sito completo per il lancio di una pizzeria napoletan
 - le tolleranze sui cubi in uscita sono misurate in **tempo del mondo**, perché `frame()` limita un passo a 0,05 s e un browser che disegna meno di 20 fps fa girare il mondo più lento dell'orologio;
 - a fine run aspetta che gli effetti finiscano invece di un tempo fisso.
 
-| Verifica | T0 (`c1312ff`) | T2 | **T8** |
+| Verifica | T0 (`33d9361`) | T2 | **T8** |
 |---|---|---|---|
 | Esito | `completed`, 6 workstream, 17/17 task | identico | identico: 155 s, 60,7 fps, mondo a 1× l'orologio |
 | Cubi: pickup, split, prese, consegne, drop | 6 / 6 / 17 / 17 / 23 | 6 / 6 / 17 / 17 / 23 | 6 / 6 / 17 / 17 / 23, 0 affondamenti |
@@ -469,7 +469,7 @@ Il numero di sub-agenti dipende dal piano demo. In un giro intermedio ne è stat
 |---|---|
 | `browser-test.js` | Il runner: server demo isolato, Edge o Chrome headless, fasi `views`, `checks`, `cubes`, `input`, `run`; `--shots` per gli screenshot, `--json` per i risultati, `--root` e `--tag prima` per misurare un altro checkout |
 | `browser/lib.js` | Helper lato pagina: orologio fisso a 60 fps, disegno sospeso, input sintetico, ingombri misurati come `main.js`, `session()` che ripristina tutto |
-| `browser/coverage.js` | A1 come T0, indipendente dal codice: gira anche su `c1312ff` |
+| `browser/coverage.js` | A1 come T0, indipendente dal codice: gira anche su `33d9361` |
 | `browser/framing.js` | A1 sulla `World`, A6, resize, 16/16 clic |
 | `browser/manual-mode.js` | A7 (ex `__a7`, T6) |
 | `browser/absolute-scale.js` | A8 e S2.5–S2.7 (ex `__a8`, T7), con `mutate` per la trappola |

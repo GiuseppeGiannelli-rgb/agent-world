@@ -206,10 +206,10 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
 2. Lo snippet A9 rilanciato.
 3. `npm test` completo e `node --check` su tutti i moduli front-end modificati.
 4. Report, sezione "Dopo": confronto con "Prima" e stato di A1–A11 uno per uno.
-5. *(aggiunto in T8, su richiesta dell'utente)* Gli snippet del browser diventano file versionati in `scripts/browser/`, e `scripts/browser-test.js` (`npm run test:browser`) li esegue in un browser headless contro un server demo isolato, con screenshot e input reale del mouse. Lo stesso runner rimisura il "Prima" su `c1312ff`.
+5. *(aggiunto in T8, su richiesta dell'utente)* Gli snippet del browser diventano file versionati in `scripts/browser/`, e `scripts/browser-test.js` (`npm run test:browser`) li esegue in un browser headless contro un server demo isolato, con screenshot e input reale del mouse. Lo stesso runner rimisura il "Prima" su `33d9361`.
 
 **Fatto quando:** A1–A11 sono verdi oppure ogni eccezione è motivata e messa in evidenza.
 
 ---
 
-Dopo T8: **step 5 (Code-review)** sul diff completo, poi **step 6 (Retro)** con l'aggiornamento di HANDOFF.md, compresa la correzione "nessun commit" diventata `c1312ff`.
+Dopo T8: **step 5 (Code-review)** sul diff completo, poi **step 6 (Retro)** con l'aggiornamento di HANDOFF.md, compresa la correzione "nessun commit" diventata `33d9361`.

@@ -6,7 +6,7 @@
 |---|---|
 | **Stato** | bozza per la revisione (step 2, To-spec) |
 | **Data** | 2026-10-13 |
-| **Branch** | `feat/memory-stability`, da `main` = `1817d00` |
+| **Branch** | `feat/memory-stability`, da `main` = `7102214` |
 | **Origine** | N9 e N7 (retro della spec 02, §4–5), N5 (review della spec 01, R3), N2 (report della spec 01, T2); Plan dello step 1, approvato |
 | **Decisioni già prese** (Plan) | D1: ordine strumenti → baseline dell'app → N5 → N2. D2: `build()` dentro N5, come ultimo ticket di N5. D3: al ritorno dopo una pausa del disegno, riallineamento immediato, niente time-lapse. D4: spazzino all'avvio più un comando a mano, nessun processo guardiano. D5: `soak` come fase opzionale, fuori dalla suite di base. D6: pulizia una tantum di `%TEMP%`, tenendo `agent-world-preview` (fatta, §1.2) |
 
