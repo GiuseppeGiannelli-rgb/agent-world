@@ -47,7 +47,11 @@ export class Fx {
     // effects started during this pass (an arrival ring, a done callback) land here and run from the next frame
     this.items = [];
     const alive = running.filter((fx) => {
-      if (!fx[DEAD] && fx.update(dt) && !fx[DEAD]) return true;
+      try {
+        if (!fx[DEAD] && fx.update(dt) && !fx[DEAD]) return true;
+      } catch (err) {
+        console.error(err); // an effect that throws is dropped; the others, and the list, carry on
+      }
       this.retire(fx);
       return false;
     });

@@ -132,6 +132,34 @@ const near = (obj, p) => obj.position.distanceTo(p) < 1e-6;
   console.log('ok  chained flies on one object');
 }
 
+// 7. an effect that throws is dropped and reported; the others go on, nothing is lost
+{
+  const fx = new Fx(new THREE.Scene());
+  const obj = new THREE.Object3D();
+  const errors = [];
+  const error = console.error;
+  console.error = (e) => errors.push(e);
+  try {
+    let before = 0;
+    let after = 0;
+    let disposed = 0;
+    fx.add({ update: () => (before++, before < 10) });
+    fx.track(obj, { update: () => { throw new Error('boom'); }, dispose: () => disposed++ });
+    fx.add({ update: () => (after++, after < 10) });
+    step(fx, 0.5);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].message, 'boom');
+    assert.equal(disposed, 1, 'the effect that threw is retired');
+    assert.equal(fx.active(obj), undefined, 'no stale motion left for a newer move to inherit');
+    assert.equal(before, 10, 'the effect before it keeps running');
+    assert.equal(after, 10, 'the effect after it keeps running');
+    assert.equal(fx.items.length, 0);
+  } finally {
+    console.error = error;
+  }
+  console.log('ok  an effect that throws is dropped, the others go on');
+}
+
 // ---------- framing ----------
 
 // The UI as app.css lays it out: topbar down to 58 px, roster 62 px tall at the
@@ -159,7 +187,7 @@ const SIZES = [[1920, 1080], [2560, 1440], [1440, 900], [1280, 800], [800, 600]]
 const PANELS = [{ left: true, right: true }, { left: true, right: false }, { left: false, right: true }, { left: false, right: false }];
 const cases = SIZES.flatMap(([width, height]) => PANELS.map((panels) => ({ width, height, panels, insets: cssInsets(width, panels) })));
 
-// 7. A1: the whole office lands inside the free area, centred, filling the tighter axis
+// 8. A1: the whole office lands inside the free area, centred, filling the tighter axis
 {
   for (const { width, height, panels, insets } of cases) {
     const name = `${width}x${height} ${panels.left ? 'L' : '-'}${panels.right ? 'R' : '-'}`;
@@ -181,7 +209,7 @@ const cases = SIZES.flatMap(([width, height]) => PANELS.map((panels) => ({ width
   console.log(`ok  office framed in the free area (${cases.length} layouts)`);
 }
 
-// 8. A2 + A3: the target stays at the centre of the free area at any zoom,
+// 9. A2 + A3: the target stays at the centre of the free area at any zoom,
 //    and one px of drag moves the picture by exactly one px (pan stays 1:1)
 {
   for (const { width, height, insets } of cases) {
@@ -201,7 +229,7 @@ const cases = SIZES.flatMap(([width, height]) => PANELS.map((panels) => ({ width
   console.log('ok  target fixed under zoom, pan 1:1 with the lens shift');
 }
 
-// 9. A4: a window too small for its panels frames the whole canvas
+// 10. A4: a window too small for its panels frames the whole canvas
 {
   const insets = cssInsets(1920, { left: true, right: true });
   const s = safeRect(640, 480, insets);
@@ -216,10 +244,10 @@ const cases = SIZES.flatMap(([width, height]) => PANELS.map((panels) => ({ width
   console.log('ok  small windows ignore the panels');
 }
 
-// 10. the reference scale is the old framing at 1920x1080 (62 units across)
+// 11. the reference scale is the old framing at 1920x1080 (62 units across)
 assert.ok(Math.abs(REF_UNITS_PER_PX - Math.max(31, 62 / (1920 / 1080)) / 1080) < 1e-12);
 
-// 11. A8 + S2.5: close-ups keep their old size on screen whatever the framing, and
+// 12. A8 + S2.5: close-ups keep their old size on screen whatever the framing, and
 //     the zoom limit moves with the projection, so no camera move is ever clipped
 {
   const REF = REF_UNITS_PER_PX;
