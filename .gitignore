@@ -4,3 +4,5 @@ config/local.json
 data/
 workspace/
 .vscode
+HANDOFF.md
+.claude/
