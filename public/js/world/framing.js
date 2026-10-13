@@ -35,6 +35,16 @@ export function zoomFor(scale, unitsPerPx) {
   return Math.min(maxZoomFor(unitsPerPx), Math.max(MIN_ZOOM, unitsPerPx / scale));
 }
 
+// A zoom or a unitsPerPx at progress e (0 to 1) of a camera move from `from` to `to`.
+// Geometric, so the size on screen changes by equal ratios at the pace of the ease, as
+// the target does; a linear zoom rushes at the start of a zoom in (a focus from the full
+// view grew 18% in its first frame at 1920x1080, 36% at 1440x900).
+export function scaleAt(from, to, e) {
+  if (e <= 0) return from;
+  if (e >= 1) return to;
+  return from * (to / from) ** e;
+}
+
 // The canvas area the UI leaves free, in CSS px from the canvas' top-left corner.
 // insets: how far the UI reaches into the canvas from each edge.
 export function safeRect(width, height, insets = {}) {

@@ -361,7 +361,7 @@ La scala delle etichette segue `0,5 + 0,28 × zoom effettivo`, con il minimo a 0
 
 **Da sapere:**
 - **Focus su una stanza.** Segue la formula della spec, `REF / 2`, senza il `max` con lo zoom attuale che c'era prima. Da una vista più vicina, ora il focus si allontana per mostrare tutta la stanza; prima restava vicino.
-- **Velocità percepita del focus.** Dalla vista completa con LR il focus ingrandisce 3,6 volte, mentre prima ingrandiva 2,2 volte. Con lo stesso rallentamento cubico di 0,7 s, il primo frame ingrandisce di circa il 18% (prima circa l'8%). Interpolare la scala in modo logaritmico renderebbe uniforme la velocità; non l'ho cambiato perché è fuori dal perimetro.
+- **Velocità percepita del focus.** Dalla vista completa con LR il focus ingrandisce 3,6 volte, mentre prima ingrandiva 2,2 volte. Con lo stesso rallentamento cubico di 0,7 s, il primo frame ingrandisce di circa il 18% (prima circa l'8%). Interpolare la scala in modo logaritmico renderebbe uniforme la velocità; non l'ho cambiato perché è fuori dal perimetro. *(Fatto nella code-review, R5: zoom e scala sono interpolati in rapporto, `scaleAt()`. Il primo frame ingrandisce del 9,3% invece del 18,1% a 1920×1080, del 13,6% invece del 36,3% a 1440×900.)*
 - **QA visivo da fare:** leggibilità delle etichette a scala 0,67 e soglia di `far` a schermo intero.
 
 ## Dopo (T8, 2026-10-13, codice al commit `9e02455`)
@@ -507,5 +507,5 @@ Corregge però una premessa di T7: la soglia `far` a 0,55 è stata scelta misura
 - **N2** (scheda nascosta, client in ritardo): invariato, fuori perimetro, per un ticket separato.
 - **N4**: vedi sopra.
 - **Pressione tenuta ferma durante un'animazione** (T6): risolto nella code-review (R1).
-- **Velocità percepita del focus** dalla vista completa (T7): invariato.
+- **Velocità percepita del focus** dalla vista completa (T7): risolto nella code-review (R5).
 - **Mouse reale** (limite di T6): ora coperto dagli eventi del browser via DevTools, oltre che dal QA visivo dell'utente.

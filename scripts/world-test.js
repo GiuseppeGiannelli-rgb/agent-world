@@ -2,7 +2,7 @@
 // (one tracked motion per object, nested effects) and the camera framing math.
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { applyFrustum, CLOSEST_UNITS_PER_PX, fitOffice, GAP, MARGIN, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET, zoomFor } from '../public/js/world/framing.js';
+import { applyFrustum, CLOSEST_UNITS_PER_PX, fitOffice, GAP, MARGIN, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, scaleAt, VIEW_OFFSET, zoomFor } from '../public/js/world/framing.js';
 import { Fx } from '../public/js/world/fx.js';
 import { ENVELOPE } from '../public/js/world/office.js';
 
@@ -265,9 +265,9 @@ assert.ok(Math.abs(REF_UNITS_PER_PX - Math.max(31, 62 / (1920 / 1080)) / 1080) <
   assert.equal(maxZoomFor(CLOSEST_UNITS_PER_PX / 2), 1); // a huge screen still reaches the fit
 
   // The trap: OrbitControls.update() clamps camera.zoom into [minZoom, maxZoom] every
-  // frame. A move eases zoom and unitsPerPx linearly; a limit that follows the eased
-  // unitsPerPx holds at every step (the bound is linear in the same parameter), while
-  // a limit set once for the end of the move cuts the zoom short on the way.
+  // frame. A move eases zoom and unitsPerPx geometrically (scaleAt); a limit that follows
+  // the eased unitsPerPx holds at every step (in logarithms the bound is linear in the
+  // same parameter), while a limit set once for the end of the move cuts the zoom short.
   const scales = [...new Set(cases.map(({ width, height, insets }) => fitOffice({ width, height, insets, envelope: ENVELOPE }).unitsPerPx))];
   let stepsChecked = 0;
   let clippedByFinalLimit = 0;
@@ -277,8 +277,8 @@ assert.ok(Math.abs(REF_UNITS_PER_PX - Math.max(31, 62 / (1920 / 1080)) / 1080) <
         for (const z1 of [MIN_ZOOM, 1, maxZoomFor(u1)]) {
           for (let i = 0; i <= 20; i++) {
             const e = i / 20;
-            const u = u0 + (u1 - u0) * e;
-            const z = z0 + (z1 - z0) * e;
+            const u = scaleAt(u0, u1, e);
+            const z = scaleAt(z0, z1, e);
             assert.ok(z >= MIN_ZOOM - 1e-12 && z <= maxZoomFor(u) * (1 + 1e-12), `zoom ${z} within the limit of ${u}`);
             if (z > maxZoomFor(u1) * (1 + 1e-12)) clippedByFinalLimit++;
             stepsChecked++;
@@ -289,6 +289,27 @@ assert.ok(Math.abs(REF_UNITS_PER_PX - Math.max(31, 62 / (1920 / 1080)) / 1080) <
   }
   assert.ok(clippedByFinalLimit > 0, 'the check can tell a limit set for the end of the move');
   console.log(`ok  close-ups at the old size, zoom limit follows the projection (${stepsChecked} steps; a fixed end limit would clip ${clippedByFinalLimit})`);
+}
+
+// 13. review R5: a camera move changes the size on screen by equal ratios, at the pace
+//     of its ease like the target, instead of rushing at the start of a zoom in
+{
+  assert.equal(scaleAt(0.7, 3.1, 0), 0.7);
+  assert.equal(scaleAt(0.7, 3.1, 1), 3.1, 'a move ends exactly where it heads');
+  // the size on screen (unitsPerPx / zoom) is geometric: halfway is the geometric mean
+  const [u0, u1, z0, z1] = [0.05, 0.03, 1, 3.6];
+  const size = (e) => scaleAt(u0, u1, e) / scaleAt(z0, z1, e);
+  assert.ok(Math.abs(size(0.5) / Math.sqrt(size(0) * size(1)) - 1) < 1e-12);
+  // a focus from the full view, both panels open at 1920x1080: the first frame of the
+  // 0.7 s cubic ease covers the same share of the zoom (in ratio) as of the way
+  const u = fitOffice({ width: 1920, height: 1080, insets: cssInsets(1920, { left: true, right: true }), envelope: ENVELOPE }).unitsPerPx;
+  const zoom = zoomFor(REF_UNITS_PER_PX / 2.2, u);
+  const e1 = 1 - (1 - 1 / 60 / 0.7) ** 3;
+  const share = (z) => Math.log(z) / Math.log(zoom);
+  assert.ok(Math.abs(share(scaleAt(1, zoom, e1)) - e1) < 1e-12, 'zoom and target keep the same pace');
+  const linear = 1 + (zoom - 1) * e1;
+  assert.ok(share(linear) > 1.5 * e1, 'the check can tell the old linear zoom');
+  console.log(`ok  zoom eased in ratio: first frame of a focus +${((scaleAt(1, zoom, e1) - 1) * 100).toFixed(1)}% (linear: +${((linear - 1) * 100).toFixed(1)}%)`);
 }
 
 console.log('ALL OK');

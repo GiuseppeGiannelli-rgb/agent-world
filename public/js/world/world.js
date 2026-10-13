@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Actor } from './character.js';
-import { applyFrustum, fitOffice, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, VIEW_OFFSET, zoomFor } from './framing.js';
+import { applyFrustum, fitOffice, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, scaleAt, VIEW_OFFSET, zoomFor } from './framing.js';
 import { Fx } from './fx.js';
 import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
 
@@ -489,8 +489,11 @@ export class World {
       else this.camera.position.copy(fromOffset);
       this.camera.position.add(this.controls.target);
       this.camera.lookAt(this.controls.target); // the controls only re-aim on their next update
-      this.camera.zoom = lerp(fromZoom, to.zoom, e);
-      for (const k of ['unitsPerPx', 'lensX', 'lensY']) this.view[k] = lerp(fromView[k], to.view[k], e);
+      // zoom and scale in ratio: the size on screen keeps the pace of the target
+      this.camera.zoom = scaleAt(fromZoom, to.zoom, e);
+      this.view.unitsPerPx = scaleAt(fromView.unitsPerPx, to.view.unitsPerPx, e);
+      this.view.lensX = lerp(fromView.lensX, to.view.lensX, e);
+      this.view.lensY = lerp(fromView.lensY, to.view.lensY, e);
       this.applyView();
     };
     if (!(duration > 0)) {

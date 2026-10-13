@@ -118,6 +118,25 @@ window.__checks.absoluteScale = ({ mutate = false } = {}) =>
       out['focus started during a re-frame'].ok &&= Math.abs(s() / (REF / 2.2) - 1) < 1e-6;
       glide('room focus from the closest view, LR', () => closestIn(true, true), () => w.focusRoom(w.layout.rooms[0].team));
 
+      // review R5: a move changes the size on screen by equal ratios, at the pace of its
+      // ease like the target (a linear zoom grew 18% in the first frame of this focus)
+      {
+        t.panels(true, true);
+        t.home();
+        const target0 = w.controls.target.clone();
+        const s0 = s();
+        w.focus(ids[6]);
+        const { goal } = w.fx.active(w.camera);
+        t.pump(1 / 60);
+        const zoomShare = Math.log(s0 / s()) / Math.log(s0 / (goal.view.unitsPerPx / goal.zoom));
+        const panShare = w.controls.target.distanceTo(target0) / goal.target.distanceTo(target0);
+        t.result(out, 'focus from the full view: size and place at the same pace', Math.abs(zoomShare - panShare) < 0.002, {
+          zoomSharePct: +(100 * zoomShare).toFixed(2),
+          panSharePct: +(100 * panShare).toFixed(2),
+          firstFrameGrowthPct: +(100 * (s0 / s() - 1)).toFixed(2),
+        });
+      }
+
       // While a move runs its next step hides the clamp; it shows once the user
       // interrupts the move. A pan must not change the size on screen.
       {
@@ -125,7 +144,10 @@ window.__checks.absoluteScale = ({ mutate = false } = {}) =>
         t.panels(false, false);
         t.pump(0.3);
         $('#btn-home').click();
-        t.pump(2 / 60); // early: the zoom is still above the limit of the fit it heads to
+        // early: the zoom is still above the limit of the fit it heads to (eased in ratio,
+        // it drops below it within two frames at 1920x1080)
+        t.pump(1 / 60);
+        const aboveEndLimit = w.camera.zoom > t.F.maxZoomFor(w.fx.active(w.camera).goal.view.unitsPerPx);
         const before = s();
         const p = t.at(0.45, 0.5);
         t.pointer('pointerdown', p);
@@ -136,7 +158,7 @@ window.__checks.absoluteScale = ({ mutate = false } = {}) =>
         t.pointer('pointerup', { clientX: p.clientX + 48, clientY: p.clientY });
         t.pump(0.5);
         const jump = s() / before - 1;
-        t.result(out, 'drag that interrupts ⌂ from the closest view', Math.abs(jump) < 1e-9 && w.autoFrame === false, { sizeOnScreenChangePct: +(100 * jump).toFixed(3) });
+        t.result(out, 'drag that interrupts ⌂ from the closest view', Math.abs(jump) < 1e-9 && w.autoFrame === false, { sizeOnScreenChangePct: +(100 * jump).toFixed(3), zoomAboveEndLimit: aboveEndLimit });
       }
 
       // S2.6: label size and far class follow the effective zoom (FAR_ZOOM 0.55)
