@@ -118,6 +118,13 @@ Nessun file in `public/` cambia.
 4. **Passaggio avversario:** `npm test` lanciato due volte in parallelo (porte fisse 4398 e 4399: il secondo fallisce sull'avvio del server, ma non deve cancellare le cartelle del primo); `AW_TEST_FAIL` non letto da nessun file in `server/` o `public/` (grep).
 5. **Verifiche:** `npm test` (atteso circa 35 s, D9); `node scripts/browser-test.js --only hygiene`.
 
+*(Precisato in T2.)*
+- **`router-test.js` non ha un `try`/`finally`:** un'asserzione fallita al livello più alto del modulo arriva al gestore `uncaughtException` di `temp.js` (misurato: sia un `throw` sia un `await` rifiutato al livello più alto), che rimuove la cartella prima di uscire con 1.
+- **C3 usa come "prossimo avvio" `router-test.js`**, il test più rapido, che chiama `sweepDirs()` all'avvio come gli altri; C3 controlla anche che il server dello smoke ucciso non risponda più sulla 4399.
+- **Prova "prima"** (gli script di oggi messi da parte con `git stash`): 7 rossi su 8. Gli script ignorano `AW_TEST_FAIL`, escono con 0 e lasciano la cartella (4 casi); il nome non ha il proprietario; lo smoke ucciso lascia la cartella anche dopo il test successivo; la cartella che `npm test` aveva lasciato prima. Poi `npm run sweep -- --legacy` ha tolto i 7 resti (5,6 MB), lasciando le cartelle vive della suite completa che girava accanto.
+- **Dopo:** `temp-test.js` verde in 12 s; `npm test` verde tre volte di fila, 35 s ciascuna; in `%TEMP%` solo `agent-world-preview`. Due smoke in parallelo sulla stessa porta: il secondo esce con 1 ("the server exited before it was ready") senza toccare la cartella del primo, che finisce OK.
+- **Fuori perimetro, annotato come N11:** `smoke.js` e `flows-test.js` tolgono le chiavi `*_API_KEY` dall'ambiente con `delete`, quindi `server/env.js` le riempirebbe da `.env` se ci fossero. Il runner fa bene (le imposta a `""`). Oggi `.env` imposta solo `PORT`, quindi non ha effetto.
+
 **Commit:** `fix(test): the tests remove their temp folders, also when they fail (T2)`
 
 **Fatto quando:** V7 verde; `npm test` visto rosso sul codice di oggi e verde dopo; dopo tre `npm test` di fila, in `%TEMP%` c'è solo `agent-world-preview`.

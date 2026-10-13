@@ -1,15 +1,18 @@
 // Checks the real provider adapters and the fallback logic against fake
-// upstream servers: no network, no keys.
+// upstream servers: no network, no keys. The router's data folder is a temp folder
+// owned by this process (scripts/lib/temp.js): removed at the end, and by the exit
+// handler when an assertion fails.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { extractJson } from '../server/engine/json.js';
 import { parseAction } from '../server/engine/tasker.js';
 import { normalizePlan, normalizeSubtasks } from '../server/engine/run.js';
 import { Router } from '../server/router/index.js';
+import { ownedDir, removeDir, sweepDirs } from './lib/temp.js';
+
+await sweepDirs();
+const dataDir = ownedDir('router');
 
 const seen = [];
 const upstream = createServer(async (req, res) => {
@@ -54,7 +57,7 @@ const value = {
   roles: { builder: { combo: 'main' } },
 };
 const bus = new EventEmitter();
-const router = new Router({ config: { get: () => value }, dataDir: mkdtempSync(join(tmpdir(), 'aw-')), bus });
+const router = new Router({ config: { get: () => value }, dataDir, bus });
 const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }, { role: 'user', content: 'again' }];
 
 // 1. fallback: skips the provider with no key, survives 429 and 401, lands on "good"
@@ -157,4 +160,5 @@ assert.equal(demoWav('x').subarray(0, 4).toString(), 'RIFF');
 console.log('ok  demo PNG and WAV');
 
 upstream.close();
+await removeDir(dataDir);
 console.log('ALL OK');
