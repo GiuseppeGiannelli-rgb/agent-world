@@ -243,6 +243,8 @@ La fase gira dentro `t.session`: orologio a 60 fps e disegno sospeso. `updateLab
 3. In `known-red.json`, via le voci di T2.
 4. **Verifiche:** `node scripts/browser-test.js --only overlaps,checks`.
 
+*(Aggiunto in T2.)* Una scansione della fase `overlaps` apre l'inspector con entrambi i pannelli e controlla P1 e P2 su 74 larghezze da 360 a 1920 px, compresi i bordi delle fasce (1047/1048, 1250/1251, 1321/1322, 1333/1334). Sul codice senza la colonna fallisce a 31 larghezze (P1) e a 36 (P2).
+
 **Commit:** `fix(ui): the inspector shares the roster's column (T2)`
 
 **Fatto quando:**
@@ -272,6 +274,8 @@ La fase gira dentro `t.session`: orologio a 60 fps e disegno sospeso. `updateLab
    - `npm test`;
    - `node scripts/browser-test.js --only views,checks,input,labels`.
 
+*(Precisato in T3.)* Il modello riconosce da solo quale variante è disegnata (prima "oggi", ora B) e una verifica chiede B. E5 conta a parte i piedi dei sub-agenti, e due verifiche `D8` tengono le eccezioni nei loro limiti su tutta la matrice. La riproduzione dei numeri della spec 01 usa il modello di "oggi", che l'app non disegna più.
+
 **Commit:** `fix(world): room labels on the front edge, under the agents' labels (T3)`
 
 **Fatto quando:**
@@ -300,6 +304,8 @@ La fase gira dentro `t.session`: orologio a 60 fps e disegno sospeso. `updateLab
    - `node --check public/js/world/world.js`;
    - `npm test`;
    - `node scripts/browser-test.js --only checks,input,labels`.
+
+*(Precisato in T4.)* E7 misura anche quanto si sposta il punto del pavimento che stava sotto il cursore: con l'evento inoltrato nella posizione sbagliata si spostava di 48–68 px e la verifica falliva.
 
 **Commit**, due correzioni distinte:
 - `fix(ui): hidden labels let the pointer through (T4)`

@@ -136,3 +136,110 @@ Gli screenshot dei casi dei pannelli: `img/02-prima-n6-*`, `q1-*`, `q2-*`, `q3-*
 - missione completata in 152 s a 67 fps, nessun processo del browser rimasto.
 
 La verifica degli ingressi è stata aggiunta dopo questo giro, e le fasi nuove sono state rilanciate da sole (ALL OK, stessi rossi attesi).
+
+## Dopo (T1–T4)
+
+| | |
+|---|---|
+| **Data** | 2026-10-13 |
+| **Codice misurato** | `feat/ui-overlaps` a `6065481` |
+| **Commit dello step 4** | `e89683f` T1; `7836809` e `69879f0` T2; `34bf0e1` T3; `a143fa4` e `6065481` T4 |
+| **Codice di produzione** | 3 file in `public/`, +48 / −21 righe. Test: 6 file in `scripts/`, +1135 / −57 righe |
+| **Suite completa** | `npm run test:browser`: **ALL OK**, 226 verifiche, 0 rossi attesi (`known-red.json` è `{}`), in 6 min con gli screenshot. `npm test` verde |
+
+**In breve**
+1. I 42 rossi della baseline sono tutti verdi e il file dei rossi attesi è vuoto. Le 130 verifiche della spec 01 restano verdi, compresa la missione demo.
+2. Pannelli: 0 sovrapposizioni e 0 differenze da una pagina appena caricata in 1604 casi. L'inspector non scorre mai di lato, su 74 larghezze da 360 a 1920 px.
+3. Etichette: 0% di etichette e fumetti degli agenti coperti (prima fino al 100%). 0 lead o worker con il corpo sotto un'etichetta di stanza (prima 8 in ogni stato). Le eccezioni di D8 sono esattamente quelle previste.
+4. Puntatore: 0 etichette nascoste che intercettano i clic (prima 15 su 22). La rotella sopra un'etichetta zooma come sul canvas: rapporto 0,9403 e punto sotto il cursore fermo entro 0,05 px.
+5. Durante il ciclo è emerso e stato corretto un difetto nuovo nel perimetro: Q6, le parole che non vanno a capo nell'inspector.
+
+### 1. Criteri di accettazione
+
+| ID | Criterio | Prima | Dopo |
+|---|---|---|---|
+| V1 | P1: nessuna sovrapposizione tra elementi fissi | rosso: N6, Q3, Q4 | **verde**: 0 px² in 1604 casi, scansione dell'inspector compresa |
+| V2 | P2, P3: colonna e minimappa al loro posto; l'inspector non scorre di lato | rosso: N6, Q1–Q4 | **verde** entro ±0,5 px; nessuno scorrimento su 74 larghezze |
+| V3 | P4: nessuna memoria della sequenza | rosso: N6, Q2 | **verde**: 19 riferimenti, 3 passeggiate casuali da 25 passi |
+| V4 | P5: riadattamento automatico, A1 della spec 01 a 0% | verde | **verde**; la mutazione degli ingombri congelati è colta (16,5% del pavimento) |
+| V5 | P6: suite della spec 01 senza riallineamenti a mano | verde solo con il riallineamento | **verde**: 130 verifiche, riallineamento tolto |
+| V6 | E1: etichette e fumetti degli agenti mai coperti dai luoghi | rosso: fino al 100% | **verde**: 0% in 180 stati; l'ordine rimesso al contrario è colto (30,5%) |
+| V7 | E2: nomi delle stanze non coperti dagli agenti seduti | verde | **verde**: 0 px² |
+| V8 | E3, E4: etichette nell'area libera e senza sovrapporsi | verdi | **verdi**: 0 e 0 |
+| V9 | E5: clic sugli agenti e sui nomi delle stanze | rosso: 8 lead e worker in ogni stato | **verde**: 0 fuori eccezione; tutti i nomi visibili prendono il clic |
+| — | eccezione D8: piedi di al massimo 3 sub-agenti, in al massimo 2 stati | — | **rispettata**: 3 sub-agenti, solo il punto a 0,4, in 2 stati su 180 |
+| — | eccezione D8: scritta "SUB-AGENT BAY" coperta al massimo al 27% | — | **rispettata**: 26,68% nel caso peggiore (Sviluppo) |
+| V10 | E6: etichette nascoste insensibili al puntatore | rosso: 15 su 22 | **verde**: 0 |
+| V11 | E7: rotella sopra un'etichetta | rosso: nessuno zoom | **verde**: rapporto 0,9403, come sul canvas; deriva 0,03–0,05 px (canvas 0,06); vista in modalità manuale |
+| V12 | Nessun processo del browser rimasto | — | **verde** in ogni giro; visto fallire a T0 con 17 processi |
+| V13 | `npm test`, suite completa, QA | — | `npm test` e suite verdi. QA dell'utente superato su T1, T2 e T3; **T4 e la verifica finale sono da fare** |
+
+### 2. Pannelli e inspector: i casi della spec
+
+| # | Caso | Prima | Dopo |
+|---|---|---|---|
+| N6 | 1920×1080, ▤ poi una scheda | minimappa 1704–1908 sotto il pannello; roster 184 px dentro il pannello | minimappa 1292–1496, roster 354–1280: 12 px da pannello e minimappa |
+| Q1 | 1200×800, pannello destro chiuso | roster fino a 972: 216 px vuoti | roster fino a 1188 (lo stesso a 1250, 1000 e 901 px) |
+| Q2 | pannelli chiusi a 1920, poi 800×600 | roster 8–572; inspector a 12 px dal bordo | roster 8–792; inspector a 8 px |
+| Q3 | 1000×800 e 901×800, LR, inspector | 36 e 135 px sopra il pannello destro | 324–616 (292 px) e 324–517 (193 px), nella colonna |
+| Q4 | 1280×800, LR, inspector alto | 42 × 46 px sopra la minimappa | 354–640 (286 px), 12 px prima della minimappa |
+| Q6 | link senza punti di a capo in chat | la chat scorreva di lato a ogni dimensione larga (489 px in 306) | va a capo; nessuno scorrimento nemmeno a 193 px |
+
+| | Prima | Dopo |
+|---|---|---|
+| N6, 1920×1080 | ![](img/02-prima-n6-1920x1080-scheda-dopo-pannello-chiuso.jpg) | ![](img/02-dopo-n6-1920x1080-scheda-dopo-pannello-chiuso.jpg) |
+| Q1, 1200×800 | ![](img/02-prima-q1-1200x800-pannello-destro-chiuso.jpg) | ![](img/02-dopo-q1-1200x800-pannello-destro-chiuso.jpg) |
+| Q2, 800×600 | ![](img/02-prima-q2-800x600-dopo-pannelli-chiusi.jpg) | ![](img/02-dopo-q2-800x600-dopo-pannelli-chiusi.jpg) |
+| Q3, 1000×800 | ![](img/02-prima-q3-1000x800-inspector.jpg) | ![](img/02-dopo-q3-1000x800-inspector.jpg) |
+| Q4, 1280×800 | ![](img/02-prima-q4-1280x800-inspector.jpg) | ![](img/02-dopo-q4-1280x800-inspector.jpg) |
+
+### 3. Etichette
+
+| Misura (180 stati) | Prima | Dopo |
+|---|---|---|
+| Etichette e fumetti degli agenti coperti dai luoghi (E1) | fino al 100%, in 144 stati | 0 |
+| Nome di una stanza coperto da agenti seduti (E2) | 0, perché allora le stanze stavano sopra | 0 |
+| Etichette fuori dall'area libera, sovrapposte tra loro (E3, E4) | 0, 0 | 0, 0 |
+| Lead e worker con il corpo sotto un'etichetta di stanza (E5) | 8, in 180 stati su 180 | 0 |
+| Sub-agenti con i piedi sotto un'etichetta (eccezione D8) | — | 3, in 2 stati |
+| Etichette nascoste che intercettano il puntatore (E6) | 15 su 22 | 0 |
+| Rotella sopra un'etichetta (E7) | nessuno zoom | come sul canvas |
+
+| | Prima | Dopo |
+|---|---|---|
+| 1920×1080, due pannelli, bay piene | ![](img/02-prima-n4-oggi-1920x1080-due-pannelli.jpg) | ![](img/02-dopo-n4-B-1920x1080-due-pannelli.jpg) |
+| 1920×1080, nessun pannello, bay piene | ![](img/02-prima-n4-oggi-1920x1080-nessun-pannello.jpg) | ![](img/02-dopo-n4-B-1920x1080-nessun-pannello.jpg) |
+
+**Durante la missione** (`img/02-dopo-run-4-sub-agent-in-the-bay.jpg`), i fumetti degli agenti passano sopra le etichette delle stanze, come chiede E1. Viste complete a 1920×1080: `img/02-dopo-1920x1080-due-pannelli.jpg`, `-pannello-destro`, `-nessun-pannello`.
+
+### 4. Lo strumento, dopo T0
+
+Le verifiche aggiunte durante i ticket, ognuna vista fallire prima della correzione o con una mutazione:
+
+| Ticket | Verifica | Come ha fallito |
+|---|---|---|
+| T0 | `inputs <dim>`: ogni ingresso della matrice è applicato davvero | senza la precondizione di "Vai alla stanza": 9 rosse |
+| T2 | contenuto peggiore dell'inspector (stringhe senza punti di a capo) e scorrimento della chat | sul codice di T1: Q6 a ogni dimensione larga |
+| T2 | scansione dell'inspector su 74 larghezze, da 360 a 1920 px | sul codice senza la colonna: P1 a 31 larghezze, P2 a 36 |
+| T3 | il modello riconosce la variante disegnata, e deve essere B | sul codice di prima: "oggi" |
+| T3 | eccezioni di D8 (piedi, scritta) tenute nei loro limiti | guardie: sono verdi dall'inizio |
+| T3 | E1 con l'ordine rimesso al contrario apposta | mutazione permanente, colta a ogni giro |
+| T4 | E7 misura anche la deriva del punto sotto il cursore | con la posizione dell'evento sbagliata: 48–68 px, rossa |
+
+### 5. Note e limiti
+
+- **Eccezioni di D8.** Restano esattamente quelle previste a T0. Il margine sulla scritta della bay è piccolo: 26,68% contro il limite del 27%. Se cambiassero il font o le dimensioni della bay, la guardia lo segnalerebbe.
+- **Etichetta del Brain.** Ora sta sotto le etichette degli agenti, come tutti i luoghi (E1): un'etichetta o un fumetto di un agente vicino, per esempio di Ada, può coprirla.
+- **Modalità stretta.** Pannello aperto e inspector restano overlay che possono coprirsi tra loro: è un non-obiettivo della spec.
+- **Osservazione, non un difetto della spec:** in modalità stretta la classe `open` di un pannello sopravvive a un passaggio in modalità larga. Tornando stretti, l'overlay si riapre. È il comportamento di prima e nessun requisito lo vieta.
+- **Durata.** Nell'ultimo giro, con gli screenshot, `overlaps` ha impiegato 126 s e la missione è girata a 35 fps; senza screenshot `overlaps` impiega 56–68 s. La suite completa richiede 4 min 35 s – 6 min.
+- **Fuori perimetro, ancora aperti:** N2, N5 e N7.
+
+### 6. QA finale dell'utente (1920×1080)
+
+1. ▤ chiude il pannello destro, una scheda lo riapre: minimappa e roster stanno accanto al pannello.
+2. Un membro del roster con entrambi i pannelli aperti: l'inspector è largo 340 px e non copre nulla.
+3. Vista completa in LR, -R e --: le etichette dei worker sono leggibili, i nomi delle stanze stanno al centro del bordo anteriore.
+4. Un clic su un lead o un worker vicino all'etichetta della sua stanza seleziona l'agente.
+5. **Nuovo in T4:** la rotella sopra l'etichetta di una stanza o di un agente zooma verso il punto sotto il cursore, come sul pavimento.
+6. **Nuovo in T4:** allontanandosi finché le etichette dei worker inattivi spariscono, un clic dove stavano non le seleziona più.

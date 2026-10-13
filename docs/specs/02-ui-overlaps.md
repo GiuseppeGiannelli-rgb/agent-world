@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Stato** | approvata (SDD step 2). Ticket in `02-ui-overlaps.tickets.md` |
+| **Stato** | approvata (SDD step 2), implementata (step 4: T0–T4). Ticket in `02-ui-overlaps.tickets.md`, misure prima e dopo in `02-ui-overlaps.report.md` |
 | **Data** | 2026-10-13 |
 | **Branch** | `feat/ui-overlaps`, da `main` = `e14f039` |
 | **Origine** | difetti N4 e N6 della spec 01 (retro, §5); Plan dello step 1, approvato |
