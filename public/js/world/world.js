@@ -363,7 +363,9 @@ export class World {
       el.innerHTML = `<i></i><b>${esc(r.label)}</b><span></span>`;
       el.addEventListener('click', () => this.onPickRoom?.(r.team));
       this.labelsEl.append(el);
-      this.roomLabels.push({ el, team: r.team, pos: new THREE.Vector3(r.x - r.w / 2 + 0.2, 0.1, r.z - r.d / 2 + 0.2) });
+      // in the middle of the front edge, just inside: no desk there, the lead and the
+      // workers sit at the back and the sub-agents in the bay behind it (spec 02, N4)
+      this.roomLabels.push({ el, team: r.team, pos: new THREE.Vector3(r.x, 0.1, r.z + r.d / 2 - 0.2) });
     }
     this.brainLabel = document.createElement('div');
     this.brainLabel.className = 'brain-label';
@@ -1247,7 +1249,8 @@ export class World {
     }
     for (const r of this.roomLabels) {
       const [x, y] = project(this.tmp.copy(r.pos));
-      r.el.style.transform = `translate(${x}px, ${y}px) translate(0, -50%) scale(var(--label-scale))`;
+      // centred on the anchor, standing on it; app.css puts the transform origin there
+      r.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%) scale(var(--label-scale))`;
     }
     if (this.brainLabel) {
       const [x, y] = project(this.tmp.set(BRAIN.x + 2.3, BRAIN.y - 0.4, BRAIN.z));

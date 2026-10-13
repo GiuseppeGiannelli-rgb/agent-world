@@ -232,7 +232,7 @@ window.__checks.labels = (() => {
       for (const v of Object.keys(VARIANTS)) {
         const places = rooms.map((x) => ({ ...modelled(x.room, x.el, v, scale, cr), order: x.order })).concat(brain ? [brain] : []);
         const today = e1(agents, places, (p, a) => p.order > a.order);
-        keep(`${v} E1 ordine di oggi`, today.pct, { covered: today.n });
+        keep(`${v} E1 ordine dell'app`, today.pct, { covered: today.n });
         const agentsAbove = e1(agents, places, () => false);
         keep(`${v} E1 agenti sopra`, agentsAbove.pct, { covered: agentsAbove.n });
       }
@@ -242,18 +242,30 @@ window.__checks.labels = (() => {
     const { scale, agents, rooms, brain } = pass(false);
     const prodPlaces = [...rooms, ...(brain ? [brain] : [])];
 
-    // the model against the labels drawn today
-    for (const x of rooms) {
-      const m = modelled(x.room, x.el, 'oggi', scale, cr);
-      const anchorOff = Math.max(...m.anchor.map((c, i) => Math.abs(c - x.r.pos.getComponent(i))));
-      keep('model check', Math.max(edge(m.box, x.box), edge(m.name, x.name), anchorOff * 1e3), { team: x.r.team });
-    }
+    // the model against the room labels as drawn: one variant must match them within
+    // 1 px, anchor included, and that is the variant the app draws ("oggi" before T3)
+    const [drawn, off] = Object.keys(VARIANTS)
+      .map((v) => {
+        const worst = Math.max(
+          ...rooms.map((x) => {
+            const m = modelled(x.room, x.el, v, scale, cr);
+            const anchorOff = Math.max(...m.anchor.map((c, i) => Math.abs(c - x.r.pos.getComponent(i))));
+            return Math.max(edge(m.box, x.box), edge(m.name, x.name), anchorOff * 1e3);
+          }),
+        );
+        return [v, worst];
+      })
+      .sort((a, b) => a[1] - b[1])[0];
+    keep('model check', off, { variant: drawn });
+    out.drawn[drawn] = (out.drawn[drawn] ?? 0) + 1;
 
-    // spec 01, report N4: idle workers whose label has its centre under a room label
+    // spec 01, report N4: idle workers whose label has its centre under their room's
+    // label where it was before T3, painted over them as it was (the model of "oggi")
     if (out.spec01 === undefined && where.startsWith('LR vista completa')) {
+      const before = rooms.map((x) => modelled(x.room, x.el, 'oggi', scale, cr).box);
       const workers = agents.filter((a) => a.kind === 'tag' && a.worker);
-      const hit = workers.map((a) => ({ a, room: rooms.find((r) => r.order > a.order && within(centre(a.box), r.box)) })).filter((x) => x.room);
-      out.spec01 = { workers: workers.length, covered: hit.length, pct: hit.map(({ a, room }) => Math.round((100 * t.overlap(a.box, room.box)) / t.area(a.box))).sort((p, q) => p - q) };
+      const hit = workers.map((a) => ({ a, box: before.find((b) => within(centre(a.box), b)) })).filter((x) => x.box);
+      out.spec01 = { workers: workers.length, covered: hit.length, pct: hit.map(({ a, box }) => Math.round((100 * t.overlap(a.box, box)) / t.area(a.box))).sort((p, q) => p - q) };
     }
 
     // pick points: the body of each seated agent at 0.4, 0.8 and 1.2 above the floor,
@@ -281,7 +293,12 @@ window.__checks.labels = (() => {
     if (fit) keep('prod E3', rooms.filter((x) => !t.inside(x.box, safe)).length);
     keep('prod E4', e4(prodPlaces));
     const takenBy = (p) => document.elementFromPoint(p[0], p[1]);
-    keep('prod E5', ...tally(picks.filter(({ p }) => takenBy(p)?.closest('.room-label'))));
+    // E5, with the exception accepted with D8 (spec §3.2): the lowest point of a
+    // sub-agent may lie under its room label; it is counted apart
+    const feet = (x) => x.sub && x.y === 0.4;
+    const taken = picks.filter(({ p }) => takenBy(p)?.closest('.room-label'));
+    keep('prod E5', ...tally(taken.filter((x) => !feet(x))));
+    keep('prod E5 piedi', ...tally(taken.filter(feet)));
     // a name is visible when nothing of the UI lies over it (the minimap is no obstacle
     // for the framing and may cover one); a visible name must take the click itself
     const stage = w.canvas.parentElement;
@@ -293,8 +310,14 @@ window.__checks.labels = (() => {
       keep('prod E6', hidden.filter((l) => takenBy(centre(t.box(l.tag)))?.closest('.tag') === l.tag).length, { hidden: hidden.length });
     }
 
-    // variants
+    // the "SUB-AGENT BAY" text painted on the floor: up to 27% may be covered (D8)
     const bays = rooms.filter((x) => w.layout.bays.get(x.r.team)?.length);
+    for (const x of bays) {
+      const text = bayText(x.room);
+      keep('prod scritta della bay', (100 * covered(text, rooms.map((r) => r.box))) / t.area(text), { team: x.r.team });
+    }
+
+    // variants
     for (const v of Object.keys(VARIANTS)) {
       const places = rooms.map((x) => ({ ...x, ...modelled(x.room, x.el, v, scale, cr) }));
       keep(`${v} E2`, e2(places, agents, () => false));
@@ -314,7 +337,7 @@ window.__checks.labels = (() => {
   const run = ({ bays = 'vuote' } = {}) =>
     t.session(async () => {
       still();
-      const out = { worst: {}, counts: {}, states: 0, skipped: [] };
+      const out = { worst: {}, counts: {}, drawn: {}, states: 0, skipped: [] };
       if (bays === 'piene') out.subAgents = fillBays();
       for (const [lay, [left, right]] of Object.entries(t.LAYOUTS)) {
         t.panels(left, right);
@@ -331,25 +354,22 @@ window.__checks.labels = (() => {
       return out;
     });
 
-  // A variant drawn by CSS, for the screenshots and to check the model on A, B and C as
-  // on today's labels: updateLabels() is wrapped on this page only (the app is not
-  // touched) and puts each room label on the variant's anchor, its transform origin on
-  // the same point so the labels' scale leaves the anchor still, the way T3 will do it;
-  // with `agentsAbove`, the agents' labels and bubbles go over the place labels (E1).
-  const ORDER = 'agents-above-places';
-  const preview = (variant, { agentsAbove = variant !== 'oggi' } = {}) => {
+  // A variant drawn by CSS, for the screenshots and to check the model of every variant
+  // as on the labels the app draws: updateLabels() is wrapped on this page only (the
+  // app is not touched) and puts each room label on the variant's anchor, its transform
+  // origin on the same point so the labels' scale leaves the anchor still, as T3 does.
+  // order: "agenti" puts the agents' labels and bubbles over the place labels (E1, the
+  // app's from T3), "oggi" leaves the DOM order (the app's before T3). null: the app's own.
+  const ORDER = 'labels-order';
+  const preview = (variant, { order = variant === 'oggi' ? 'oggi' : 'agenti' } = {}) => {
     delete w.updateLabels;
     document.getElementById(ORDER)?.remove();
-    for (const r of w.roomLabels) {
-      r.el.style.removeProperty('transform-origin');
-    }
-    if (agentsAbove) {
-      const style = document.createElement('style');
-      style.id = ORDER;
-      style.textContent = '#labels .tag, #labels .bubble { z-index: 1; } #labels .room-label, #labels .brain-label { z-index: 0; }';
-      document.head.append(style);
-    }
-    if (variant === 'oggi') return place();
+    for (const r of w.roomLabels) r.el.style.removeProperty('transform-origin');
+    if (variant === null) return place();
+    const style = document.createElement('style');
+    style.id = ORDER;
+    style.textContent = order === 'agenti' ? '#labels .tag, #labels .bubble { z-index: 1; } #labels .room-label, #labels .brain-label { z-index: 0; }' : '#labels .tag, #labels .bubble, #labels .room-label, #labels .brain-label { z-index: auto; }';
+    document.head.append(style);
     const proto = Object.getPrototypeOf(w);
     w.updateLabels = function () {
       proto.updateLabels.call(this);
@@ -362,15 +382,15 @@ window.__checks.labels = (() => {
     };
     w.updateLabels();
   };
-  // The model of A, B and C against the same variants drawn by CSS (preview), over the
-  // layouts and a few views: the room label and its name, worst edge in px.
+  // The model of every variant against the same variant drawn by CSS (preview), over
+  // the layouts and a few views: the room label and its name, worst edge in px.
   const checkVariants = () =>
     t.session(async () => {
       still();
       const out = {};
       const cr = t.rect();
       try {
-        for (const v of ['A', 'B', 'C']) {
+        for (const v of Object.keys(VARIANTS)) {
           let worst = 0;
           let where = '';
           for (const [lay, [left, right]] of Object.entries(t.LAYOUTS)) {
@@ -387,16 +407,35 @@ window.__checks.labels = (() => {
                 if (d > worst) [worst, where] = [d, `${lay} ${view}, ${r.team}`];
               }
               // the session stubs updateLabels: the wrapper must not outlive this measure
-              preview('oggi', { agentsAbove: false });
+              preview(null);
             }
           }
           out[v] = { worstPx: +worst.toFixed(2), where };
         }
       } finally {
-        preview('oggi', { agentsAbove: false });
+        preview(null);
         t.home();
       }
       return out;
+    });
+
+  // E1 must catch the order put back on purpose: the room labels over the agents'.
+  const orderTrap = () =>
+    t.session(async () => {
+      still();
+      const style = document.createElement('style');
+      style.textContent = '#labels .room-label, #labels .brain-label { z-index: 2; }';
+      document.head.append(style);
+      const out = { worst: {}, counts: {}, drawn: {}, states: 0 };
+      try {
+        t.panels(true, true);
+        for (const [view, go] of views().slice(0, 4)) if (go() !== false) measure(`LR ${view}`, { fit: false, out });
+      } finally {
+        style.remove();
+        bubbles(false);
+        t.home();
+      }
+      return out.worst['prod E1'];
     });
 
   // For the wheel checks (E7) with real input: the centre of a room name and of an agent
@@ -416,5 +455,5 @@ window.__checks.labels = (() => {
     bubbles(false);
   };
 
-  return { run, targets, done, still, preview, checkVariants, VARIANTS: Object.keys(VARIANTS) };
+  return { run, targets, done, still, preview, checkVariants, orderTrap, VARIANTS: Object.keys(VARIANTS) };
 })();

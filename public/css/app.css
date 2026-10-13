@@ -74,6 +74,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
   pointer-events: auto; cursor: pointer;
   transform-origin: 50% 100%; will-change: transform;
   transition: opacity .3s;
+  z-index: 1; /* the agents' labels and bubbles over the places' (spec 02, E1) */
 }
 .tag.lead { font-weight: 800; }
 .tag.lead::before { content: "★"; color: #f5c451; font-size: 10px; }
@@ -97,6 +98,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
   font-size: 12px; line-height: 1.35;
   opacity: 0; transform-origin: 50% 100%; transition: opacity .25s; will-change: transform;
+  z-index: 1;
 }
 .bubble.show { opacity: 1; }
 .bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: #fff; transform: translateX(-50%) rotate(45deg); }
@@ -107,13 +109,13 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
 .bubble.ask { box-shadow: 0 0 0 2px rgba(255, 107, 154, .7), 0 6px 18px rgba(0, 0, 0, .2); }
 
 .room-label {
-  position: absolute; left: 0; top: 0; transform-origin: 0 50% !important;
+  position: absolute; left: 0; top: 0; z-index: 0;
   display: flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 7px; border-radius: 10px;
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); backdrop-filter: blur(8px);
   font-size: 11.5px; white-space: nowrap; pointer-events: auto;
-  transform-origin: 0 100%; will-change: transform;
+  transform-origin: 50% 100%; will-change: transform; /* its anchor: the middle of the bottom edge */
 }
 .room-label i { width: 18px; height: 18px; border-radius: 6px; background: var(--team); box-shadow: 0 0 12px var(--team); }
 .room-label b { font-weight: 800; }
@@ -121,7 +123,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
 .room-label.active span { color: var(--ok); }
 .room-label:hover { border-color: var(--team); }
 .brain-label {
-  position: absolute; left: 0; top: 0;
+  position: absolute; left: 0; top: 0; z-index: 0;
   padding: 5px 11px; border-radius: 10px;
   background: rgba(43, 39, 34, 0.82); color: #ffe2a8; border: 1px solid rgba(231, 168, 59, .5);
   font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; line-height: 1.4;

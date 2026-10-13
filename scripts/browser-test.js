@@ -82,7 +82,7 @@ const report = (phase, name, ok, data) => {
 const phaseOf = (key) => {
   const c = key.split(' ')[0];
   if (/^(P\d|walk|inputs)$/.test(c)) return 'overlaps';
-  if (/^(E\d|model)$/.test(c)) return 'labels';
+  if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run' }[c] ?? c;
 };
 
@@ -627,22 +627,33 @@ async function labels(cdp) {
     report('E2', key, zero('prod E2'), w['prod E2']);
     report('E3', key, zero('prod E3'), w['prod E3']);
     report('E4', key, zero('prod E4'), w['prod E4']);
-    report('E5', key, zero('prod E5') && zero('prod E5 nomi'), { agentsUnderARoomLabel: w['prod E5'], roomNamesNotClickable: w['prod E5 nomi'] });
+    // E5 without the feet of the sub-agents, which D8 accepts up to 3 (checked below)
+    report('E5', key, zero('prod E5') && zero('prod E5 nomi') && (w['prod E5 piedi']?.value ?? 0) <= 3, { agentsUnderARoomLabel: w['prod E5'], subAgentFeet: w['prod E5 piedi'], roomNamesNotClickable: w['prod E5 nomi'] });
     if (w['prod E6']) report('E6', key, zero('prod E6'), w['prod E6']);
   }
-  report('model', 'today\'s room labels computed within 1 px of the drawn ones', all['model check'].value <= 1, all['model check']);
+  const counts = {};
+  for (const r of Object.values(runs)) for (const [k, [n, of]] of Object.entries(r.counts)) counts[k] = [(counts[k]?.[0] ?? 0) + n, (counts[k]?.[1] ?? 0) + of];
+  // the exceptions accepted with D8 (spec §3.2), over the whole matrix
+  const feet = all['prod E5 piedi'] ?? { value: 0 };
+  report('D8', 'the feet of at most 3 sub-agents under their room label, in at most 2 states', feet.value <= 3 && (counts['prod E5 piedi']?.[0] ?? 0) <= 2, { ...feet, statesNotZero: counts['prod E5 piedi'] });
+  report('D8', 'the painted bay text covered at most 27%', (all['prod scritta della bay']?.value ?? 0) <= 27, all['prod scritta della bay']);
+  // the variant the labels are drawn as, recognised by the model
+  const drawnAs = [...new Set(Object.values(runs).flatMap((r) => Object.keys(r.drawn)))];
+  results.drawnVariant = drawnAs.join(', ');
+  report('model', 'the drawn room labels match a variant of the model within 1 px', all['model check'].value <= 1, all['model check']);
+  report('model', 'the app draws variant B (D8)', drawnAs.length === 1 && drawnAs[0] === 'B', { drawnAs });
   const s01 = runs['1920x1080 vuote'].spec01;
   report('model', 'spec 01 numbers: 7/7 workers under their room label, full view LR', s01?.workers === 7 && s01.covered === 7, s01);
   const subs = runs[`${LABEL_SIZES[0]} piene`].subAgents;
   report('model', 'every bay seat taken', subs === 14, { subAgents: subs });
   await viewport(cdp, size('1920x1080'));
-  const drawn = await cdp.eval('__checks.labels.checkVariants()');
-  report('model', 'A, B and C computed within 1 px of the same variants drawn by CSS', Object.values(drawn).every((d) => d.worstPx <= 1), drawn);
+  const byCss = await cdp.eval('__checks.labels.checkVariants()');
+  report('model', 'every variant computed within 1 px of the same variant drawn by CSS', Object.values(byCss).every((d) => d.worstPx <= 1), byCss);
+  const trap = await cdp.eval('__checks.labels.orderTrap()');
+  report('E1', 'the order put back on purpose (rooms over agents) is caught', trap.value > 0, trap);
 
   // the table for D8: the worst case over the whole matrix, per variant and measure
-  const MEASURES = ['E1 ordine di oggi', 'E1 agenti sopra', 'E2', 'E3', 'E4', 'E5', 'scritta della bay'];
-  const counts = {};
-  for (const r of Object.values(runs)) for (const [k, [n, of]] of Object.entries(r.counts)) counts[k] = [(counts[k]?.[0] ?? 0) + n, (counts[k]?.[1] ?? 0) + of];
+  const MEASURES = ["E1 ordine dell'app", 'E1 agenti sopra', 'E2', 'E3', 'E4', 'E5', 'scritta della bay'];
   const variants = {};
   for (const v of ['oggi', 'A', 'B', 'C']) variants[v] = Object.fromEntries(MEASURES.map((m) => [m, all[`${v} ${m}`] ? { ...all[`${v} ${m}`], statesNotZero: counts[`${v} ${m}`] } : null]));
   results.variants = variants;
@@ -657,16 +668,18 @@ async function labels(cdp) {
   try {
     // the variants drawn, with every bay seat taken, for the choice of D8
     if (SHOTS) {
+      await cdp.eval('__checks.overlaps.reset(null)'); // no inspector left open by an earlier phase
       for (const [lay, panels] of [['LR', LAYOUTS.LR], ['--', LAYOUTS['--']]]) {
         await layout(cdp, panels);
         for (const v of ['oggi', 'A', 'B', 'C']) {
-          await cdp.eval(`__checks.labels.preview('${v}')`);
+          // the variant the app draws is the app itself; the others are proposals
+          const own = drawnAs[0] === v;
+          await cdp.eval(own ? '__checks.labels.preview(null)' : `__checks.labels.preview('${v}')`);
           await homeView(cdp);
-          // the variants are proposals, whatever checkout draws them
-          await shot(cdp, `n4-${v}-1920x1080-${lay === 'LR' ? 'due-pannelli' : 'nessun-pannello'}`, v === 'oggi' ? TAG : 'variante');
+          await shot(cdp, `n4-${v}-1920x1080-${lay === 'LR' ? 'due-pannelli' : 'nessun-pannello'}`, own ? TAG : 'variante');
         }
       }
-      await cdp.eval("__checks.labels.preview('oggi', { agentsAbove: false })");
+      await cdp.eval('__checks.labels.preview(null)');
       await layout(cdp, LAYOUTS.LR);
     }
     for (const [kind, name] of [['room', 'wheel over a room label'], ['tag', 'wheel over an agent label']]) {

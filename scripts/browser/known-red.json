@@ -1,10 +1,4 @@
 {
-  "E1 1440x900": "T3",
-  "E1 1920x1080": "T3",
-  "E1 2560x1440": "T3",
-  "E5 1440x900": "T3",
-  "E5 1920x1080": "T3",
-  "E5 2560x1440": "T3",
   "E6 1440x900": "T4",
   "E7 wheel over a room label": "T4",
   "E7 wheel over an agent label": "T4"
