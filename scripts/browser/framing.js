@@ -56,27 +56,43 @@ window.__checks.framing = () =>
       t.sync();
     }
 
-    // every agent picked by a click through the canvas listeners
+    // every agent picked by a click through the canvas listeners. What a click there must
+    // pick is the first agent on a ray cast straight from the projected point, without
+    // client coordinates: an idle agent strolling in front of another one (once in six
+    // runs) is the right answer, not a miss.
     {
       t.panels(true, true);
       t.home();
       const onPick = w.onPick;
       const picked = [];
       w.onPick = (id) => picked.push(id);
+      const owner = (o) => {
+        while (o && !o.userData.agentId) o = o.parent;
+        return o?.userData.agentId;
+      };
+      const roots = [...w.actors.values()].map((a) => a.root);
       let hits = 0;
+      let covered = 0;
+      const missed = [];
       try {
         for (const [id, a] of w.actors) {
-          const [x, y] = t.toScreen(a.position.clone().setY(0.7));
+          const point = a.position.clone().setY(0.7);
+          const [x, y] = t.toScreen(point);
+          const ndc = point.clone().project(w.camera);
+          w.raycaster.setFromCamera({ x: ndc.x, y: ndc.y }, w.camera);
+          const front = w.raycaster.intersectObjects(roots, true).map((h) => owner(h.object)).find(Boolean);
+          if (front !== id) covered++;
           const r = t.rect();
           const p = { clientX: r.left + x, clientY: r.top + y };
           t.pointer('pointerdown', p);
           t.pointer('pointerup', p);
-          if (picked.at(-1) === id) hits++;
+          if (picked.at(-1) === front) hits++;
+          else missed.push({ id, front, got: picked.at(-1) ?? null });
         }
       } finally {
         w.onPick = onPick;
       }
-      t.result(out, 'clicks on agents through the lens shift', hits === w.actors.size && w.autoFrame === true, { picked: `${hits}/${w.actors.size}`, autoFrame: w.autoFrame });
+      t.result(out, 'clicks on agents through the lens shift', hits === w.actors.size && covered <= 2 && w.autoFrame === true, { picked: `${hits}/${w.actors.size}`, coveredByAnother: covered, autoFrame: w.autoFrame, missed });
     }
     return out;
   });
