@@ -136,5 +136,62 @@ window.__t = (() => {
   };
   // One result per check: { ok, ...measures }.
   t.result = (out, name, ok, data = {}) => (out[name] = { ok: Boolean(ok), ...data });
+
+  // ---------- the fixed UI (spec 02) ----------
+
+  const medium = matchMedia('(max-width: 1250px)');
+  t.narrow = () => narrow.matches;
+  t.FIXED = { topbar: '.topbar', left: '#left', right: '#right', roster: '#roster', minimap: '#minimap', inspector: '#inspector' };
+  // The fixed elements on screen now: a rectangle for each one shown, null for the rest.
+  t.fixed = () =>
+    Object.fromEntries(
+      Object.entries(t.FIXED).map(([k, s]) => {
+        const r = $(s).getBoundingClientRect();
+        return [k, r.width > 0 && r.height > 0 ? { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom } : null];
+      }),
+    );
+  t.box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom };
+  };
+  t.area = (a) => (a ? Math.max(0, a.x1 - a.x0) * Math.max(0, a.y1 - a.y0) : 0);
+  t.overlap = (a, b) => (a && b ? Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0)) : 0);
+  t.inside = (a, b, tol = 0.5) => a.x0 >= b.x0 - tol && a.y0 >= b.y0 - tol && a.x1 <= b.x1 + tol && a.y1 <= b.y1 + tol;
+  // Where spec 02 (§3.1) puts the column of the roster and the inspector, and the
+  // minimap: x ranges from the window width and the panels alone, null for what is
+  // hidden. Never from where the other elements are, so a minimap out of place does
+  // not move what the roster is expected to do.
+  t.expected = () => {
+    const W = innerWidth;
+    if (narrow.matches) return { roster: [8, W - 8], inspector: [8, W - 8], minimap: null };
+    const [lw, rw] = medium.matches ? [300, 360] : [330, 400];
+    const left = t.isOpen('#left');
+    const right = t.isOpen('#right');
+    const minimap = medium.matches ? null : right ? [W - rw - 24 - 204, W - rw - 24] : [W - 216, W - 12];
+    const x0 = left ? 12 + lw + 12 : 12;
+    const x1 = minimap ? minimap[0] - 12 : right ? W - 12 - rw - 12 : W - 12;
+    return { roster: [x0, x1], inspector: [x0, x0 + Math.min(340, x1 - x0)], minimap };
+  };
+  // Real frames: the overlaps phase needs the ResizeObservers and the renders of main.js.
+  t.frames = async (n = 1) => {
+    for (let i = 0; i < n; i++) await new Promise((ok) => requestAnimationFrame(ok));
+  };
+  t.until = async (fn, frames = 90) => {
+    for (let i = 0; i < frames && !fn(); i++) await t.frames(1);
+    return fn();
+  };
+  t.inspectorOpen = () => !$('#inspector').classList.contains('hidden');
+  // The tallest inspector a user gets: 6 events in the timeline (main.js shows no more)
+  // and a chat long enough to reach its own max-height. A render of the inspector puts
+  // its own content back, so callers fill it right before they measure, in one task.
+  t.tallInspector = () => {
+    const el = $('#inspector');
+    if (!t.inspectorOpen()) return;
+    const ev ='<div class="ev"><span class="t">t3</span><div>Scrive <code>site/menu-pizze-fritte.html</code></div></div>'.repeat(6);
+    const timeline = el.querySelector('.timeline') ?? el.querySelector('.col-title').insertAdjacentElement('beforebegin', document.createElement('div'));
+    timeline.className = 'timeline';
+    timeline.innerHTML = ev;
+    el.querySelector('#chat-log').innerHTML = Array.from({ length: 8 }, (_, i) => `<div class="b ${i % 2 ? 'them' : 'me'}">${i % 2 ? 'Ok, aggiungo la sezione e poi ricontrollo i prezzi con il lead.' : 'Aggiungi anche le pizze fritte, per favore.'}</div>`).join('');
+  };
   return t;
 })();
