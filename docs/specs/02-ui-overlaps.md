@@ -6,7 +6,7 @@
 | **Data** | 2026-10-13 |
 | **Branch** | `feat/ui-overlaps`, da `main` = `e14f039` |
 | **Origine** | difetti N4 e N6 della spec 01 (retro, §5); Plan dello step 1, approvato |
-| **Decisioni già prese** | D1: stato dei pannelli con CSS `:has()`, una sola verità. D2: perimetro N6 più Q1, Q2 e Q3. D3: N4 sul bordo anteriore, con la variante scelta dopo le misure di T0. D4: N7 escluso. Alla revisione della spec: D5 Q4 incluso, D6 Q5 incluso, D7 rotella sulle etichette inclusa; approvate anche `(width > 900px)` e `autoPort` |
+| **Decisioni già prese** | D1: stato dei pannelli con CSS `:has()`, una sola verità. D2: perimetro N6 più Q1, Q2 e Q3. D3: N4 sul bordo anteriore, con la variante scelta dopo le misure di T0. D4: N7 escluso. Alla revisione della spec: D5 Q4 incluso, D6 Q5 incluso, D7 rotella sulle etichette inclusa; approvate anche `(width > 900px)` e `autoPort`. Dopo T0: D8 variante B con l'ordine "agenti sopra", con due eccezioni (§3.2) |
 
 **In breve**
 1. Lo stato dei pannelli è duplicato. I pannelli sanno se sono chiusi, il body ne tiene una copia che aggiornano solo i due pulsanti. Da qui vengono N6, Q1 e Q2: il roster e la minimappa finiscono sotto il pannello destro, oppure lasciano fino a 216 px vuoti.
@@ -178,6 +178,10 @@ Le "etichette dei luoghi" sono quelle delle stanze e del Brain. Gli "agenti sedu
 - **E6 — Etichette nascoste (Q5; D6).** Un'etichetta di agente nascosta da `far` non riceve né clic né rotella.
 - **E7 — Rotella sopra un'etichetta (D7).** La rotella sopra qualunque etichetta zooma come sul canvas, verso lo stesso punto.
 
+**Eccezioni accettate con D8** (variante B, misure di T0 nel report, §5):
+- **E5, piedi dei sub-agenti.** Il punto di presa più basso (0,4 sopra il pavimento) di al massimo 3 sub-agenti può cadere sotto l'etichetta della loro stanza, in al massimo 2 stati della matrice su 180 (T0: 1920×1080, LR, vista completa, bay piene). Il resto del corpo resta cliccabile. Lead, worker e CEO non hanno eccezioni.
+- **Scritta "SUB-AGENT BAY".** È disegnata sul pavimento della bay ed è decorativa: l'etichetta della stanza può coprirla, fino al 27% misurato a T0. Non è un criterio; il report "Dopo" riporta di nuovo la misura.
+
 **Matrice ingresso × stato.** Gli stati combinano quattro dimensioni:
 - finestra: 1920×1080, 1440×900, 2560×1440;
 - pannelli: LR, -R, --;
@@ -274,7 +278,7 @@ Le larghezze risultanti sono nella tabella del §3.1.
 |---|---|---|---|
 | oggi | angolo posteriore sinistro (x − 5,0; z − 3,1) | verso destra, centrata in verticale | — |
 | **A** | angolo anteriore sinistro, dentro la stanza (x − 5,0; z + 3,1) | verso destra, con il bordo inferiore sull'ancora | il bordo della stanza scende verso destra, quindi l'etichetta resta dentro a ogni zoom |
-| **B** | centro del bordo anteriore, dentro la stanza (x; z + 3,1) | centrata, con il bordo inferiore sull'ancora | la metà sinistra sporge oltre il bordo, fino a circa un decimo della larghezza dell'etichetta |
+| **B** *(scelta, D8)* | centro del bordo anteriore, dentro la stanza (x; z + 3,1) | centrata, con il bordo inferiore sull'ancora | la metà sinistra sporge oltre il bordo, fino a circa un decimo della larghezza dell'etichetta |
 | **C** | angolo anteriore destro, fuori dalla stanza (x + 5,0; z + 3,5) | verso sinistra, con il bordo superiore sull'ancora | il bordo sale verso sinistra, quindi l'etichetta resta fuori a ogni zoom |
 
 *Precisazione rispetto al Plan:* lì C era "appena fuori dal bordo anteriore", senza un angolo. Con l'ancora a sinistra, la parte destra dell'etichetta entrerebbe nella stanza di circa un quinto della sua larghezza, per via della pendenza.
@@ -282,7 +286,7 @@ Le larghezze risultanti sono nella tabella del §3.1.
 **Ordine (E1).** Le etichette dei luoghi vanno sotto quelle degli agenti in ogni caso:
 - si usa uno z-index (0 per i luoghi, 1 per gli agenti) invece dell'ordine nel DOM, che cambia quando arrivano i sub-agenti;
 - `#stage` è `position: fixed`, quindi crea già un contesto di sovrapposizione: lo z-index resta confinato lì;
-- spostare le etichette, da solo, non basta per i fumetti. È una stima, da confermare a T0:
+- spostare le etichette, da solo, non basta per i fumetti *(confermato a T0: con qualunque variante, senza l'ordine restano coperti in 72 stati su 180)*. La stima era:
   - nella vista completa a 1920 con LR, l'etichetta di una stanza posteriore spostata sul bordo anteriore sta circa 40 px sopra le teste della fila anteriore;
   - lì sale il fumetto di un lead: occupa da 19 a 40–55 px sopra la testa;
 - l'ordine tra le etichette degli agenti non cambia.
@@ -338,9 +342,9 @@ Così ogni verifica dimostra di saper fallire, e nessun commit lascia la suite r
 | V4 | P5: dopo ogni ingresso che apre o chiude un pannello in modalità automatica, A1 della spec 01 resta allo 0% | `overlaps` | verde. Per vederlo fallire si blocca l'aggiornamento degli ingombri | T0 |
 | V5 | P6: suite della spec 01 verde (views, checks, cubes, input, run) senza il riallineamento in A7 | suite completa | verde, ma solo con il riallineamento | T1 |
 | V6 | E1: 0 px² di etichette e fumetti di agenti coperti da etichette di luoghi, in tutta la matrice del §3.2 | `labels` | rosso (7 worker su 7 nella vista completa) | T3 |
-| V7 | E2: 0 px² del nome di una stanza coperti da etichette di agenti seduti | `labels` | si misura a T0 | T3 |
-| V8 | E3 ed E4: etichette di stanza nell'area libera nella vista completa, e nessuna sovrapposizione tra etichette di luoghi | `labels` | si misura a T0 | T3 |
-| V9 | E5: un clic sui punti di presa di ogni agente seduto seleziona l'agente; un clic sul nome visibile di ogni stanza apre la stanza | `labels` (punto per punto, più un campione di clic veri via DevTools) | si misura a T0 | T3 |
+| V7 | E2: 0 px² del nome di una stanza coperti da etichette di agenti seduti | `labels` | verde (T0: oggi le stanze stanno sopra gli agenti iniziali); con B e l'ordine nuovo, 0 | T3 |
+| V8 | E3 ed E4: etichette di stanza nell'area libera nella vista completa, e nessuna sovrapposizione tra etichette di luoghi | `labels` | verdi (T0), anche con B | T3 |
+| V9 | E5: un clic sui punti di presa di ogni agente seduto seleziona l'agente; un clic sul nome visibile di ogni stanza apre la stanza; salvo l'eccezione dei piedi dei sub-agenti (§3.2) | `labels` (punto per punto) | rosso (T0: 8 lead e worker in 180 stati su 180) | T3 |
 | V10 | E6: nessuna etichetta nascosta riceve il puntatore | `labels` | rosso | T4 |
 | V11 | E7: un passo di rotella sopra un'etichetta cambia lo zoom come sul canvas (±2%) e porta la vista in modalità manuale | `labels`, con un evento vero via DevTools | rosso | T4 |
 | V12 | A fine suite non resta nessun processo del browser con il profilo dell'esecuzione | runner | si dimostra saltando la chiusura del browser | T0 |
@@ -368,8 +372,8 @@ Prese alla revisione della spec (2026-10-13):
 2. **D6 — Le etichette nascoste smettono di ricevere il puntatore (Q5): sì.** Un elemento invisibile non deve mai intercettare i clic.
 3. **D7 — La rotella sopra le etichette zooma: sì.** Lo zoom deve funzionare ovunque si trovi il cursore; il limite accettato nella spec 01 decade.
 
-Ancora aperta:
-4. **D8 — Variante di N4.** La scegli alla fermata dopo T0, con la tabella delle misure: V6–V9 per A, B e C, nel caso peggiore della matrice.
+Presa alla fermata dopo T0, sulla tabella del report (§5):
+4. **D8 — Variante di N4: B, con l'ordine "agenti sopra".** Come A, lascia liberi i nomi delle stanze e il corpo di lead e worker; i suoi conflitti residui sono le due eccezioni del §3.2.
 
 Non sono decisioni ma precisioni, già spiegate sopra:
 - `(width > 900px)` invece di `(min-width: 901px)` (§4.1);
