@@ -22,8 +22,8 @@ const check = (name, ok, data = {}) => {
 // and the old aw-* of router-test
 const folders = () => new Set(readdirSync(tmpdir()).filter((n) => (n.startsWith('agent-world-') && n !== 'agent-world-preview') || /^aw-/.test(n)));
 const added = (before) => [...folders()].filter((n) => !before.has(n));
-function runScript(script, env = {}, timeoutMs = 120_000) {
-  const child = spawn(process.execPath, [join(HERE, script)], { cwd: ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+function runScript(script, env = {}, timeoutMs = 120_000, args = []) {
+  const child = spawn(process.execPath, [join(HERE, script), ...args], { cwd: ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   child.stdout.on('data', (d) => (out += d));
   child.stderr.on('data', (d) => (out += d));
@@ -58,7 +58,8 @@ for (const script of ['smoke.js', 'flows-test.js']) {
 }
 
 // C2, C3: a smoke killed with taskkill /F leaves its folder, named with its pid; the
-// next test that starts (router-test, the quickest) removes it
+// next tool that starts (`npm run sweep`, the quickest) removes it. P7: this used to
+// be router-test.js, deleted with the Node server.
 {
   const before = folders();
   const child = spawn(process.execPath, [join(HERE, 'smoke.js')], { cwd: ROOT, stdio: 'ignore' });
@@ -75,7 +76,7 @@ for (const script of ['smoke.js', 'flows-test.js']) {
   const leftByTheKill = Boolean(orphan) && existsSync(join(tmpdir(), orphan));
   // its server must not outlive it: it would hold port 4399 and the folder
   const serverAnswers = await fetch('http://127.0.0.1:4399/api/state', { signal: AbortSignal.timeout(1000) }).then(() => true, () => false);
-  const next = await runScript('router-test.js');
+  const next = await runScript(join('browser', 'headless.js'), {}, 30_000, ['--sweep']);
   const gone = Boolean(orphan) && !existsSync(join(tmpdir(), orphan));
   check('C2 a test folder is named with its owner', named, { folder: orphan ?? null, pid: child.pid });
   check('C3 a killed smoke leaves its folder, the next test removes it', leftByTheKill && !serverAnswers && next.code === 0 && gone, { folder: orphan ?? null, leftByTheKill, serverAnswers, nextTestExit: next.code, gone });

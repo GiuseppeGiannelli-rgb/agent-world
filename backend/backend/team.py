@@ -116,14 +116,16 @@ class Team:
         if self.bus is not None:
             self.bus.emit("agent.despawn", {"id": id, "team": a["team"]})
 
-    async def acquire(self, team: str, run_id):
+    async def acquire(self, team: str, run_id, abort: "asyncio.Event | None" = None):
         """Waits for a free member of a service team. Cancel the returned
-        task to abort a pending wait (see the module docstring)."""
+        task to abort a pending wait (see the module docstring). `abort` is
+        the run's abort event: once set, the waiter must never receive an
+        agent (release() checks it synchronously)."""
         a = self.try_acquire(team, run_id, allow_lead=True)
         if a:
             return a
         future = asyncio.get_event_loop().create_future()
-        waiter = {"team": team, "runId": run_id, "future": future}
+        waiter = {"team": team, "runId": run_id, "future": future, "abort": abort}
         self.waiters.append(waiter)
         try:
             return await future
@@ -132,13 +134,38 @@ class Team:
                 self.waiters.remove(waiter)
             raise
 
+    @staticmethod
+    def _waiter_alive(w: dict) -> bool:
+        # A waiter is handoff-able only while its future is pending AND its
+        # run is not aborted. Node removes aborted waiters synchronously in
+        # the abort listener; asyncio delivers cancellation a loop turn later,
+        # and a handoff to a dead run leaves the agent busy forever (P7 QA:
+        # both QA judges stuck idle+busy after stop()).
+        if w["future"].done():
+            return False
+        abort = w.get("abort")
+        return abort is None or not abort.is_set()
+
+    def abort_waiters(self, run_id) -> None:
+        """Synchronously cancel every pending acquire of a run (Run.stop()).
+        Mirrors Node, where the abort listener removes waiters during the
+        abort dispatch itself. asyncio delivers cancellation a loop turn
+        later; without this a release() in between could hand an agent to a
+        waiter of the stopping run and leave it busy forever (P7 QA)."""
+        for w in [w for w in self.waiters if w["runId"] == run_id]:
+            self.waiters.remove(w)
+            if not w["future"].done():
+                w["future"].cancel()
+
     def release(self, id: str, patch: dict | None = None) -> None:
         patch = patch or {}
         a = self.agents.get(id)
         if not a:
             return
         a["busy"] = False
-        i = next((i for i, w in enumerate(self.waiters) if w["team"] == a["team"]), -1)
+        # Hand the agent only to a waiter that is still alive (pending future
+        # AND run not aborted) -- see _waiter_alive.
+        i = next((i for i, w in enumerate(self.waiters) if w["team"] == a["team"] and self._waiter_alive(w)), -1)
         if i >= 0:
             w = self.waiters.pop(i)
             self.take(a, w["runId"])

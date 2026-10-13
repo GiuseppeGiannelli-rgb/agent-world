@@ -124,3 +124,84 @@ def test_release_worker_resets_state():
     assert a["busy"] is False
     assert a["state"] == "idle"
     assert a["verdict"] == "pass"
+
+
+async def test_release_skips_cancelled_waiters():
+    """P7 regression: Node removes an aborted acquire waiter synchronously, but
+    asyncio delivers cancellation a loop turn later. If a release lands in
+    between (Run.start()'s shutdown finally), the agent must NOT be handed to
+    the dead waiter -- that orphaned vera (qa) as idle+busy forever after
+    stop()."""
+    import asyncio
+
+    from backend.team import Team
+
+    team = Team(Bus())
+    team.load([{"id": "judy", "name": "Judy", "team": "qa", "kind": "lead"}])
+    team.take(team.get("judy"), "run1")  # nobody free in qa now
+
+    waiter_task = asyncio.ensure_future(team.acquire("qa", "run1"))
+    await asyncio.sleep(0)  # let the waiter register
+    waiter_task.cancel()
+    # NOTE: cancellation has not been delivered to the task yet -- the waiter
+    # is still in team.waiters, exactly like during Run.stop().
+    team.release("judy")
+    await asyncio.sleep(0)  # now the cancellation lands
+
+    judy = team.get("judy")
+    assert judy["busy"] is False  # not handed to the dead waiter
+    assert judy["runId"] is None
+    assert team.waiters == []  # the cancelled waiter is gone
+
+
+async def test_abort_waiters_cancels_synchronously():
+    """P7 regression: Run.stop() calls abort_waiters, which cancels pending
+    acquires IMMEDIATELY (like Node's synchronous abort listener). A release
+    right after must find no waiter to hand the agent to."""
+    import asyncio
+
+    from backend.team import Team
+
+    team = Team(Bus())
+    team.load([{"id": "judy", "name": "Judy", "team": "qa", "kind": "lead"}])
+    team.take(team.get("judy"), "run1")
+
+    waiter_task = asyncio.ensure_future(team.acquire("qa", "run1"))
+    await asyncio.sleep(0)  # waiter registered
+    team.abort_waiters("run1")
+    # the future is already done (cancelled): no delivery needed, no window
+    team.release("judy")
+    with __import__("pytest").raises(asyncio.CancelledError):
+        await waiter_task
+
+    judy = team.get("judy")
+    assert judy["busy"] is False and judy["runId"] is None
+    assert team.waiters == []
+
+
+async def test_release_skips_waiters_of_aborted_runs():
+    """P7 regression: a waiter whose run is aborted must never receive an
+    agent, even if its cancellation has not been delivered yet (and even if
+    abort_waiters was never called). Otherwise stop() can hand a judge to a
+    dead run and leak it busy forever."""
+    import asyncio
+
+    from backend.team import Team
+
+    team = Team(Bus())
+    team.load([{"id": "judy", "name": "Judy", "team": "qa", "kind": "lead"}])
+    team.take(team.get("judy"), "run1")
+
+    abort = asyncio.Event()
+    waiter_task = asyncio.ensure_future(team.acquire("qa", "run1", abort=abort))
+    await asyncio.sleep(0)  # waiter registered
+    abort.set()  # the run stops; the waiter is still pending and registered
+    team.release("judy")
+
+    judy = team.get("judy")
+    assert judy["busy"] is False and judy["runId"] is None
+    waiter_task.cancel()  # clean up the pending wait
+    try:
+        await waiter_task
+    except asyncio.CancelledError:
+        pass

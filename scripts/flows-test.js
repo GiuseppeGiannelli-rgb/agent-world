@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { demoEnv, launchCommand } from './lib/backend-launcher.js';
 import { onExit, ownedDir, removeDir, sweepDirs } from './lib/temp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,9 +16,9 @@ const PORT = 4398;
 const base = `http://127.0.0.1:${PORT}`;
 await sweepDirs();
 const home = ownedDir('flows');
-const env = { ...process.env, PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home };
-for (const k of Object.keys(env)) if (k.endsWith('_API_KEY')) delete env[k];
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'] });
+const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home });
+const { cmd, args, cwd } = launchCommand(ROOT);
+const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
 const serverExited = new Promise((resolve) => server.once('exit', resolve));
 // the server is stopped and gone before its home is removed
 const cleanUp = async () => {
@@ -97,8 +98,10 @@ try {
   });
   assert.equal(doneC.status, 'stopped');
   const st = await j('/api/state');
-  assert.equal(st.agents.filter((x) => x.busy).length, 0, 'everyone released');
-  assert.equal(st.agents.filter((x) => x.kind === 'sub').length, 0, 'no sub-agent left');
+  const busyNow = st.agents.filter((x) => x.busy);
+  assert.equal(busyNow.length, 0, `everyone released (busy: ${busyNow.map((x) => `${x.id}:${x.kind}:${x.team}:${x.state}:run=${x.runId}`).join(', ')})`);
+  const subsLeft = st.agents.filter((x) => x.kind === 'sub');
+  assert.equal(subsLeft.length, 0, `no sub-agent left (${subsLeft.map((x) => x.id).join(', ')})`);
   console.log('ok  pause, resume, stop');
   console.log('ALL OK');
 } catch (err) {

@@ -5,10 +5,10 @@
   "description": "A multi-agent team you can watch: an orchestrator plans, taskers loop until the work passes review, and everyone moves around a 3D office.",
   "type": "module",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch-path=server --watch-path=config server/index.js",
+    "start": "cd backend && uv run python -m backend",
+    "dev": "cd backend && uv run uvicorn \"backend.app:create_app\" --factory --reload --host 127.0.0.1 --port 4300",
     "smoke": "node scripts/smoke.js",
-    "test": "node scripts/world-test.js && node scripts/router-test.js && node scripts/smoke.js && node scripts/flows-test.js && node scripts/temp-test.js",
+    "test": "node scripts/world-test.js && node scripts/backend-boot-test.js && cd backend && uv run pytest -q && cd .. && node scripts/smoke.js && node scripts/flows-test.js && node scripts/temp-test.js",
     "test:browser": "node scripts/browser-test.js",
     "test:backend": "node scripts/backend-boot-test.js && cd backend && uv run pytest -q",
     "sweep": "node scripts/browser/headless.js --sweep"

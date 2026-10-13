@@ -2,16 +2,16 @@
 
 Un'azienda di agenti AI che si vede lavorare. Scrivi una missione: la CEO la divide tra i team, ogni team lead la scompone e la distribuisce ai suoi agenti (e, quando serve, a sub-agenti creati al volo), lo Skill Hub assegna le skill giuste, il Prompt Lab affina i brief, gli agenti lavorano in loop finché il QA non approva, e tutto succede in un ufficio 3D visto dall'alto.
 
-Niente servizi esterni da installare: router dei modelli, orchestrazione, skill, memoria e mondo 3D sono in questa cartella. L'unica dipendenza è `three` per il 3D.
+Niente servizi esterni da installare: router dei modelli, orchestrazione, skill, memoria e mondo 3D sono in questa cartella. Il backend è **FastAPI** (Python 3.13, gestito da `uv`, un solo processo uvicorn); Node resta solo per `three.js` e gli strumenti di test del front-end.
 
 ## Avvio
 
 ```sh
-npm install
-npm start
+npm install     # three.js per il 3D
+npm start       # backend FastAPI: uv sincronizza e avvia (porta 4300)
 ```
 
-Apri http://127.0.0.1:4300.
+Apri http://127.0.0.1:4300. Richiede [uv](https://docs.astral.sh/uv/) nel PATH (al primo avvio scarica Python 3.13 e le dipendenze da solo). Per lo sviluppo con reload automatico: `npm run dev`.
 
 Senza chiavi API parte in **modalità demo**: un simulatore interpreta ogni ruolo (piani, sub-agenti, revisioni, escalation, immagini e audio segnaposto veri), così vedi tutto il flusso senza spendere nulla. Per usare modelli veri copia `.env.example` in `.env`, inserisci almeno una chiave e riavvia.
 

@@ -214,6 +214,7 @@ class Run:
             return
         self._abort.set()
         self._resume.set()
+        self.team.abort_waiters(self.data["id"])  # close the handoff window, like Node's sync abort listener
         for done in list(self.answer_waiters.values()):
             done(None)
 
@@ -722,16 +723,21 @@ class Run:
         if has_qa:
             # the QA team is shared: wait for a free reviewer, but let stop()
             # land instead of hanging on the queue
-            acquire = asyncio.ensure_future(self.team.acquire("qa", self.data["id"]))
+            acquire = asyncio.ensure_future(self.team.acquire("qa", self.data["id"], abort=self._abort))
             abort_watch = asyncio.ensure_future(self._abort.wait())
             await asyncio.wait({acquire, abort_watch}, return_when=asyncio.FIRST_COMPLETED)
             abort_watch.cancel()
             if self._abort.is_set():
+                # The handoff may have landed before stop(): acquire is then
+                # already done with a judge in hand, and raising without
+                # releasing would leak the judge busy forever (P7 QA).
                 acquire.cancel()
                 try:
-                    await acquire
+                    judge = await acquire
                 except asyncio.CancelledError:
-                    pass
+                    judge = None
+                if judge is not None:
+                    self.team.release(judge["id"])
                 raise RunStopped("Stopped by the user")
             judge = acquire.result()
         else:

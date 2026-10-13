@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { demoEnv, launchCommand } from './lib/backend-launcher.js';
 import { onExit, ownedDir, removeDir, sweepDirs } from './lib/temp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -16,9 +17,9 @@ const goal = process.argv[2] ?? 'Crea il sito completo per il lancio di una pizz
 
 await sweepDirs();
 const home = ownedDir('smoke');
-const env = { ...process.env, PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home };
-for (const k of Object.keys(env)) if (k.endsWith('_API_KEY')) delete env[k];
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'] });
+const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home });
+const { cmd, args, cwd } = launchCommand(ROOT);
+const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
 const serverExited = new Promise((resolve) => server.once('exit', resolve));
 // the server is stopped and gone before its home is removed
 const cleanUp = async () => {

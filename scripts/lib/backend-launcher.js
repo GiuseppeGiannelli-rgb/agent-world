@@ -1,4 +1,7 @@
-// H1: a single place that decides how to launch either backend for tests.
+// H1: a single place that decides how to launch the backend for tests.
+//
+// P7: the Node server is gone (Spec 04 closed); there is exactly one backend
+// now, the FastAPI one in backend/.
 //
 // Measured on Windows (T1): `uv run python -m backend` adds an extra process
 // hop. Node's child.kill('SIGINT') on Windows does not deliver a real signal
@@ -11,29 +14,50 @@
 // terminal is unaffected by any of this: Windows delivers a genuine
 // CTRL_C_EVENT to the whole console process group, which Python's signal
 // handling receives normally.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BACKEND_DIR = (root) => join(root, 'backend');
 const VENV_PYTHON = (root) => join(BACKEND_DIR(root), '.venv', 'Scripts', 'python.exe');
 
 // { cmd, args, cwd } ready for child_process.spawn.
-export function launchCommand(server, root) {
-  if (server === 'node') return { cmd: process.execPath, args: ['server/index.js'], cwd: root };
-  if (server === 'python') {
-    const py = VENV_PYTHON(root);
-    if (!existsSync(py)) {
-      throw new Error(`${py} not found. Run "uv sync" in backend/ first.`);
-    }
-    return { cmd: py, args: ['-m', 'backend'], cwd: BACKEND_DIR(root) };
+export function launchCommand(root) {
+  const py = VENV_PYTHON(root);
+  if (!existsSync(py)) {
+    throw new Error(`${py} not found. Run "uv sync" in backend/ first.`);
   }
-  throw new Error(`Unknown AGENT_WORLD_SERVER="${server}" (expected "node" or "python")`);
+  return { cmd: py, args: ['-m', 'backend'], cwd: BACKEND_DIR(root) };
 }
 
-export function serverKind() {
-  return process.env.AGENT_WORLD_SERVER === 'python' ? 'python' : 'node';
+// Every env var a config file can name as a provider key (keyEnv), whether or
+// not it is currently set.
+function keyEnvNames(root) {
+  const names = new Set();
+  const walk = (o) => {
+    if (!o || typeof o !== 'object') return;
+    for (const [k, v] of Object.entries(o)) {
+      if (k === 'keyEnv' && typeof v === 'string') names.add(v);
+      else walk(v);
+    }
+  };
+  for (const file of ['default.json', 'local.json']) {
+    const path = join(root, 'config', file);
+    if (existsSync(path)) walk(JSON.parse(readFileSync(path, 'utf8')));
+  }
+  return names;
 }
 
-// Same substring for both backends (H2): scripts waiting for "ready" don't
-// need to know which one they launched.
+// Environment for a DEMO run: every provider key blanked, including the ones
+// that exist only in .env (load_env fills keys ABSENT from the environment,
+// so merely deleting them from process.env lets .env resurrect them and the
+// "demo" run silently goes live -- measured in P7 QA).
+export function demoEnv(root, overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  for (const k of Object.keys(env)) if (k.endsWith('_API_KEY') || k.endsWith('_KEY')) env[k] = '';
+  for (const k of keyEnvNames(root)) env[k] = '';
+  return env;
+}
+
+// Substring of the ready line the backend prints on boot: scripts waiting
+// for "ready" don't need to know anything else.
 export const READY_MARKER = 'Agent World';

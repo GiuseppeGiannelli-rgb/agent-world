@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { close, launch, profileProcesses, sweep } from './browser/headless.js';
+import { launchCommand } from './lib/backend-launcher.js';
 import { alive, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
 
 // Node's WebSocket is global from Node 22 (package.json allows 20.10 for the app). Without
@@ -115,7 +116,8 @@ async function startServer(home) {
   delete env.AGENT_WORLD_FAST; // the mission at its normal pace, as in T0
   for (const k of Object.keys(env)) if (/_KEY$/.test(k)) env[k] = '';
   for (const k of keyNames()) env[k] = '';
-  const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  const { cmd, args, cwd } = launchCommand(ROOT);
+  const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
   server.exited = new Promise((ok) => server.once('exit', ok));
   await new Promise((ok, fail) => {
     server.once('exit', (code) => fail(new Error(`server exited (${code})`)));

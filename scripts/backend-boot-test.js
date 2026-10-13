@@ -17,7 +17,7 @@ const fail = (msg) => {
   failed = true;
 };
 
-const { cmd, args, cwd } = launchCommand('python', ROOT);
+const { cmd, args, cwd } = launchCommand(ROOT);
 const env = { ...process.env, PORT: String(PORT) };
 const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let out = '';

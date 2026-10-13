@@ -114,7 +114,7 @@ class TestFlowControl:
     @pytest.mark.asyncio
     async def test_gate_blocks_while_paused_and_resume_wakes(self, make_run):
         run = make_run()
-        run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"})
+        run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"}, abort_waiters=lambda run_id: None)
         run.pause()
         assert run.data["paused"] is True
         waiter = asyncio.ensure_future(run.gate())
@@ -129,7 +129,7 @@ class TestFlowControl:
         from backend.run import RunStopped
 
         run = make_run()
-        run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"})
+        run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"}, abort_waiters=lambda run_id: None)
         sleeper = asyncio.ensure_future(run.sleep(60000))
         item = run.add_waiting({"kind": "question", "from": "nina", "text": "Scelta?"})
         answer = asyncio.ensure_future(run.wait_answer(item, 0))
