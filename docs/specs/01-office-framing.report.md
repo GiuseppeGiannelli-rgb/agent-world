@@ -509,3 +509,19 @@ Corregge però una premessa di T7: la soglia `far` a 0,55 è stata scelta misura
 - **Pressione tenuta ferma durante un'animazione** (T6): risolto nella code-review (R1).
 - **Velocità percepita del focus** dalla vista completa (T7): risolto nella code-review (R5).
 - **Mouse reale** (limite di T6): ora coperto dagli eventi del browser via DevTools, oltre che dal QA visivo dell'utente.
+
+## Code-review (step 5)
+
+Il report completo della review è in `01-office-framing.review.md`: metodo, difetti trovati con le misure, cosa regge ed esito.
+
+- **In perimetro, corretti con un commit ciascuno:**
+  - R1: la presa segue la camera sotto una pressione (S4.6);
+  - R2: l'etichetta di una stanza apre la scheda prima del focus (S3.7);
+  - R4: `Fx.update` regge un effetto che lancia;
+  - R5: zoom interpolato in rapporto;
+  - R6, R7, R8: pulizia, documentazione, strumenti.
+- **Fuori perimetro, ticket futuri:**
+  - N5: risorse GPU di effetti, card e cubi non liberate;
+  - N6: `switchTab()` non aggiorna `body.right-closed`;
+  - N7: le cartelle temporanee di `smoke.js` e `flows-test.js` restano su disco.
+- **Risultato:** `npm test` verde, `npm run test:browser` 130/130. I limiti residui di T6 (pressione tenuta) e di T7 (velocità del focus) sono risolti.

@@ -112,7 +112,7 @@ Riferimento: [01-office-framing.md](01-office-framing.md). Gli ID S* e A* rimand
    |---|---|
    | `GAP = 12`, `MARGIN = 0.04`, `MIN_SAFE = [240, 160]` | costanti dell'area libera |
    | `REF_UNITS_PER_PX = 0.0323` | scala di riferimento (S2.5) |
-   | `VIEW_DIR`, `VIEW_DIST` | direzione e distanza della camera (S2.4) |
+   | `VIEW_OFFSET` | posizione della camera rispetto al target, `(15, 40, 45)`: direzione e distanza di S2.4. *(Corretto nella code-review, R7: qui c'erano `VIEW_DIR` e `VIEW_DIST`, mai esistiti nel codice.)* |
    | `safeRect(w, h, insets)` | restituisce `{ x0, y0, x1, y1, cx, cy }`, con il fallback di S1.4 |
    | `fitOffice({ width, height, insets, envelope })` | restituisce `{ target, position, unitsPerPx, lensX, lensY, safe }`. L'ingombro lo passa la `World`, così `framing.js` non dipende da `office.js` |
    | `applyFrustum(camera, w, h, unitsPerPx, lensX, lensY)` | imposta la proiezione (S2.3) |

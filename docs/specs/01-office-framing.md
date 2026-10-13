@@ -158,7 +158,7 @@ Con l'inquadratura nuova la minimappa copre al massimo l'1% del pavimento, quind
 
 | File | Modifica |
 |---|---|
-| `public/js/world/framing.js` (nuovo) | Matematica pura, senza DOM: `safeRect(w, h, insets)`, `fitOffice({ width, height, insets, envelope, dir, distance })` che restituisce `{ target, position, unitsPerPx, lensX, lensY }`, `applyFrustum(camera, w, h, unitsPerPx, lensX, lensY)`. Costanti `GAP`, `MARGIN`, `REF_UNITS_PER_PX`, `VIEW_DIR`, `VIEW_DIST`. Importa solo `three`. |
+| `public/js/world/framing.js` (nuovo) | Matematica pura, senza DOM: `safeRect(w, h, insets)`, `fitOffice({ width, height, insets, envelope, offset })` che restituisce `{ target, position, unitsPerPx, lensX, lensY, safe }`, `applyFrustum(camera, w, h, unitsPerPx, lensX, lensY)`. Costanti `GAP`, `MARGIN`, `REF_UNITS_PER_PX`, `VIEW_OFFSET`. Importa solo `three`. *(Corretto nella code-review, R7: la prima versione nominava `dir`, `distance`, `VIEW_DIR` e `VIEW_DIST`; il codice usa un solo vettore, `VIEW_OFFSET` = (15, 40, 45), che dà direzione e distanza di S2.4. Aggiunti in T7: `maxZoomFor`, `zoomFor`, `MIN_ZOOM`, `CLOSEST_UNITS_PER_PX`; nella code-review: `scaleAt`, R5.)* |
 | `public/js/world/office.js` | Esporta `ENVELOPE` vicino a `FLOOR`, con un commento sull'origine dei numeri. Nessun'altra modifica. |
 | `public/js/world/fx.js` | `track()`, `stop()`, `fly()` tramite `track()`. |
 | `public/js/world/world.js` | `setInsets()`, `resize()`, `resetView({ animate })`, un fit sincrono con ridisegno immediato (S3.6), `moveCamera()` come unica animazione di camera (usata da `panTo`, `focus`, `focusRoom` e dal fit), rilevamento delle interazioni manuali, etichette e minimappa basate sulla scala assoluta, invarianti dei cubi (S5). |
