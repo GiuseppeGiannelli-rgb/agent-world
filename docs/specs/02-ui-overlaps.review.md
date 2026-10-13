@@ -5,7 +5,7 @@
 | **Oggetto** | `main..feat/ui-overlaps` (`e14f039..3a83aa7`), 12 commit, 36 file, +2163 / −82. Produzione: 3 file, +48 / −21. Test: 6 file, +1140 / −61 |
 | **Data** | 2026-10-13 |
 | **Fronti chiesti** | prestazioni di `:has()` (ricalcoli di stile a catena, repaint); solidità dell'inoltro della rotella (costo, perdite di memoria); regressioni nelle regole dei breakpoint |
-| **Esito** | nessun difetto in perimetro da correggere nel codice dell'app. Una correzione di commento nei test (R7, `3a83aa7`). Una decisione per te: la compatibilità con Safari 15.4–16.3 (R5) |
+| **Esito** | nessun difetto in perimetro da correggere nel codice dell'app. Una correzione di commento nei test (R7, `3a83aa7`). R5 deciso: la sintassi a intervallo resta; N8 annotato come ticket futuro |
 
 **In breve**
 1. **`:has()`.** Nessun ricalcolo a catena: inserimenti nel DOM, classi sulle etichette e `far` ricalcolano gli stessi elementi di `main` (mediana 1). Il clic su un pannello ricalcola tutto il documento (379 elementi contro una mediana di 267), ma in tempo non costa di più: 5,9 ms in mediana contro 7,8 su `main`, misurati su 60 clic, e senza i picchi di `main` (fino a 1011 elementi e 40 ms).
@@ -134,6 +134,6 @@ L'`!important` veniva dal commit iniziale `c1312ff`. Nessuno script imposta l'or
 - **Codice dell'app:** nessuna modifica dalla review. I tre fronti chiesti reggono, con le misure sopra.
 - **Commit della review:** `3a83aa7`, solo il commento di R7.
 - **Verifiche:** l'ultima suite completa su `6065481` (stesso codice dell'app di oggi) era verde, 226 verifiche. Dopo `3a83aa7`, che cambia un solo commento, basta `node --check`.
-- **Da decidere:**
-  - R5: compatibilità con Safari 15.4–16.3, (a) o (b);
-  - se aprire N8 (pinch touch sopra le etichette) come ticket futuro.
+- **Decisioni dell'utente** (dopo la review):
+  - R5: (a), la sintassi a intervallo resta; senza vincoli nel README si privilegiano pulizia e leggibilità del CSS;
+  - N8 (pinch touch sopra le etichette): registrato come ticket futuro nell'handoff; il perimetro del ciclo resta chiuso.
