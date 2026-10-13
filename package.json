@@ -8,7 +8,8 @@
     "start": "node server/index.js",
     "dev": "node --watch-path=server --watch-path=config server/index.js",
     "smoke": "node scripts/smoke.js",
-    "test": "node scripts/world-test.js && node scripts/router-test.js && node scripts/smoke.js && node scripts/flows-test.js"
+    "test": "node scripts/world-test.js && node scripts/router-test.js && node scripts/smoke.js && node scripts/flows-test.js",
+    "test:browser": "node scripts/browser-test.js"
   },
   "dependencies": {
     "three": "0.186.1"

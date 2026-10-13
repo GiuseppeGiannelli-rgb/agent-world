@@ -344,7 +344,9 @@ Con la soglia 0,95 della spec, la vista completa a 1920×1080 nascondeva le etic
 | Coppie sovrapposte | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 6 |
 | Spazio minimo | 34 px | 20 px | 12 px | 5 px | — | — | — | — |
 
-Le prime sovrapposizioni sono sempre tra un lead e un suo worker alla stessa scrivania (luna/dario, bruno/vera). La soglia è ora **0,55**, poco sopra l'inizio. Risultato nella vista completa:
+Le prime sovrapposizioni sono sempre tra un lead e un suo worker alla stessa scrivania (luna/dario, bruno/vera). La soglia è ora **0,55**, poco sopra l'inizio.
+
+> **Correzione (T8).** Questa scansione confronta solo le etichette degli agenti tra loro. Le etichette delle **stanze** coprono quelle dei worker vicini già con l'inquadratura di `main`, e nella vista completa le coprono tutte: vedi il difetto N4 nella sezione "Dopo". Risultato nella vista completa:
 - 1920×1080 e 2560×1440: tutte le 16 etichette in ogni layout, 0 sovrapposizioni;
 - 1440×900: `far` con LR e -R. Con LR resta 1 sovrapposizione tra due lead, che sono sempre visibili: la scala minima delle etichette (0,62) le rende grandi rispetto a un ufficio così piccolo. Prima di questo branch succedeva lo stesso allontanandosi con lo zoom.
 
@@ -361,3 +363,149 @@ La scala delle etichette segue `0,5 + 0,28 × zoom effettivo`, con il minimo a 0
 - **Focus su una stanza.** Segue la formula della spec, `REF / 2`, senza il `max` con lo zoom attuale che c'era prima. Da una vista più vicina, ora il focus si allontana per mostrare tutta la stanza; prima restava vicino.
 - **Velocità percepita del focus.** Dalla vista completa con LR il focus ingrandisce 3,6 volte, mentre prima ingrandiva 2,2 volte. Con lo stesso rallentamento cubico di 0,7 s, il primo frame ingrandisce di circa il 18% (prima circa l'8%). Interpolare la scala in modo logaritmico renderebbe uniforme la velocità; non l'ho cambiato perché è fuori dal perimetro.
 - **QA visivo da fare:** leggibilità delle etichette a scala 0,67 e soglia di `far` a schermo intero.
+
+## Dopo (T8, 2026-10-13, codice al commit `9e02455`)
+
+### Condizioni
+
+- **Runner nuovo, `scripts/browser-test.js`** (`npm run test:browser`), senza dipendenze: usa `fetch` e `WebSocket` di Node.
+  - Avvia un server demo tutto suo: porta 4397, `AGENT_WORLD_HOME` in una cartella temporanea, ritmo normale (`AGENT_WORLD_FAST` tolto).
+  - Ogni chiave nominata dalla configurazione è impostata a stringa vuota. Così è presente e `.env` non può riempirla, e un run che non risulta in `mode: 'demo'` viene fermato subito.
+  - Pilota **Edge headless** via DevTools Protocol, con viewport 1920×1080, 2560×1440 e 1440×900 e `deviceScaleFactor` 1.
+  - Inietta nella pagina i controlli di `scripts/browser/` e li esegue.
+- **Cosa cambia rispetto a T0:**
+  - un browser headless al posto del pannello dell'app: gli screenshot sono a piena risoluzione e leggibili, la pagina è visibile (i `ResizeObserver` scattano davvero) e il run è disegnato davvero, a 60 fps;
+  - la misura dipende dai pixel CSS, quindi il `devicePixelRatio` (1 invece di 1,25) non conta.
+- **Prima rimisurato.** Le stesse misure girano su `c1312ff`, estratto in una cartella temporanea con `git archive`, con lo stesso runner (`--root … --only views,cubes --tag prima`). Riproducono T0:
+  - pavimento coperto: al decimo di punto (21,2 contro 21; 13,8 contro 14; 38,4 contro 38);
+  - stress dei cubi: alla lettera (`nina@-9.9,1.0,-2.8`, `teo`, `ugo@0.0,3.0,-16.9`, `dario`, `vera`, più `max` per R5).
+
+  La ricostruzione degli snippet è quindi fedele. Le percentuali per zona differiscono da T0 al massimo di 2 punti, perché la griglia a y = 1 è ricostruita.
+
+### Inquadratura (A1)
+
+`__checks.coverage()` legge solo la camera e il DOM, quindi misura nello stesso modo qualunque commit. "Pavimento coperto" conta anche la minimappa, come T0; A1 si misura senza, perché la minimappa non è un ostacolo per l'inquadratura (S1.2).
+
+| Viewport | Pannelli | Pavimento coperto, Prima | Dopo | Punti dell'ingombro sotto l'interfaccia, Prima → Dopo | Larghezza dell'ufficio, Prima → Dopo |
+|---|---|---|---|---|---|
+| 1920×1080 | LR | **21,2%** (sinistro 7,4, destro 11,3, minimappa 2,5; zone: research 18, design 42, genai 53, qa 14) | **0%** | 7 → 0 | 1794 → 1098 px |
+| 1920×1080 | -R | 13,8% (destro 11,3, minimappa 2,5) | 0% | 4 → 0 | 1794 → 1419 px |
+| 1920×1080 | -- | 0% | 0% | 2 → 0 | 1794 → 1419 px |
+| 2560×1440 | LR | 9,6% (sinistro 3,5, destro 5,4, minimappa 0,7) | 0% | 8 → 0 | 2392 → 1713 px |
+| 2560×1440 | -R | 6,1% | 0% | 5 → 0 | 2392 → 1965 px |
+| 2560×1440 | -- | 0% | 0% | 2 → 0 | 2392 → 1965 px |
+| 1440×900 | LR | **38,4%** (sinistro 15,1, destro 21, minimappa 2,3; zone: research 57, design 86, genai 90, qa 53) | **0%** | 8 → 0 | 1346 → 637 px |
+| 1440×900 | -R | 23,3% | 0% | 3 → 0 | 1346 → 965 px |
+| 1440×900 | -- | 0% | 0% | 1 → 0 | 1346 → 1145 px |
+
+Anche senza pannelli la vecchia inquadratura lasciava 1–2 punti dell'ingombro fuori: la base del diorama finiva sotto il roster o fuori dallo schermo (S2.1). La larghezza che diminuisce è la scelta D1 (a): l'ufficio è sempre intero.
+
+**Screenshot a 1920×1080**, presi dal runner a piena risoluzione:
+
+| | Prima (`c1312ff`) | Dopo |
+|---|---|---|
+| Due pannelli | ![](img/01-prima-1920x1080-due-pannelli.jpg) | ![](img/01-dopo-1920x1080-due-pannelli.jpg) |
+| Pannello destro | ![](img/01-prima-1920x1080-pannello-destro.jpg) | ![](img/01-dopo-1920x1080-pannello-destro.jpg) |
+| Nessun pannello | ![](img/01-prima-1920x1080-nessun-pannello.jpg) | ![](img/01-dopo-1920x1080-nessun-pannello.jpg) |
+
+### Cubi: stress R1–R5 (A9)
+
+| Caso | Prima (`c1312ff`, rimisurato) | Dopo |
+|---|---|---|
+| R1: lo split viene superato dalla presa | ✖ il cubo di `nina` a `(-9.9, 1.0, -2.8)` in coordinate locali | ✔ |
+| R2: pickup ancora in volo allo split | ✖ `teo` porta il cubo grande eliminato | ✔ |
+| R3: consegna o affondamento durante la presa | ✖ `ugo` e `dario` portano cubi spariti, `ugo` a `(0, 3, -16.9)` | ✔ |
+| R4: reset durante la presa | ✖ `vera` porta un cubo del run precedente | ✔ |
+| R5: seconda presa con un cubo in mano | ✖ il primo resta attaccato a `max` | ✔ il primo sulla scrivania, il secondo in mano |
+
+### Run completo (A10)
+
+Stessa missione di T0 ("Il sito completo per il lancio di una pizzeria napoletana a Milano, con brand, immagini e testi"), a 1920×1080 con entrambi i pannelli e ritmo normale, partendo da una pagina appena caricata. La sonda `__checks.runProbe` rifà i controlli di T0 e T2:
+- le tolleranze sui cubi in uscita sono misurate in **tempo del mondo**, perché `frame()` limita un passo a 0,05 s e un browser che disegna meno di 20 fps fa girare il mondo più lento dell'orologio;
+- a fine run aspetta che gli effetti finiscano invece di un tempo fisso.
+
+| Verifica | T0 (`c1312ff`) | T2 | **T8** |
+|---|---|---|---|
+| Esito | `completed`, 6 workstream, 17/17 task | identico | identico: 155 s, 60,7 fps, mondo a 1× l'orologio |
+| Cubi: pickup, split, prese, consegne, drop | 6 / 6 / 17 / 17 / 23 | 6 / 6 / 17 / 17 / 23 | 6 / 6 / 17 / 17 / 23, 0 affondamenti |
+| Anomalie dei cubi durante il run | 1 (R1, `research-sub1`) | 0 | **0** |
+| Cubi rimasti, personaggi con `carrying` a fine run | 0, nessuno | 0, nessuno | 0, nessuno |
+| Effetti congelati a fine run (anelli / scintille) | 144 / 170 | 0 / 0 | **0 / 0**, 0 effetti attivi |
+| Verdetti con il revisore alla scrivania | 23/23, distanza 1,0–1,1, ritardo max 1,04 s | 23/23, 1,0–1,1 | 23/23 (17 promossi), distanza 1,0–1,1, ritardo max 0,96 s |
+| Sub-agenti | 2, entro 1,6 dal posto nella bay | — | 2 creati e rimossi; mentre lavorano sono al loro posto (0), al massimo a 1,59 per prendere il cubo |
+
+Il numero di sub-agenti dipende dal piano demo. In un giro intermedio ne è stato creato uno solo, ed è stato rimosso regolarmente.
+
+**Momenti chiave (S6.2)**, catturati dal runner quando la sonda li segnala:
+
+| | |
+|---|---|
+| ![](img/01-dopo-run-1-plan-on-the-board.jpg) Piano sulla lavagna | ![](img/01-dopo-run-2-split-into-cubes.jpg) Split in cubi |
+| ![](img/01-dopo-run-3-workers-take-cubes.jpg) I worker prendono i cubi | ![](img/01-dopo-run-4-sub-agent-in-the-bay.jpg) Sub-agente nella bay |
+| ![](img/01-dopo-run-5-qa-verdict.jpg) Verdetto del QA alla scrivania | ![](img/01-dopo-run-6-delivery.jpg) Consegna |
+| ![](img/01-dopo-run-7-run-over.jpg) Fine del run | |
+
+### Criteri di accettazione
+
+| ID | Criterio | Esito | Evidenza |
+|---|---|---|---|
+| A1 | Tutto l'ingombro nell'area libera, centrato, ≥ 95% dell'asse più stretto | ✔ | `world-test.js`: 20 layout. Browser: 0% di pavimento e 0 punti dell'ingombro sotto l'interfaccia in 9 viste (Prima: fino a 38,4% e 8 punti); `framing()`: 0 punti fuori dall'area libera con LR, -R e -- |
+| A2 | Target al centro dell'area libera a zoom 0,5–4 | ✔ | `world-test.js`, ±1 px su 20 layout |
+| A3 | Pan 1:1 | ✔ | `world-test.js` (100 px = 100 px). Browser: il punto afferrato finisce sotto il cursore con scarto 0,01 px, anche con un riadattamento in corso |
+| A4 | Fallback sotto 240×160 | ✔ | `world-test.js` |
+| A5 | `fly`, `stop`, effetti annidati | ✔ | `world-test.js`, 6 controlli |
+| A6 | Pannelli animati in 0,35 s, senza frame deformati | ✔ | `framing()`: 4 aperture e chiusure con 0 px di salto al clic, 0,35 s esatti, fine sul fit; resize con aspetto e buffer giusti subito |
+| A7 | In manuale i pannelli non muovono la vista, ⌂ torna in automatico | ✔ | `manualMode()`: 25/25. Input reale via DevTools (eventi del browser, cattura del puntatore vera): clic sul pavimento resta automatico, trascinamento e rotella passano a manuale, un pannello poi non sposta nulla (0 px), ⌂ torna in automatico |
+| A8 | Focus alla grandezza di oggi (±5%) | ✔ | `absoluteScale()`: rapporto 1,000000 e centro a 0 px in 9 combinazioni di viewport e pannelli, anche con un clic reale; limiti di zoom, minimappa, etichette, movimenti senza tagli. La trappola rimessa apposta viene colta |
+| A9 | Stress dei cubi senza orfani | ✔ | R1–R5 puliti (Prima: 5/5 ✖, identici a T0) |
+| A10 | Run completo osservato, screenshot prima e dopo | ✔ | Tabella sopra; 3 + 3 viste e 7 momenti del run in `docs/specs/img/` |
+| A11 | `npm test` e `node --check` verdi | ✔ | `npm test` verde (world, router, smoke, flows); `node --check` su `main.js`, sui 7 moduli di `public/js/world/` e sugli script nuovi |
+
+**Tutti gli 11 criteri sono verdi.** Il giro finale di `npm run test:browser` ha dato 123 controlli su 123.
+
+### Test consolidati (`scripts/`)
+
+| File | Cosa contiene |
+|---|---|
+| `browser-test.js` | Il runner: server demo isolato, Edge o Chrome headless, fasi `views`, `checks`, `cubes`, `input`, `run`; `--shots` per gli screenshot, `--json` per i risultati, `--root` e `--tag prima` per misurare un altro checkout |
+| `browser/lib.js` | Helper lato pagina: orologio fisso a 60 fps, disegno sospeso, input sintetico, ingombri misurati come `main.js`, `session()` che ripristina tutto |
+| `browser/coverage.js` | A1 come T0, indipendente dal codice: gira anche su `c1312ff` |
+| `browser/framing.js` | A1 sulla `World`, A6, resize, 16/16 clic |
+| `browser/manual-mode.js` | A7 (ex `__a7`, T6) |
+| `browser/absolute-scale.js` | A8 e S2.5–S2.7 (ex `__a8`, T7), con `mutate` per la trappola |
+| `browser/cube-stress.js` | A9 (ex `__cubeStress`, T0/T2), indipendente dal codice |
+| `browser/run-probe.js` | A10: la sonda del run |
+
+`npm run test:browser` non fa parte di `npm test`: richiede un browser installato e circa 6 minuti, di cui 2,5 di missione; `--skip-run` lo porta a circa un minuto. Gli script lato pagina si possono anche incollare nella console, prima `lib.js`.
+
+**Difetti del runner trovati e corretti durante T8** (strumento di test, non prodotto):
+- **Browser rimasti aperti.** Su Windows `msedge.exe` passa l'avvio a un altro processo, quindi chiudere il processo lanciato non chiude il browser. Nove esecuzioni avevano lasciato 85 processi headless: la macchina rallentava e un run è sceso a 12,6 fps, con la sonda che allora segnalava falsi orfani. Ora il browser viene chiuso con `Browser.close` via DevTools, il suo albero viene terminato solo se risponde ancora (un PID chiuso potrebbe essere già di un altro processo), e il profilo temporaneo viene rimosso con nuovi tentativi. Dopo le correzioni: 0 processi e 0 cartelle rimaste.
+- **Punti dell'input reale.** Un punto "libero" per il raycast 3D può avere sopra un'etichetta DOM. Un clic lì è un focus sulla stanza, e la rotella non arriva al canvas. Lo stesso succede se l'etichetta di un agente che passeggia attraversa il punto: è successo in 2 ripetizioni su 4. Ora il punto si sceglie subito prima di ogni azione, solo dove `elementFromPoint` restituisce il canvas, e le passeggiate decorative degli agenti restano ferme durante la fase. Risultato: 0 fallimenti su 6 ripetizioni.
+- **Osservazione, comportamento preesistente:** la rotella sopra un'etichetta non zooma, perché le etichette ricevono i puntatori per il clic.
+
+### Difetto nuovo N4: le etichette delle stanze coprono quelle dei worker (preesistente, fuori perimetro)
+
+Le etichette delle stanze sono ancorate all'angolo posteriore sinistro della stanza, dove siede un worker, e stanno sopra le etichette degli agenti. Quota dell'etichetta di ogni worker inattivo coperta dall'etichetta della sua stanza (7 worker, 1920×1080). La disposizione relativa delle etichette dipende solo dallo zoom effettivo, quindi le righe valgono per qualunque layout con lo stesso zoom:
+
+| Vista | Zoom effettivo | Worker con il centro dell'etichetta coperto | Sovrapposizione |
+|---|---|---|---|
+| `main`, vista iniziale | 1 | 6/7 | 60–97% |
+| Zoom 0,8 (come la vista completa -- e -R, 0,79) | 0,8 | 7/7 | 93% |
+| Vista completa, LR | 0,61 | 7/7 | 89% |
+| Zoom 1,3 | 1,3 | 1/7 | 12–100% |
+| Focus su un agente | 2,2 | 0/7 | 0–4% |
+
+Nella vista completa, quindi, si leggono solo le etichette dei lead e delle stanze; dei worker spunta un frammento. **Esisteva già su `main`** e non è coperto da S1–S5, quindi per S6.3 non lo correggo qui.
+
+Corregge però una premessa di T7: la soglia `far` a 0,55 è stata scelta misurando solo le sovrapposizioni tra etichette di agenti (nota aggiunta nella sezione T7). Opzioni per un ticket separato:
+1. spostare l'etichetta della stanza sul bordo anteriore, dove non ci sono scrivanie;
+2. mettere le etichette degli agenti sopra quelle delle stanze;
+3. nascondere le etichette dei worker inattivi finché sono coperte, per esempio con `far` di nuovo a 0,95, che le fa sparire invece di lasciarne un frammento.
+
+### Limiti residui
+
+- **N2** (scheda nascosta, client in ritardo): invariato, fuori perimetro, per un ticket separato.
+- **N4**: vedi sopra.
+- **Pressione tenuta ferma durante un'animazione** (T6): invariato.
+- **Velocità percepita del focus** dalla vista completa (T7): invariato.
+- **Mouse reale** (limite di T6): ora coperto dagli eventi del browser via DevTools, oltre che dal QA visivo dell'utente.
