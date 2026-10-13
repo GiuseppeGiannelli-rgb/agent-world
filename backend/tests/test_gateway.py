@@ -6,7 +6,8 @@ from backend.store import Store
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_WORLD_HOME", str(tmp_path))  # isolates Brain/Store from the repo's own data/
     app = create_app(store=Store(tmp_path))
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")

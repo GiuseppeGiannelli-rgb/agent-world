@@ -36,7 +36,7 @@ def run_list(store) -> list[dict]:
     return out
 
 
-def build_state(config, store, live_run=None, *, router=None) -> dict:
+def build_state(config, store, live_run=None, *, router=None, skills=None, brain=None) -> dict:
     runs = store.list()
     current = live_run if live_run is not None else (runs[0] if runs else None)
     return {
@@ -47,6 +47,6 @@ def build_state(config, store, live_run=None, *, router=None) -> dict:
         "runs": run_list(store),
         "router": router.snapshot() if router is not None else STUB_ROUTER,
         "media": STUB_MEDIA,
-        "skills": STUB_SKILLS,
-        "brain": STUB_BRAIN,
+        "skills": skills.summary() if skills is not None else STUB_SKILLS,
+        "brain": {"count": brain.count, "recent": brain.list(40)} if brain is not None else STUB_BRAIN,
     }

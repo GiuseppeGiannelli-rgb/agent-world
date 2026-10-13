@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from backend.app import ROOT, create_app
+from backend.brain import Brain
 from backend.config import Config
 from backend.store import Store
 
@@ -10,7 +11,9 @@ from backend.store import Store
 def app_and_store(tmp_path):
     store = Store(tmp_path)
     config = Config(ROOT / "config")
-    app = create_app(config=config, store=store)
+    # An isolated Brain: the app must never read or write the repo's own
+    # data/brain.json just because a test built an app.
+    app = create_app(config=config, store=store, brain=Brain(tmp_path / "brain.json"))
     return app, store, config
 
 
@@ -34,7 +37,10 @@ async def test_api_state_has_stub_and_real_fields(client):
         # P3 replaced the router stub with Router.snapshot() -- same shape, real data.
         assert set(body["router"].keys()) == {"mode", "providers", "combos", "recent"}
         assert body["media"] == {"ready": False, "image": [], "speech": []}
-        assert body["skills"] == {"count": 0, "sources": []}
+        # P4 replaced the skills stub with SkillLibrary.summary() -- real
+        # sources, count still 0 because this app wasn't reindexed.
+        assert set(body["skills"].keys()) == {"count", "sources"}
+        assert body["skills"]["count"] == 0
         assert body["brain"] == {"count": 0, "recent": []}
 
 

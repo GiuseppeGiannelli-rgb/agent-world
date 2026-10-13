@@ -18,7 +18,8 @@ from backend.store import Store
 
 
 @pytest.fixture
-async def live_server(tmp_path):
+async def live_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_WORLD_HOME", str(tmp_path))  # isolates Brain/Store from the repo's own data/
     app = create_app(store=Store(tmp_path))
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning", lifespan="on")
     server = uvicorn.Server(config)
@@ -100,9 +101,16 @@ async def test_ping_on_idle(live_server, monkeypatch):
     app, base_url = live_server
     async with httpx.AsyncClient(base_url=base_url) as client:
         async with client.stream("GET", "/api/events") as resp:
-            frames = await _read_frames(resp, 2)
-            assert frames[0] == "retry: 2000\n\n"
-            assert frames[1] == ": ping\n\n"
+            reader = FrameReader(resp)
+            assert (await reader.read(1))[0] == "retry: 2000\n\n"
+            # Other subsystems (the real SkillLibrary's startup reindex, here)
+            # may also emit on this bus; only the absence of real traffic
+            # triggers a ping, so skip past whatever else arrives first.
+            for _ in range(20):
+                frame = (await reader.read(1))[0]
+                if frame == ": ping\n\n":
+                    return
+            pytest.fail("no ping frame seen")
 
 
 @pytest.mark.asyncio

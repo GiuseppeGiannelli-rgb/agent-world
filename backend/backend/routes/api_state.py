@@ -12,10 +12,10 @@ def _bad_combo_message(name: str) -> str:
     return f'Combo "{name}": "models" deve essere una lista di "provider/modello"'
 
 
-def mount(app, *, config, store, bus=None, router=None) -> None:
+def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None) -> None:
     @app.get("/api/state")
     async def api_state():
-        return build_state(config, store, router=router)
+        return build_state(config, store, router=router, skills=skills, brain=brain)
 
     @app.get("/api/config")
     async def api_config_get():
