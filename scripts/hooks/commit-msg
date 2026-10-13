@@ -1,0 +1,3 @@
+#!/bin/sh
+# Blocks a commit message with a secret or personal data.
+exec node scripts/secret-scan.js --message "$1"
