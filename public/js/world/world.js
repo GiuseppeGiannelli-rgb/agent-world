@@ -1219,8 +1219,8 @@ export class World {
   }
 
   updateLabels() {
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    // the canvas fills #stage: resize() keeps its size, no layout read per frame
+    const { width: w, height: h } = this;
     const now = performance.now();
     // the zoom of the old fixed framing that would show the office this size (S2.6):
     // labels keep their size next to the characters whatever the panels leave free
