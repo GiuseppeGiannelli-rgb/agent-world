@@ -356,8 +356,13 @@ function teamStats(id) {
 
 function selectTeam(id, focus = false) {
   S.team = id;
-  if (focus) world.focusRoom(id);
   switchTab('teams');
+  if (focus) {
+    // the tab may have just opened the right panel: the room is centred in the area it
+    // leaves free, measured now rather than when the ResizeObserver reports it (S3.7)
+    world.setInsets(measureInsets());
+    world.focusRoom(id);
+  }
 }
 
 function renderTeams() {

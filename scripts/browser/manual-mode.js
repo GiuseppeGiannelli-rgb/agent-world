@@ -163,6 +163,24 @@ window.__checks.manualMode = () =>
       t.result(out, 'focus centres in the free area', Math.hypot(...off) < 1, { offPx: off.map((n) => +n.toFixed(2)) });
     }
 
+    // S3.7, review R2: a room label clicked with the right panel closed opens the Team
+    // tab, and the room lands at the centre of the free area that is left once it is open
+    {
+      rightPanel(false);
+      t.home();
+      const room = w.layout.rooms[1];
+      w.roomLabels.find((r) => r.team === room.team).el.click(); // selectTeam(team, true) in main.js
+      t.sync(); // the ResizeObserver after the panel opened
+      t.pump(1.0);
+      const lens = t.centreLens();
+      const [x, y] = t.toScreen(new t.V3(room.x, 0, room.z));
+      const off = [x - (w.width / 2 + lens.lensX), y - (w.height / 2 + lens.lensY)];
+      t.result(out, 'room label with the right panel closed', t.isOpen('#right') && Math.hypot(...off) < 1, { rightPanelOpened: t.isOpen('#right'), offPx: off.map((n) => +n.toFixed(2)) });
+      // switchTab opens the panel without body.right-closed following it (N6, out of scope)
+      document.body.classList.toggle('right-closed', !t.isOpen('#right'));
+      rightPanel(true);
+    }
+
     // A press held while code moves the camera, then a drag (review R1). The grab follows
     // the picture: the floor point under the pointer when the drag starts ends under the
     // pointer (A3), wherever the move took the point first pressed. MapControls on its own
