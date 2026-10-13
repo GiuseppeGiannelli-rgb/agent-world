@@ -60,7 +60,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
 #stage { position: fixed; inset: 0; }
 #scene { width: 100%; height: 100%; display: block; touch-action: none; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; --label-scale: 1; }
-#labels.far .tag:not(.lead):not(.busy) { opacity: 0; }
+#labels.far .tag:not(.lead):not(.busy) { opacity: 0; pointer-events: none; } /* hidden, so not in the way (spec 02, E6) */
 #labels.far .bubble small { display: none; }
 
 .tag {
