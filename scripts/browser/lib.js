@@ -80,6 +80,14 @@ window.__t = (() => {
     const v = p.clone().project(w.camera);
     return [(v.x * 0.5 + 0.5) * w.width, (-v.y * 0.5 + 0.5) * w.height];
   };
+  // The floor point (y 0) under a point of the page.
+  t.floorAt = (p) => {
+    const r = t.rect();
+    w.camera.updateMatrixWorld();
+    w.raycaster.setFromCamera({ x: ((p.clientX - r.left) / r.width) * 2 - 1, y: -((p.clientY - r.top) / r.height) * 2 + 1 }, w.camera);
+    const { origin, direction } = w.raycaster.ray;
+    return origin.clone().addScaledVector(direction, -origin.y / direction.y);
+  };
   t.screenScale = () => w.view.unitsPerPx / w.camera.zoom; // world units per px on screen
   t.centreLens = () => {
     const s = t.F.safeRect(w.width, w.height, w.insets);

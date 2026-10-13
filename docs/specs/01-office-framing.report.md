@@ -272,7 +272,7 @@ Sul codice di T5 falliscono 15 controlli su 25, su quello nuovo nessuno. Gli alt
 - `npm test` verde, `node --check` verde, nessun errore in console.
 
 **Limiti noti:**
-- **Pressione tenuta ferma durante un'animazione.** Se dopo la fine del movimento il puntatore si sposta di meno di 5 px, `MapControls` riporta sotto il cursore il punto afferrato all'inizio, e la vista scorre del tragitto dell'animazione senza passare a manuale. Correggerlo richiederebbe di toccare lo stato interno dei controlli (`_panWorldStart`). Il caso è raro, e il riadattamento successivo o ⌂ lo annullano.
+- **Pressione tenuta ferma durante un'animazione.** Se dopo la fine del movimento il puntatore si sposta di meno di 5 px, `MapControls` riporta sotto il cursore il punto afferrato all'inizio, e la vista scorre del tragitto dell'animazione senza passare a manuale. Correggerlo richiederebbe di toccare lo stato interno dei controlli (`_panWorldStart`). Il caso è raro, e il riadattamento successivo o ⌂ lo annullano. *(Risolto nella code-review, R1: il caso era più ampio e la presa ora segue la camera, vedi S4.6.)*
 - **Verifica con mouse reale non fatta:** il pannello browser dell'app è nascosto. Gli eventi sintetici passano dagli stessi ascoltatori, ma va confermato nel QA visivo a schermo intero.
 - **Fino a T7:** restano i limiti scritti sopra per T5 (scala delle etichette, zoom dei primi piani, impronta nella minimappa).
 
@@ -506,6 +506,6 @@ Corregge però una premessa di T7: la soglia `far` a 0,55 è stata scelta misura
 
 - **N2** (scheda nascosta, client in ritardo): invariato, fuori perimetro, per un ticket separato.
 - **N4**: vedi sopra.
-- **Pressione tenuta ferma durante un'animazione** (T6): invariato.
+- **Pressione tenuta ferma durante un'animazione** (T6): risolto nella code-review (R1).
 - **Velocità percepita del focus** dalla vista completa (T7): invariato.
 - **Mouse reale** (limite di T6): ora coperto dagli eventi del browser via DevTools, oltre che dal QA visivo dell'utente.

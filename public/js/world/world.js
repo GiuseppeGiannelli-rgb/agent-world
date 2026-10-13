@@ -177,6 +177,17 @@ export class World {
       this.autoFrame = false;
       this.fx.stop(this.camera); // the controls own the camera now
     };
+    // MapControls pans by pulling the floor point a press grabbed back under the pointer.
+    // When code moves the picture under a held press, that point drifts away from the
+    // pointer, and the next pointermove (even below CLICK px) would drag the view all the
+    // way back: the grab follows the picture instead. _handleMouseDownPan is internal to
+    // MapControls r186 (three is pinned to it); manual-mode.js checks the behaviour.
+    this.regrab = () => {
+      const [p] = presses.values();
+      if (!p || this.controls.state !== 2) return; // 2: PAN (Controls.state); touch pans are incremental
+      this.camera.updateMatrixWorld(); // lookAt() leaves matrixWorld as it was
+      this.controls._handleMouseDownPan({ clientX: p.x, clientY: p.y });
+    };
     const release = (e) => {
       const p = presses.get(e.pointerId);
       presses.delete(e.pointerId);
@@ -277,10 +288,12 @@ export class World {
   // clamps camera.zoom into [minZoom, maxZoom] at every update, so the limit moves
   // with every step of a move that changes the scale. One set for the end of the move
   // clamps a zoom that is still above it: the next step hides that, but a drag or a
-  // wheel that stops the move leaves the cut, and the picture jumps.
+  // wheel that stops the move leaves the cut, and the picture jumps. Every change of the
+  // picture made by code passes here, so a pan press in progress grabs again here.
   applyView() {
     this.controls.maxZoom = maxZoomFor(this.view.unitsPerPx);
     applyFrustum(this.camera, this.width, this.height, this.view.unitsPerPx, this.view.lensX, this.view.lensY);
+    this.regrab();
   }
 
   // World units per CSS px on screen now: what close-ups and labels measure against.
@@ -499,9 +512,9 @@ export class World {
   }
 
   // Drops what the controls still mean to apply and keeps the camera as it is on
-  // screen. With damping, a drag leaves inertia, and MapControls pulls the point a
-  // press grabbed back under the pointer: if a move shifted the view under a click,
-  // applying that pull would make the view jump or drift away from where it went.
+  // screen. With damping, a drag leaves inertia, and a pan the controls worked out
+  // while a move ran under a press is still pending: applying it would make the view
+  // jump or drift away from where the move went.
   settleControls() {
     const { camera, controls } = this;
     const target = controls.target.clone();

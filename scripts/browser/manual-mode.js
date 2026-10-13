@@ -163,36 +163,61 @@ window.__checks.manualMode = () =>
       t.result(out, 'focus centres in the free area', Math.hypot(...off) < 1, { offPx: off.map((n) => +n.toFixed(2)) });
     }
 
-    // a drag during an automatic re-frame: below the threshold the move goes on, past it
-    // the move stops and the grabbed floor point ends under the pointer (A3)
-    {
+    // A press held while code moves the camera, then a drag (review R1). The grab follows
+    // the picture: the floor point under the pointer when the drag starts ends under the
+    // pointer (A3), wherever the move took the point first pressed. MapControls on its own
+    // pulls that first point back, and the view slid 82-447 px at 1920x1080.
+    const dragAfterMove = (name, start, { wait, drag: [dx, dy], steps, check = () => ({}) }) => {
       rightPanel(true);
       t.home();
-      rightPanel(false); // 0.35 s re-frame starts
-      t.pump(0.1);
+      start();
       const from = t.at(0.4, 0.5);
-      const to = nudge(from, 120, 40);
       t.pointer('pointerdown', from);
-      const r = t.rect();
-      w.raycaster.setFromCamera({ x: ((from.clientX - r.left) / r.width) * 2 - 1, y: -((from.clientY - r.top) / r.height) * 2 + 1 }, w.camera);
-      const ray = w.raycaster.ray;
-      const grabbed = ray.origin.clone().addScaledVector(ray.direction, -ray.origin.y / ray.direction.y);
-      t.pump(0.08); // the move shifts the view under the press...
-      let below = false;
-      let past = false;
-      for (let i = 1; i <= 30; i++) {
-        t.pointer('pointermove', nudge(from, (120 * i) / 30, (40 * i) / 30)); // 4.2 px a step
-        if (i === 1) below = w.fx.active(w.camera) != null && w.autoFrame === true;
-        if (i === 2) past = w.fx.active(w.camera) == null;
+      t.pump(wait); // the move shifts the view under the press...
+      let at = from;
+      let grabbed = null;
+      const seen = {};
+      for (let i = 1; i <= steps; i++) {
+        // until the view is taken, what is under the pointer is what the drag holds
+        if (i === 1 || w.fx.active(w.camera)) grabbed = t.floorAt(at);
+        at = nudge(from, (dx * i) / steps, (dy * i) / steps);
+        t.pointer('pointermove', at);
+        Object.assign(seen, check(i));
         t.pump(1 / 60);
       }
       t.pump(1.5); // the damping catches up while the button is still down
+      const r = t.rect();
       const [gx, gy] = t.toScreen(grabbed);
-      const off = [gx + r.left - to.clientX, gy + r.top - to.clientY];
-      t.pointer('pointerup', to);
-      t.result(out, 'drag during an automatic re-frame', below && past && w.autoFrame === false && Math.hypot(...off) < 2, { movesOnBelow5px: below, stopsAt8px: past, grabOffPx: off.map((n) => +n.toFixed(2)) });
-      rightPanel(true);
-    }
+      const off = [gx + r.left - at.clientX, gy + r.top - at.clientY];
+      t.pointer('pointerup', at);
+      const ok = Math.hypot(...off) < 1 && Object.values(seen).every(Boolean);
+      t.result(out, name, ok, { ...seen, grabOffPx: off.map((n) => +n.toFixed(2)) });
+    };
+    // below the threshold an automatic move goes on, past it the move stops
+    dragAfterMove('drag during an automatic re-frame', () => {
+      rightPanel(false); // 0.35 s re-frame starts
+      t.pump(0.1);
+    }, {
+      wait: 0.08,
+      drag: [120, 40],
+      steps: 30, // 4.2 px a step
+      check: (i) => (i === 1 ? { movesOnBelow5px: w.fx.active(w.camera) != null && w.autoFrame === true } : i === 2 ? { stopsAt8px: w.fx.active(w.camera) == null && w.autoFrame === false } : {}),
+    });
+    dragAfterMove('drag during a focus', () => {
+      w.focus(ids[2]);
+      t.pump(0.05);
+    }, { wait: 0.2, drag: [20, 0], steps: 4 });
+    dragAfterMove('drag during ⌂ from a close-up', () => {
+      w.focus(ids[4]);
+      t.pump(1.0);
+      $('#btn-home').click();
+      t.pump(0.05);
+    }, { wait: 0.2, drag: [20, 0], steps: 4 });
+    dragAfterMove('press held through a focus, then 3 px', () => {
+      w.focus(ids[2]);
+      t.pump(0.05);
+    }, { wait: 1.0, drag: [3, 0], steps: 1 });
+    rightPanel(true);
 
     // S4.6: a click while the camera moves leaves no drift and no jump
     for (const hold of [0.05, 0.15]) {
