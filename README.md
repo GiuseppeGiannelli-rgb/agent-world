@@ -66,7 +66,9 @@ Tutti hanno anche: file del progetto, `search_skills` / `read_skill`, `recall` /
 
 ## Skill Hub
 
-Indicizza ogni `SKILL.md` delle cartelle in `skills.sources`: le skill dell'app (`skills/`), i plugin di Claude Code (`~/.claude/plugins`), `~/.claude/skills`, Codex e `../Claudio/claudio-skills`. Dalla scheda **Skill** puoi cercare, leggere e **aggiungere una repo GitHub di skill** (viene clonata in `skills/vendor/`).
+Indicizza ogni `SKILL.md` delle cartelle in `skills.sources`: le skill dell'app (`skills/`), i plugin di Claude Code (`~/.claude/plugins`), `~/.claude/skills`, `~/.agents/skills` e Codex. Dalla scheda **Skill** puoi cercare, leggere e **aggiungere una repo GitHub di skill** (viene clonata in `skills/vendor/`).
+
+Le repo in `skills.repos` sono predefinite: al primo avvio il server clona quelle che mancano in `skills/vendor/` (oggi [vercel-labs/skills](https://github.com/vercel-labs/skills)). Senza rete l'app parte lo stesso, con le skill che ha, e ci riprova all'avvio successivo; le repo già presenti si aggiornano dalla scheda **Skill**.
 
 ## Il router (stile OmniRoute, ma tuo)
 

@@ -1,19 +1,31 @@
 // Human-in-the-loop flows on a demo server: plan approval, rejection,
 // pause/resume/stop, a second run refused while busy, chat steering.
+// The server's home is a temp folder owned by this process (scripts/lib/temp.js): it
+// goes on every way out, and a killed run's folder goes at the next start.
+// AW_TEST_FAIL=start|server (only for scripts/temp-test.js): fail on purpose right after
+// the server starts, or kill the server then, as a crash would.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { onExit, ownedDir, removeDir, sweepDirs } from './lib/temp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4398;
 const base = `http://127.0.0.1:${PORT}`;
-const env = { ...process.env, PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: mkdtempSync(join(tmpdir(), 'agent-world-flows-')) };
+await sweepDirs();
+const home = ownedDir('flows');
+const env = { ...process.env, PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home };
 for (const k of Object.keys(env)) if (k.endsWith('_API_KEY')) delete env[k];
 const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'] });
-await new Promise((resolve) => server.stdout.on('data', (d) => d.toString().includes('Agent World') && resolve()));
+const serverExited = new Promise((resolve) => server.once('exit', resolve));
+// the server is stopped and gone before its home is removed
+const cleanUp = async () => {
+  server.kill();
+  await Promise.race([serverExited, new Promise((r) => setTimeout(r, 5000))]);
+  await removeDir(home);
+};
+onExit(cleanUp); // Ctrl+C, or an error nobody caught
 
 const j = (p, body) => fetch(base + p, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}).then((r) => r.json());
 const until = async (fn, ms = 60000) => {
@@ -28,6 +40,15 @@ const until = async (fn, ms = 60000) => {
 const finished = (s) => ['completed', 'completed_with_failures', 'failed', 'stopped'].includes(s);
 
 try {
+  await Promise.race([
+    new Promise((resolve) => server.stdout.on('data', (d) => d.toString().includes('Agent World') && resolve())),
+    serverExited.then(() => {
+      throw new Error('the server exited before it was ready');
+    }),
+  ]);
+  if (process.env.AW_TEST_FAIL === 'start') throw new Error('AW_TEST_FAIL=start: failing on purpose');
+  if (process.env.AW_TEST_FAIL === 'server') server.kill();
+
   // 1. approval: the run waits, then goes on after "approve"
   const a = await j('/api/runs', { goal: 'Una landing page per una libreria indipendente', approvePlan: true });
   const item = await until(async () => (await j(`/api/runs/${a.id}`)).waiting?.find((w) => w.kind === 'plan' && w.status === 'open'));
@@ -84,5 +105,5 @@ try {
   console.error(`FAIL: ${err.stack ?? err.message}`);
   process.exitCode = 1;
 } finally {
-  server.kill();
+  await cleanUp();
 }
