@@ -4,6 +4,7 @@ matching handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.router.providers import ProviderError
 from backend.state import build_state, public_config
 
 
@@ -11,10 +12,10 @@ def _bad_combo_message(name: str) -> str:
     return f'Combo "{name}": "models" deve essere una lista di "provider/modello"'
 
 
-def mount(app, *, config, store, bus=None) -> None:
+def mount(app, *, config, store, bus=None, router=None) -> None:
     @app.get("/api/state")
     async def api_state():
-        return build_state(config, store)
+        return build_state(config, store, router=router)
 
     @app.get("/api/config")
     async def api_config_get():
@@ -47,3 +48,17 @@ def mount(app, *, config, store, bus=None) -> None:
         if run is None:
             return JSONResponse({"error": "Run non trovato"}, status_code=404)
         return run
+
+    @app.get("/api/router")
+    async def api_router_snapshot():
+        return router.snapshot()
+
+    @app.post("/api/router/test")
+    async def api_router_test(request: Request):
+        body = await request.json()
+        use = str(body.get("use") or "fast")
+        try:
+            out = await router.chat(use=use, messages=[{"role": "user", "content": "Reply with the single word: pong"}], max_tokens=20, meta={"agentId": "test"})
+            return {"ok": True, "target": out["target"], "ms": out["ms"], "text": out["text"][:200], "demo": out["demo"]}
+        except ProviderError as err:
+            return {"ok": False, "error": str(err)}

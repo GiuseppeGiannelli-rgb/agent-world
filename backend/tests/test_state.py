@@ -31,7 +31,8 @@ async def test_api_state_has_stub_and_real_fields(client):
         assert body["agents"] == []
         assert body["run"] is None
         assert body["runs"] == []
-        assert body["router"] == {"mode": "demo", "providers": [], "combos": [], "recent": []}
+        # P3 replaced the router stub with Router.snapshot() -- same shape, real data.
+        assert set(body["router"].keys()) == {"mode", "providers", "combos", "recent"}
         assert body["media"] == {"ready": False, "image": [], "speech": []}
         assert body["skills"] == {"count": 0, "sources": []}
         assert body["brain"] == {"count": 0, "recent": []}
