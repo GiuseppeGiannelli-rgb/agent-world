@@ -1,116 +1,492 @@
 # Agent World
 
-Un'azienda di agenti AI che si vede lavorare. Scrivi una missione: la CEO la divide tra i team, ogni team lead la scompone e la distribuisce ai suoi agenti (e, quando serve, a sub-agenti creati al volo), lo Skill Hub assegna le skill giuste, il Prompt Lab affina i brief, gli agenti lavorano in loop finché il QA non approva, e tutto succede in un ufficio 3D visto dall'alto.
+**Un'azienda di agenti AI che puoi guardare mentre lavora.** Scrivi una missione: la CEO la divide tra i team, i lead la scompongono, lo Skill Hub assegna le skill, il Prompt Lab affina i brief, worker e sub-agenti lavorano in loop finché il QA non approva. Tutto succede dal vivo in un ufficio 3D isometrico.
 
-Niente servizi esterni da installare: router dei modelli, orchestrazione, skill, memoria e mondo 3D sono in questa cartella. Il backend è **FastAPI** (Python 3.13, gestito da `uv`, un solo processo uvicorn); Node resta solo per `three.js` e gli strumenti di test del front-end.
+![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.143-009688?logo=fastapi&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-PyO3%200.24-B7410E?logo=rust&logoColor=white)
+![three.js](https://img.shields.io/badge/three.js-0.186.1-000000?logo=threedotjs&logoColor=white)
 
-## Avvio
+![L'ufficio 3D durante una missione](docs/assets/office-3d.png)
+
+- **Nessun servizio esterno da installare.** Router dei modelli, orchestrazione, skill, memoria e mondo 3D stanno tutti in questa cartella.
+- **Backend ibrido.** FastAPI (Python 3.13) dirige il lavoro; Rust (PyO3) è un acceleratore opzionale per la ricerca BM25.
+- **Front-end senza build.** three.js servito così com'è; gli eventi arrivano dal server in streaming (SSE).
+- **Modalità demo.** Senza chiavi API un simulatore interpreta ogni ruolo, e vedi l'intero flusso senza spendere nulla.
+
+---
+
+## Indice
+
+1. [Screenshot](#screenshot)
+2. [Avvio rapido](#avvio-rapido)
+3. [Architettura ibrida](#architettura-ibrida)
+4. [Streaming in tempo reale (SSE)](#streaming-in-tempo-reale-sse)
+5. [Il bridge Python ↔ Rust](#il-bridge-python--rust)
+6. [Agenti, sub-agenti e utility](#agenti-sub-agenti-e-utility)
+7. [Memoria e recupero (RAG)](#memoria-e-recupero-rag)
+8. [Il router OmniRoute](#il-router-omniroute)
+9. [Tech stack](#tech-stack)
+10. [Lingue supportate](#lingue-supportate)
+11. [Configurazione](#configurazione)
+12. [Test](#test)
+13. [Struttura del repository](#struttura-del-repository)
+
+---
+
+## Screenshot
+
+Le immagini stanno in [`docs/assets/`](docs/assets/): l'elenco dei file attesi è in [`docs/assets/README.md`](docs/assets/README.md).
+
+| | |
+|---|---|
+| ![Ufficio 3D, vista completa](docs/assets/office-3d.png) | ![Una missione in corso, scheda Task](docs/assets/mission-tasks.png) |
+| *L'ufficio 3D: team, lavagna kanban, il Brain sopra la CEO* | *Una missione in corso: workstream, sotto-task, revisioni* |
+| ![Sub-agenti nella sub-agent bay](docs/assets/sub-agents.png) | ![Verdetto del QA](docs/assets/qa-review.png) |
+| *I sub-agenti compaiono olografici nella sub-agent bay* | *Il QA va alla scrivania e dà il verdetto* |
+| ![Skill Hub](docs/assets/skill-hub.png) | ![Brain](docs/assets/brain.png) |
+| *Lo Skill Hub: ricerca tra tutte le skill indicizzate* | *Il Brain: lezioni del QA e riassunti delle missioni* |
+| ![Router e combo](docs/assets/router.png) | ![Report finale](docs/assets/final-report.png) |
+| *Il router: provider, combo, chiamate e cooldown* | *Il report finale della CEO e i file consegnati* |
+
+---
+
+## Avvio rapido
+
+**Requisiti:** [uv](https://docs.astral.sh/uv/) nel PATH (al primo avvio scarica da solo Python 3.13 e le dipendenze) e Node 20.10 o più recente (per three.js e gli strumenti di test).
 
 ```sh
-npm install     # three.js per il 3D
-npm start       # backend FastAPI: uv sincronizza e avvia (porta 4300)
+npm install     # three.js per il front-end 3D
+npm start       # backend FastAPI su http://127.0.0.1:4300
 ```
 
-Apri http://127.0.0.1:4300. Richiede [uv](https://docs.astral.sh/uv/) nel PATH (al primo avvio scarica Python 3.13 e le dipendenze da solo). Per lo sviluppo con reload automatico: `npm run dev`.
+- Apri http://127.0.0.1:4300.
+- Per lo sviluppo con reload automatico: `npm run dev`.
+- **Demo o modelli veri.** Senza chiavi API l'app parte in **modalità demo** (pillola `DEMO` in alto). Per usare modelli veri copia `.env.example` in `.env`, inserisci almeno una chiave e riavvia: l'app passa in modalità `LIVE`.
 
-Senza chiavi API parte in **modalità demo**: un simulatore interpreta ogni ruolo (piani, sub-agenti, revisioni, escalation, immagini e audio segnaposto veri), così vedi tutto il flusso senza spendere nulla. Per usare modelli veri copia `.env.example` in `.env`, inserisci almeno una chiave e riavvia.
+> ⚠️ In modalità `LIVE` ogni missione consuma token veri: in demo una missione complessa fa circa 200 chiamate al modello.
 
-## Come lavora l'azienda
+---
 
+## Architettura ibrida
+
+Il browser non sa niente del cambio di motore: stesse route, stesso JSON, stessi eventi. FastAPI fa da direttore d'orchestra (API, orchestrazione asincrona, streaming). Il lavoro di calcolo sul testo passa da un'unica interfaccia, che usa Rust quando il modulo nativo è compilato e Python puro altrimenti.
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser · front-end senza build"]
+        UI["UI e pannelli<br/>public/js/main.js"]
+        W3D["Ufficio 3D · three.js<br/>public/js/world/"]
+        ES["EventSource"]
+    end
+
+    subgraph Py["Backend · FastAPI + uvicorn (1 processo, asyncio)"]
+        API["Route REST<br/>/api/* · /v1/* · statici"]
+        SSE["/api/events<br/>StreamingResponse"]
+        BUS["Bus<br/>seq + code per client"]
+        ENG["Engine<br/>Run · Tasker · Team · Tools"]
+        RT["Router OmniRoute<br/>combo · fallback · cooldown"]
+        MEM["Brain + Skill Hub"]
+        SRCH["search.bm25()"]
+        PYB["Bm25 in Python puro"]
+    end
+
+    subgraph Rs["Rust · opzionale"]
+        AW["aw_core<br/>PyO3 · BM25 + tokenizer"]
+    end
+
+    subgraph Disk["File locali"]
+        DATA[("data/runs · brain.json · calls")]
+        WS[("data/workspace/ · un run per cartella")]
+        CFG[("config/*.json · .env")]
+    end
+
+    LLM["Provider LLM e media<br/>Anthropic · OpenAI · Gemini · Groq · …"]
+
+    UI -->|fetch JSON| API
+    ES -->|text/event-stream| SSE
+    SSE --> BUS
+    API --> ENG
+    ENG -->|emit| BUS
+    ENG --> RT --> LLM
+    ENG --> MEM --> SRCH
+    SRCH -.->|se compilato e conforme| AW
+    SRCH -->|altrimenti| PYB
+    ENG --> WS
+    API --> DATA
+    API --> CFG
+    BUS --> ES
+    ES --> W3D
 ```
-missione ─► CEO: semplice o complessa? ─► workstream per team, con dipendenze
-                                           │
-          ┌────────────────────────────────┼─────────────────────────────┐   in parallelo
-          ▼                                ▼                             ▼
-   Lead Ricerca                     Lead AI Generativa              Lead Sviluppo  …
-   prende il workstream dalla board, lo scompone in sotto-task
-          │
-          ├─► Skill Hub: sceglie 1-3 skill per sotto-task tra tutte quelle indicizzate
-          ├─► Prompt Lab (missioni complesse): riscrive ogni brief e i prompt per le immagini
-          ▼
-   worker + sub-agenti (creati se c'è più lavoro parallelo che persone)
-   loop: pensa → tool → risultato … → finish
-          │
-          ▼
-   QA e Sicurezza: criteri di accettazione + controllo di sicurezza sul codice
-          │ revise → il worker riprende il SUO loop col feedback
-          │ dopo 2 bocciature → escalation alla combo "frontier"
-          │ dopo troppe → il lead decide: riprova con indicazioni o salta
-          ▼
-   consegna ─► sblocca i workstream che dipendono da questo ─► report finale
-                                │
-                                └─► Brain: lezioni del QA e riassunto della missione restano per le prossime
+
+**I principi:**
+
+- **Un solo processo con lo stato in memoria:** run attivi, chat e client SSE. Per questo uvicorn gira con un solo worker.
+- **Lo stesso formato su disco e le stesse variabili d'ambiente del server Node di prima** (`data/`, `config/`, `.env`, `AGENT_WORLD_*`).
+- **Il front-end è invariato.** Il pathfinding A* (`nav.js`) e la simulazione 3D girano nel browser; il server trasmette solo gli stati degli agenti.
+
+### Come scorre una missione
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Tu
+    participant B as Browser
+    participant F as FastAPI
+    participant C as CEO
+    participant L as Lead
+    participant W as Worker (Tasker)
+    participant Q as QA
+    participant E as Bus → SSE
+
+    U->>B: scrive la missione
+    B->>F: POST /api/runs
+    F-->>B: 201 + id del run
+    F->>C: pianifica (Brain: note utili)
+    C->>E: plan · workstream
+    E-->>B: la CEO va alla lavagna
+    L->>L: scompone in sotto-task, Skill Hub sceglie le skill
+    L->>E: subtasks · agent.spawn
+    loop finché il QA non approva
+        W->>W: pensa → tool → risultato … → finish
+        W->>E: agent · file · message
+        W->>Q: consegna
+        Q-->>W: revise con feedback (dopo 2: escalation a "frontier")
+    end
+    Q->>E: task done (lezione nel Brain)
+    C->>E: report finale · run.done
+    E-->>B: l'ufficio 3D anima ogni passaggio
 ```
 
-### I team (in `config/default.json`)
+---
 
-| Team | Cosa fa | Strumenti in più |
+## Streaming in tempo reale (SSE)
+
+Tutto ciò che vedi muoversi nell'ufficio arriva da un unico flusso Server-Sent Events, `GET /api/events`.
+
+```mermaid
+flowchart LR
+    E1["engine: bus.emit(type, payload)"] --> S["seq += 1<br/>serializza UNA volta"]
+    S --> Q1["coda client 1<br/>asyncio.Queue (max 1000)"]
+    S --> Q2["coda client 2"]
+    S --> Qn["coda client n"]
+    Q1 --> R1["StreamingResponse<br/>retry: 2000 · data: … · : ping"]
+    Qn -->|coda piena| X["client staccato"]
+    X -->|dopo 2 s| RC["EventSource si riconnette<br/>e rilegge /api/state"]
+```
+
+- **Formato:** `retry: 2000` all'apertura; poi un frame `data: {"seq", "type", "payload"}` per ogni evento, e un commento `: ping` dopo 15 s di silenzio.
+- **I 17 tipi di evento:** `run`, `task`, `workstream`, `subtasks`, `plan`, `agent`, `agent.spawn`, `agent.despawn`, `message`, `chat`, `file`, `waiting`, `brain`, `skills`, `router.call`, `config`, `run.done`.
+- **Ordine garantito:** `emit()` è sincrono e assegna `seq` nell'ordine delle chiamate. Ogni frame si serializza una volta sola, qualunque sia il numero di client.
+- **Un client lento non rallenta gli altri.** Ogni client ha la sua coda limitata; quando si riempie, quel client viene staccato. Il browser si riconnette dopo 2 s e ricostruisce lo stato da `GET /api/state`. Non c'è replay: lo stato completo basta.
+- **Spegnimento pulito:** a Ctrl+C il lifespan di FastAPI chiude i flussi aperti, perché altrimenti uvicorn aspetterebbe connessioni che non finiscono mai.
+- **Gateway `/v1`:** `/v1/chat/completions` con `"stream": true` risponde in formato SSE compatibile OpenAI, con tutto il testo in un solo blocco. Lo streaming token per token è previsto in futuro.
+
+---
+
+## Il bridge Python ↔ Rust
+
+Il crate [`crates/aw_core`](crates/aw_core/) è un modulo nativo Python scritto in Rust con **PyO3** e compilato con **maturin**. Gira nello stesso processo del backend: niente rete, niente processi in più da avviare e chiudere.
+
+```mermaid
+flowchart TD
+    C["Brain / Skill Hub"] --> F["search.bm25(k1, b)"]
+    F --> I{"import aw_core<br/>riuscito?"}
+    I -->|no| P["Bm25 in Python puro"]
+    I -->|sì| PR{"probe di parità<br/>id, ordine, punteggi"}
+    PR -->|fallisce| P
+    PR -->|passa| R["aw_core.Bm25 (Rust)"]
+    R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
+```
+
+- **Stessa interfaccia:** `add(id, fields)` e `search(query, k)`; c'è anche `tokenize(text)` per i test. Chi chiama non sa quale implementazione sta usando.
+- **Due livelli di sicurezza:**
+  - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
+  - `tests/test_search_rust.py` fissa la parità su un corpus di riferimento.
+- **Niente blocchi:** la tokenizzazione e lo scoring rilasciano il GIL, quindi il loop asincrono continua a servire lo streaming.
+- **Soglia di adozione:** il modulo Rust si compila e si distribuisce solo se batte il Python ottimizzato di almeno **5×**. Lo misura `backend/bench/bm25_bench.py`, che stampa `ADOPT` o `FALLBACK`.
+- **Stato di oggi:** senza toolchain Rust gira il fallback Python, che è completo e coperto dagli stessi test.
+
+**Compilare il modulo** (servono rustup e, su Windows, i Visual Studio Build Tools C++):
+
+```sh
+cd backend
+uv run maturin develop --manifest-path ../crates/aw_core/Cargo.toml
+uv run pytest tests/test_search_rust.py
+uv run python bench/bm25_bench.py
+```
+
+---
+
+## Agenti, sub-agenti e utility
+
+### La gerarchia
+
+```mermaid
+flowchart TD
+    U(["Tu"]) -->|missione · chat · risposte| CEO["Ada · CEO<br/>pianifica e coordina"]
+    CEO -->|workstream con dipendenze| LEADS["Lead dei team di lavoro<br/>Rino · Leo · Teo · Iris · Luna · Pia"]
+    LEADS -->|sotto-task| WK["Worker<br/>Sara · Nina · Gaia · Ugo · Dario · Max"]
+    LEADS -->|più lavoro che persone| SUB["Sub-agenti temporanei<br/>nella sub-agent bay"]
+    SH["Skill Hub · Otto<br/>bibliotecario"] -.->|1–3 skill per sotto-task| WK
+    SH -.-> SUB
+    PL["Prompt Lab · Pia<br/>brief più precisi"] -.->|missioni complesse| WK
+    WK -->|consegna| QA["QA e Sicurezza<br/>Bruno · Vera"]
+    SUB -->|consegna| QA
+    QA -->|revise con feedback| WK
+    QA -->|lezioni| BR[("Brain")]
+    WK <-->|recall · remember| BR
+    WK -->|ask_lead| LEADS
+    WK -->|ask_user| U
+```
+
+| Ruolo | Chi | Cosa fa |
 |---|---|---|
-| Ricerca | fatti dal web, note con fonti | `web_search`, `web_fetch` (GitHub, Reddit, Hacker News) |
-| Sviluppo | codice completo e funzionante | `run_command` (se abilitato) |
-| Contenuti | testi, copy, script | `web_search` |
-| Design | palette, CSS, layout, SVG | |
-| AI Generativa | immagini e voce | `generate_image`, `generate_speech` |
-| Prompt Lab | brief e prompt precisi; affina i brief degli altri team | |
-| Skill Hub | sceglie le skill per ogni task | |
-| Qualità e Sicurezza | revisione e controllo di sicurezza | |
+| **CEO** | Ada | Decide se la missione è semplice o complessa, crea i workstream per team con le dipendenze, scrive il report finale. Prima di pianificare legge il Brain. |
+| **Lead** | uno per team | Prende il workstream dalla lavagna, lo scompone in sotto-task, risponde ad `ask_lead`. Dopo troppe bocciature decide se riprovare con nuove indicazioni o saltare. |
+| **Worker** | uno o più per team | Esegue un sotto-task nel suo loop, con i tool del team. Se il QA lo rimanda indietro riprende lo **stesso** loop, con tutta la memoria. |
+| **Sub-agente** | creato al volo | Nasce quando c'è più lavoro parallelo che persone (fino a `maxSubAgents` per team), lavora come un worker e poi svanisce. |
+| **Skill Hub** | Otto (servizio) | Per ogni sotto-task cerca le skill candidate con BM25. Nelle missioni complesse ne sceglie 1–3 con un modello; nelle semplici tiene quelle sopra una soglia di punteggio. |
+| **Prompt Lab** | Pia, Max | Nelle missioni complesse riscrive i brief e i prompt per le immagini. |
+| **QA e Sicurezza** | Bruno, Vera (servizio) | Controlla ogni consegna rispetto ai criteri di accettazione e la sicurezza del codice. Le lezioni utili finiscono nel Brain. |
 
-Tutti hanno anche: file del progetto, `search_skills` / `read_skill`, `recall` / `remember` (Brain), `ask_lead` e `ask_user`.
+**I team di lavoro** (in `config/default.json`):
 
-## Tu nel loop
+| Team | Persone | Strumenti in più | Sub-agenti al massimo |
+|---|---|---|---|
+| Ricerca | Rino, Sara | `web_search`, `web_fetch` (GitHub, Reddit, Hacker News) | 3 |
+| Sviluppo | Leo, Nina | `run_command` (solo se abilitato), `web_fetch` | 3 |
+| Contenuti | Teo, Gaia | `web_search` | 2 |
+| Design | Iris, Ugo | — | 2 |
+| AI Generativa | Luna, Dario | `generate_image`, `generate_speech` | 3 |
+| Prompt Lab | Pia, Max | — | 1 |
 
-- **Chat con qualsiasi agente**, anche a voce (🎙): durante un run il messaggio guida il lavoro. Alla CEO arriva a tutti, a un lead a tutto il team, a un worker solo a lui. Con 🔊 le risposte vengono lette ad alta voce.
-- **In attesa di te**: quando un agente usa `ask_user`, la domanda compare nel pannello di sinistra e lui aspetta la risposta (per 5 minuti, poi decide da solo).
-- **Approvazione del piano**: spunta "Voglio approvare il piano" e la CEO aspetta il tuo ok prima di far partire i team.
-- Pausa, ripresa e stop in qualsiasi momento.
+Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `read_skill`, `recall`, `remember`, `ask_lead`, `ask_user` e `finish`.
 
-## Skill Hub
+**Revisioni ed escalation.** Dopo 2 revisioni il worker passa alla combo `frontier` (`escalateAfter`). Oltre `maxRevisions` (3) decide il lead.
 
-Indicizza ogni `SKILL.md` delle cartelle in `skills.sources`: le skill dell'app (`skills/`), i plugin di Claude Code (`~/.claude/plugins`), `~/.claude/skills`, `~/.agents/skills` e Codex. Dalla scheda **Skill** puoi cercare, leggere e **aggiungere una repo GitHub di skill** (viene clonata in `skills/vendor/`).
+### Le utility
 
-Le repo in `skills.repos` sono predefinite: al primo avvio il server clona quelle che mancano in `skills/vendor/` (oggi [vercel-labs/skills](https://github.com/vercel-labs/skills)). Senza rete l'app parte lo stesso, con le skill che ha, e ci riprova all'avvio successivo; le repo già presenti si aggiornano dalla scheda **Skill**.
+| Componente | File | Ruolo |
+|---|---|---|
+| **Run** | `backend/backend/run.py` | Il ciclo di vita della missione: piano, approvazione, scheduler a tick, preparazione dei workstream, skill, brief, esecuzione, review, report. Gestisce pausa, ripresa e stop. |
+| **Tasker** | `backend/backend/tasker.py` | Il loop di un worker su un sotto-task: il modello risponde con un'azione JSON (`thought`, `tool`, `args`), il tool restituisce il risultato, si ripete fino a `finish`. Compatta il contesto: resta il brief, i passi vecchi diventano un registro di una riga. |
+| **Team** | `backend/backend/team.py` | Chi esiste, chi è libero, cosa fa ognuno. Assegna le persone con una coda d'attesa, crea e ritira i sub-agenti. Ogni cambio di stato diventa un evento `agent`, ed è questo che muove i personaggi in 3D. |
+| **Bus** | `backend/backend/bus.py` | Numera ogni evento (`seq`) e lo distribuisce alle code dei client SSE. |
+| **Tools** | `backend/backend/tools.py` | Una cartella per run: ogni percorso dato da un agente viene risolto lì dentro. I comandi shell sono spenti di default; quando li accendi hanno un timeout e chiudono l'intero albero di processi. |
+| **Router** | `backend/backend/router/` | OmniRoute (sotto): combo, fallback, cooldown, adapter dei provider e il simulatore demo. |
+| **Brain** | `backend/backend/brain.py` | Memoria condivisa che sopravvive ai run (fino a 5000 note), con ricerca BM25. |
+| **Skill Hub** | `backend/backend/skills.py` | Indice di ogni `SKILL.md` delle fonti configurate, più le repo GitHub predefinite. |
+| **Media** | `backend/backend/media.py` | Immagini e voce dai provider, oppure PNG e WAV veri generati in demo. |
+| **Store** | `backend/backend/store.py` | Un file JSON per run in `data/runs/`, con un salvataggio raggruppato ogni 400 ms. |
+| **Web** | `backend/backend/web.py` | Ricerca su DuckDuckGo, letture mirate di GitHub, Reddit e Hacker News. |
 
-## Il router (stile OmniRoute, ma tuo)
+---
 
-- **Provider**: Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Ollama, LM Studio, e qualsiasi server compatibile OpenAI.
-- **Combo**: liste ordinate di `provider/modello`, `fallback` o `round-robin`. `fast`, `smart`, `frontier` (escalation) e `local` sono già pronte.
-- **Cooldown** dopo 429/5xx con backoff; una chiave rifiutata ferma tutto quel provider.
-- **Media**: immagini con OpenAI (`gpt-image-1`), fal.ai (Flux) o Pollinations (gratis, spento finché non lo attivi); voce con OpenAI TTS o ElevenLabs.
-- **Log** di ogni chiamata in `data/calls/`.
-- **Gateway compatibile OpenAI** per altri programmi:
+## Memoria e recupero (RAG)
+
+L'app recupera il contesto con **BM25**, un ranking lessicale classico, su due corpora:
+
+| Corpus | Documento | Campi e pesi |
+|---|---|---|
+| **Brain** | una nota (lezione del QA, riassunto di un run, nota di un agente o tua) | titolo ×3, testo ×1, tag ×2, team ×1 |
+| **Skill Hub** | uno `SKILL.md` (i primi 6000 byte) | nome ×4, descrizione ×2 (fino a 600 caratteri), titoli `#`–`###` ×1 (fino a 12), percorso ×1 |
+
+### Dove entra il contesto recuperato
+
+- **Piano della CEO:** le 4 note del Brain più vicine all'obiettivo entrano nel prompt di pianificazione.
+- **Skill per ogni sotto-task:** i 10 candidati migliori, cercati con titolo, descrizione, team e output del sotto-task. Lo Skill Hub ne sceglie da 1 a 3, che entrano nel brief del worker.
+- **Durante il lavoro:** con `recall` (5 note) e `search_skills` / `read_skill` (8 skill) l'agente cerca da solo; con `remember` aggiunge una nota.
+- **Dopo il QA:** ogni lezione e il riassunto della missione diventano note, e la missione successiva le ritrova.
+
+```mermaid
+flowchart LR
+    T["testo"] --> N["minuscole → NFD<br/>→ via i diacritici"]
+    N --> SP["split su [^a-z0-9]+"]
+    SP --> FI["token di almeno 3 caratteri,<br/>senza stopword IT/EN"]
+    FI --> IX["indice: tf pesata per campo,<br/>df, lunghezza media"]
+    Q["query"] --> N2["stessa tokenizzazione"] --> SC["punteggio BM25<br/>k1 = 1.4 · b = 0.75"]
+    IX --> SC --> K["top-k"] --> P["prompt dell'agente"]
+```
+
+### Il punteggio
+
+Per una query con termini $t$ e un documento $d$:
+
+$$
+\text{score}(d) = \sum_{t} \ln\left(1 + \frac{N - df_t + 0.5}{df_t + 0.5}\right) \cdot \frac{f_{t,d}\,(k_1 + 1)}{f_{t,d} + k_1\left(1 - b + b\,\frac{|d|}{\overline{|d|}}\right)}
+$$
+
+- $f_{t,d}$ è la frequenza del termine **pesata per campo**: un termine nel titolo di una nota vale 3.
+- $|d|$ è la lunghezza pesata del documento, $\overline{|d|}$ la media del corpus.
+- La lunghezza media si aggiorna con un totale corrente, senza risommare tutti i documenti a ogni aggiunta.
+
+L'implementazione esiste due volte, identica: `backend/backend/search.py` (Python) e `crates/aw_core/src/lib.rs` (Rust). Vedi [il bridge](#il-bridge-python--rust).
+
+### Cosa non c'è (ancora): chunking semantico e similarità del coseno
+
+Oggi il recupero è **solo lessicale**: niente embedding, niente database vettoriale, niente similarità del coseno. I documenti non vengono spezzati in chunk: una nota o una skill è un documento intero, con i limiti di lunghezza della tabella sopra.
+
+È una scelta, non una dimenticanza. BM25 non chiede modelli né servizi in più, funziona offline e in demo, e su corpora piccoli e molto testuali come questi (decine di skill, al massimo 5000 note) è veloce e prevedibile. Il limite è che non trova i sinonimi: "tipografia" non trova "font".
+
+**Proposta per un recupero ibrido (non implementata):**
+
+1. **Chunking semantico:** spezzare gli `SKILL.md` lunghi sui titoli Markdown e sui paragrafi, unendo i pezzi consecutivi finché il loro embedding resta simile. Le note del Brain restano intere.
+2. **Embedding** di ogni chunk e di ogni query, con un provider del router o un modello locale.
+3. **Similarità del coseno:** $\cos(q, c) = \frac{q \cdot c}{\lVert q \rVert \, \lVert c \rVert}$ tra la query e ogni chunk.
+4. **Fusione:** unire le classifiche di BM25 e del coseno, per esempio con la *reciprocal rank fusion*. Il prodotto scalare su migliaia di vettori è un buon candidato per `aw_core`.
+
+---
+
+## Il router OmniRoute
+
+Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
+
+- **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Ollama, LM Studio e qualsiasi server compatibile OpenAI.
+- **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `fast`, `smart`, `frontier` (per l'escalation) e `local`. Ogni ruolo usa la sua combo.
+- **Cooldown:** dopo un 429 o un 5xx il bersaglio si raffredda, con un backoff da 15 s a 5 min. Una chiave rifiutata ferma l'intero provider per 10 min. I bersagli in cooldown passano in fondo alla lista, invece di sparire.
+- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`).
+- **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs.
+- **Log:** ogni chiamata viene salvata in `data/calls/`.
+- **Gateway compatibile OpenAI** (protetto da `AGENT_WORLD_API_KEY` se la imposti):
 
 ```sh
 curl http://127.0.0.1:4300/v1/chat/completions -H "content-type: application/json" \
   -d '{"model": "combo:smart", "messages": [{"role": "user", "content": "ciao"}]}'
 ```
 
-I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispondano a quelli dei tuoi account e cambiali dalle Impostazioni.
+I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispondano ai tuoi account e cambiali dalle Impostazioni.
 
-## L'ufficio 3D
+---
 
-- Un open space caldo, visto dall'alto come un diorama: pareti con finestre, pavimento in legno, angolo caffè e divano.
-- La **lavagna kanban** occupa la parete di fondo, rivolta verso di te: le card dei workstream e dei sotto-task passano da DA FARE a FATTO.
-- La CEO lavora sulla pedana davanti alla lavagna, con **il Brain** che le fluttua sopra come un ologramma: ogni volta che qualcuno salva o richiama una nota, il Brain si accende.
-- Ogni team ha la sua zona con tappeto colorato, la scrivania del lead, quelle dei worker, un oggetto tipico (mappamondo, server, studio con ring light, lavagna di post-it…) e la **sub-agent bay**, dove i sub-agenti compaiono olografici e poi svaniscono.
-- I lead vanno alla lavagna a prendere il workstream e lo dividono in cubi sulla scrivania; i worker vengono a prendersi il loro. I messaggi viaggiano come fasci di luce, il QA va alla scrivania di chi ha consegnato e dà il verdetto.
-- Click su una persona: la segui e ci chatti. Click sull'etichetta di una zona: pannello del team. Minimappa, tema giorno/notte, ⌂ per la vista completa.
+## Tech stack
+
+### Backend (Python)
+
+| Libreria | Versione | Uso |
+|---|---|---|
+| [FastAPI](https://fastapi.tiangolo.com/) | 0.143 | API REST, streaming SSE, lifespan |
+| [Starlette](https://www.starlette.io/) | 1.8 | `StreamingResponse`, sotto FastAPI |
+| [uvicorn](https://www.uvicorn.org/) `[standard]` | 0.54 | server ASGI, un processo |
+| [httpx](https://www.python-httpx.org/) | 0.28 | chiamate asincrone ai provider e al web |
+| [Pydantic](https://docs.pydantic.dev/) | 2.14 | dipendenza di FastAPI |
+| [uv](https://docs.astral.sh/uv/) | — | Python 3.13, ambiente virtuale, lockfile |
+| [hatchling](https://hatch.pypa.io/) | — | build del pacchetto `backend` |
+
+### Acceleratore nativo (Rust)
+
+| Libreria | Versione | Uso |
+|---|---|---|
+| [PyO3](https://pyo3.rs/) | 0.24 (`abi3-py310`) | binding Python ↔ Rust |
+| [maturin](https://www.maturin.rs/) | 1.15 | build del modulo `aw_core` |
+| [unicode-normalization](https://crates.io/crates/unicode-normalization) | 0.1 | NFD per la tokenizzazione, identica a Python |
+
+### Front-end
+
+| Libreria | Versione | Uso |
+|---|---|---|
+| [three.js](https://threejs.org/) | 0.186.1 | ufficio 3D, servito da `/vendor/three` senza build |
+| API del browser | — | `EventSource` (SSE), Web Speech (🎙 dettatura e 🔊 lettura ad alta voce) |
+
+### Test e strumenti
+
+| Strumento | Versione | Uso |
+|---|---|---|
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 205 test del backend |
+| Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (235 verifiche) |
+
+### Skill e plugin
+
+Lo Skill Hub indicizza ogni `SKILL.md` delle fonti in `skills.sources`:
+
+- le skill dell'app (`skills/`): copywriting, image-prompting, landing-page, prompt-engineering, security-review, web-research;
+- i **plugin di Claude Code** (`~/.claude/plugins`), `~/.claude/skills`, `~/.agents/skills` e Codex (`~/.codex/skills`);
+- le **repo GitHub predefinite** in `skills.repos`, clonate al primo avvio in `skills/vendor/` (oggi [vercel-labs/skills](https://github.com/vercel-labs/skills)).
+
+Dalla scheda **Skill** puoi cercare, leggere e aggiungere altre repo GitHub di skill.
+
+---
+
+## Lingue supportate
+
+### Linguaggi di programmazione nel repo
+
+| Linguaggio | Dove | Righe (circa) |
+|---|---|---|
+| **Python** 3.13 | `backend/` (codice 4.400, test e benchmark 3.200) | 7.500 |
+| **JavaScript** (ES modules) | `public/js/` (front-end 4.200), `scripts/` (strumenti di test 3.700) | 7.900 |
+| **Rust** (edition 2021) | `crates/aw_core/` | 200 |
+| **HTML / CSS** | `public/` | 500 |
+| **JSON** | `config/default.json` | — |
+| **Markdown** | `docs/specs/`, `skills/*/SKILL.md` | — |
+
+### Lingue parlate dagli agenti
+
+- **Gli agenti rispondono nella lingua della missione.** Ogni prompt dice di scrivere pensieri, riassunti e consegne nella lingua in cui è scritto l'obiettivo, e il QA boccia una consegna nella lingua sbagliata. Quindi qualsiasi lingua supportata dal modello in uso: italiano, inglese, spagnolo, francese, tedesco…
+- **L'interfaccia è in italiano.** Lo sono anche le risposte del simulatore demo.
+- **La voce.** La dettatura (🎙) e la lettura ad alta voce (🔊) usano la Web Speech API del browser in `it-IT`. La voce generata dagli agenti (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
+- **La ricerca BM25** toglie le stopword italiane e inglesi e gli accenti (`più` → `piu`). Funziona bene con le lingue in alfabeto latino. Le scritture non latine (cirillico, greco, cinese…) oggi non producono token, perché il tokenizer tiene solo `a-z` e `0-9` dopo aver tolto gli accenti.
+
+---
 
 ## Configurazione
 
 | Cosa | Dove |
 |---|---|
 | Chiavi API, porta, shell | `.env` (vedi `.env.example`) |
-| Team, persone, combo, media, fonti delle skill, limiti | `config/default.json` |
+| Team, persone, combo, media, fonti e repo delle skill, limiti | `config/default.json` |
 | Le tue modifiche dall'app | `config/local.json` (creato in automatico) |
 
-Per aggiungere persone o team modifica `teams` in `config/default.json`: ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
+| Variabile | Effetto |
+|---|---|
+| `PORT` | porta del server (predefinita 4300) |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, … | accendono i provider; senza chiavi si va in demo |
+| `AGENT_WORLD_API_KEY` | protegge il gateway `/v1` con un Bearer token |
+| `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli) |
+| `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
+| `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
 
-`AGENT_WORLD_ALLOW_SHELL=1` permette agli agenti di eseguire comandi nella cartella del run. È spento di default perché i comandi li scrivono i modelli.
+Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
+
+---
 
 ## Test
 
 ```sh
-npm test
+npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, cartelle temporanee
+npm run test:backend   # solo il backend: avvio e pytest
+npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 min)
 ```
 
-Adapter dei provider contro server finti, normalizzazione dei piani, ricerca BM25, media demo; poi un'intera missione complessa in demo; poi approvazione e rifiuto del piano, chat, pausa, ripresa e stop.
+- **`pytest` (205 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, parità Python/Rust.
+- **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
+- **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input e una missione completa. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
+
+Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
+
+---
+
+## Struttura del repository
+
+```
+agent-world/
+├─ backend/                 backend FastAPI (progetto uv)
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py
+│  │  ├─ routes/            api_state · runs · skills_brain · events (SSE) · gateway (/v1) · static
+│  │  └─ router/            index (OmniRoute) · providers · mock (demo)
+│  ├─ tests/                pytest
+│  └─ bench/                bm25_bench.py (soglia 5×)
+├─ crates/aw_core/          modulo nativo Rust (PyO3 + maturin)
+├─ public/                  front-end: index.html, css/, js/main.js, js/world/ (three.js)
+├─ config/default.json      team, combo, provider, skill
+├─ skills/                  skill dell'app (+ vendor/ per le repo clonate)
+├─ scripts/                 strumenti di test Node e runner del browser
+└─ docs/
+   ├─ specs/                spec, ticket, report, review e retro di ogni ciclo
+   └─ assets/               screenshot del README
+```
+
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md).
