@@ -10,6 +10,7 @@
     "smoke": "node scripts/smoke.js",
     "test": "node scripts/world-test.js && node scripts/router-test.js && node scripts/smoke.js && node scripts/flows-test.js && node scripts/temp-test.js",
     "test:browser": "node scripts/browser-test.js",
+    "test:backend": "node scripts/backend-boot-test.js && cd backend && uv run pytest -q",
     "sweep": "node scripts/browser/headless.js --sweep"
   },
   "dependencies": {
