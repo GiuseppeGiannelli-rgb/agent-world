@@ -558,6 +558,21 @@ async function overlaps(cdp) {
     report('walk', String(n), !bad.length, { steps: steps.join(', '), failedSteps: bad.map((b) => b.step), failures: bad });
   }
 
+  // 5. the inspector open over a sweep of window widths, both panels open: the narrowest
+  // columns (901-1047 and 1251-1333 px), the edges of each band, and narrow windows
+  // down to a phone's. P1, P2 (the inspector never scrolls sideways) at every width.
+  const sweep = [360, 600, 800, 900, 1047, 1048, 1250, 1251, 1321, 1322, 1333, 1334, 1440, 1920];
+  for (let x = 901; x <= 1340; x += 7) sweep.push(x);
+  await resizeTo(cdp, size('1920x1080'));
+  await cdp.eval("__checks.overlaps.reset('LR')");
+  await cdp.eval("__checks.overlaps.press('member')");
+  for (const x of [...new Set(sweep)].sort((a, b) => a - b)) {
+    await resizeTo(cdp, [x, 800]);
+    const r = await cdp.eval('__checks.overlaps.check()');
+    add('P1', 'sweep 360-1920 inspector', r.inspector && !r.P1.length && !r.P1i.length, `${x}x800`, r.inspector ? [...r.P1, ...r.P1i].join('; ') : 'the inspector closed');
+    add('P2', 'sweep 360-1920 inspector', r.inspector && !r.P2 && !r.P2i, `${x}x800`, [r.P2, r.P2i].filter(Boolean).join('; '));
+  }
+
   for (const [k, a] of Object.entries(agg)) {
     const [crit, name] = k.split('\t');
     report(crit, name, a.failed === 0, { cases: a.cases, failed: a.failed, first: a.first });

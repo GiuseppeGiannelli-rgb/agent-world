@@ -361,7 +361,10 @@ body:not(.night) .primary { background: var(--ink); }
 
 /* inspector */
 .inspector {
-  position: fixed; left: var(--col-left); top: 70px; width: 340px; max-height: calc(100vh - 170px); overflow-y: auto;
+  /* the roster's column, at most 340 px from its left edge: with left and right set and
+     width auto it takes the column, and over 340 px the box is over-constrained and
+     `right` gives way (CSS 2.1, 10.3.7), so it stays on the left (spec 02, Q3 and Q4) */
+  position: fixed; left: var(--col-left); right: var(--col-right); top: 70px; width: auto; max-width: 340px; max-height: calc(100vh - 170px); overflow-y: auto;
   background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 14px 16px; z-index: 6;
   overflow-wrap: anywhere; /* a path, a model id, a link: nothing scrolls sideways (spec 02, P2) */
@@ -424,7 +427,7 @@ body:not(.night) .primary { background: var(--ink); }
   .panel { top: 66px; bottom: 80px; width: auto !important; left: 8px; right: 8px; display: none; }
   .panel.open { display: flex; }
   .topbar { left: 8px; right: 8px; top: 8px; }
-  .inspector { left: 8px; right: 8px; width: auto; top: auto; bottom: 80px; max-height: 60vh; }
+  .inspector { left: 8px; right: 8px; width: auto; max-width: none; top: auto; bottom: 80px; max-height: 60vh; }
   .roster { left: 8px; right: 8px; bottom: 8px; }
   .member .nm small { display: none; }
 }
