@@ -1,7 +1,8 @@
-// Browser checks for specs 01 and 02. Starts a demo server of its own, drives a headless
-// Edge or Chrome over the DevTools protocol, injects scripts/browser/*.js into the page
-// and runs them; exits 1 if any check fails. No dependencies: Node's own fetch and
-// WebSocket (Node 22+).
+// Browser checks for specs 01, 02 and 03. Starts a demo server of its own, drives a
+// headless Edge or Chrome over the DevTools protocol, injects scripts/browser/*.js into
+// the page and runs them; exits 1 if any check fails. No dependencies: Node's own fetch
+// and WebSocket (Node 22+). The browser comes from scripts/browser/headless.js, the
+// temp folders from scripts/lib/temp.js.
 //
 //   node scripts/browser-test.js                    every phase, a full demo mission included
 //   node scripts/browser-test.js --skip-run         without the mission
@@ -14,18 +15,21 @@
 // Phases. Spec 01: views (A1 coverage, 3 viewports x 3 panel layouts), checks (A6, A7,
 // A8 and the trap mutation), cubes (A9), input (A7 with real mouse events), run (A10).
 // Spec 02: overlaps (P1-P5: the fixed UI over the matrix of inputs and states), labels
-// (E1-E7 and the N4 variants of the room labels).
+// (E1-E7 and the N4 variants of the room labels). Spec 03: hygiene (H1-H6: probes
+// killed, interrupted and closed, and the sweep of what they leave).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
 // The server never sees an API key: every key the config names is set to "" (present,
 // so .env cannot fill it in), and a run that is not in demo mode is stopped at once.
-// At the end no browser process may be left with this run's profile.
+// At the end no browser process may be left with this run's profile, and no folder.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { close, launch, profileProcesses, sweep } from './browser/headless.js';
+import { alive, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
 
 // Node's WebSocket is global from Node 22 (package.json allows 20.10 for the app). Without
 // it the runner would start the server and the browser, fail to reach DevTools, and could
@@ -42,7 +46,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'views,checks,cubes,input,overlaps,labels,run').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,run').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -83,23 +87,9 @@ const phaseOf = (key) => {
   const c = key.split(' ')[0];
   if (/^(P\d|walk|inputs)$/.test(c)) return 'overlaps';
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
+  if (/^H\d$/.test(c)) return 'hygiene';
   return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run' }[c] ?? c;
 };
-
-function findBrowser() {
-  const candidates = [
-    process.env.BROWSER,
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/microsoft-edge',
-  ];
-  return candidates.find((p) => p && existsSync(p));
-}
 
 // ---------- demo server ----------
 
@@ -126,6 +116,7 @@ async function startServer(home) {
   for (const k of Object.keys(env)) if (/_KEY$/.test(k)) env[k] = '';
   for (const k of keyNames()) env[k] = '';
   const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  server.exited = new Promise((ok) => server.once('exit', ok));
   await new Promise((ok, fail) => {
     server.once('exit', (code) => fail(new Error(`server exited (${code})`)));
     server.stdout.on('data', (d) => d.toString().includes('Agent World') && ok());
@@ -133,125 +124,6 @@ async function startServer(home) {
   return server;
 }
 const api = (path, body) => fetch(BASE + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}).then((r) => r.json());
-
-// ---------- DevTools protocol ----------
-
-class Cdp {
-  static async open(url) {
-    const ws = new WebSocket(url);
-    await new Promise((ok, fail) => {
-      ws.onopen = ok;
-      ws.onerror = () => fail(new Error(`cannot reach ${url}`));
-    });
-    return new Cdp(ws);
-  }
-
-  constructor(ws) {
-    this.ws = ws;
-    this.seq = 0;
-    this.pending = new Map();
-    ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      const p = m.id && this.pending.get(m.id);
-      if (!p) return;
-      this.pending.delete(m.id);
-      if (m.error) p.fail(new Error(`${p.method}: ${m.error.message}`));
-      else p.ok(m.result);
-    };
-  }
-
-  send(method, params = {}) {
-    return new Promise((ok, fail) => {
-      const id = ++this.seq;
-      this.pending.set(id, { ok, fail, method });
-      this.ws.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async eval(expression) {
-    const r = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-    return r.result.value;
-  }
-}
-
-// The browser process the runner owns; `connect()` waits for its DevTools endpoint.
-function launchBrowser(profile) {
-  const exe = findBrowser();
-  if (!exe) throw new Error('no Edge or Chrome found: set BROWSER to its path');
-  const proc = spawn(exe, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-breakpad', '--disable-crash-reporter', '--mute-audio', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
-  const browser = { exe, proc, port: null, endpoint: null };
-  browser.connect = async () => {
-    const portFile = join(profile, 'DevToolsActivePort');
-    for (let i = 0; i < 200 && !existsSync(portFile); i++) await sleep(150);
-    if (!existsSync(portFile)) throw new Error('the headless browser did not start within 30 s');
-    browser.port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
-    browser.endpoint = (await fetch(`http://127.0.0.1:${browser.port}/json/version`).then((r) => r.json())).webSocketDebuggerUrl;
-    const page = (await fetch(`http://127.0.0.1:${browser.port}/json/list`).then((r) => r.json())).find((t) => t.type === 'page');
-    return Cdp.open(page.webSocketDebuggerUrl);
-  };
-  return browser;
-}
-
-// Closes the whole browser. The process spawned is not the browser on Windows: Edge
-// hands over to another process and that one exits, so killing it, or waiting for it,
-// leaves the browser, GPU, renderer and utility processes running with the profile
-// locked. The browser is asked to close over DevTools; its tree is killed if it stays.
-async function closeBrowser({ proc, port, endpoint }) {
-  const answering = () => fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) }).then(() => true, () => false);
-  let pid = proc.pid;
-  if (endpoint) {
-    try {
-      const b = await Cdp.open(endpoint);
-      const info = await Promise.race([b.send('SystemInfo.getProcessInfo'), sleep(2000)]);
-      pid = info?.processInfo?.find((p) => p.type === 'browser')?.id ?? pid;
-      await Promise.race([b.send('Browser.close'), sleep(3000)]);
-    } catch {
-      // not answering: the tree is killed below
-    }
-    for (let i = 0; i < 50 && (await answering()); i++) await sleep(100);
-  }
-  // only a browser still answering is killed: a closed one's PID may belong to
-  // another process by now
-  const alive = endpoint ? await answering() : proc.exitCode === null && proc.signalCode === null;
-  if (!alive) return;
-  kill(pid);
-}
-function kill(pid) {
-  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-  else {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // gone already
-    }
-  }
-}
-
-// Browser processes of any run of these checks: their command line names a profile
-// folder agent-world-profile-XXXXXX (retro of spec 01, action 6).
-function profileProcesses() {
-  const r =
-    process.platform === 'win32'
-      ? spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'msedge.exe', 'chrome.exe' } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"], { encoding: 'utf8' })
-      : spawnSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
-  return (r.stdout ?? '')
-    .split(/\r?\n/)
-    .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
-    .filter((m) => m && m[2].includes('agent-world-profile-'))
-    .map(([, pid, cmd]) => ({ pid: Number(pid), profile: cmd.match(/agent-world-profile-\w+/)[0] }));
-}
-// After the close: this run's processes get a few seconds to exit. Those of another run
-// (an earlier one, or one in parallel on another --port) are only reported: failing on
-// them would make two parallel runs fail each other.
-async function leftovers(profile) {
-  const mine = basename(profile);
-  for (const end = Date.now() + 5000; ; await sleep(250)) {
-    const all = profileProcesses();
-    const left = all.filter((p) => p.profile === mine);
-    if (!left.length || Date.now() > end) return { left, others: all.filter((p) => p.profile !== mine) };
-  }
-}
 
 // ---------- the page ----------
 
@@ -751,18 +623,128 @@ async function run(cdp) {
   report('A10', 'sub-agents work at their bay seat', p.counts.spawn > 0 && p.counts.spawn === p.counts.despawn && Object.values(p.subs).every((s) => s.workingMax <= 0.5), { spawned: p.counts.spawn, removed: p.counts.despawn, subs: p.subs });
 }
 
+// ---------- spec 03: the hygiene of the tools ----------
+
+const PROBE = join(HERE, 'browser', 'probe.js');
+// A probe of its own: ready gives its JSON line once its browser answers. Its stdin
+// stays open, so it lives until "close" or until this runner goes.
+function startProbe(args = []) {
+  const child = spawn(process.execPath, [PROBE, ...args], { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] });
+  const exited = new Promise((ok) => child.once('exit', (code) => ok(code)));
+  const ready = new Promise((ok, fail) => {
+    let out = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const line = out.split('\n').find((l) => l.startsWith('{') && l.trim().endsWith('}'));
+      if (line) ok(JSON.parse(line));
+    });
+    exited.then((code) => fail(new Error(`a probe exited (${code}) before its browser answered`)));
+  });
+  return { child, ready, exited };
+}
+const within = (promise, ms, otherwise) => Promise.race([promise, sleep(ms).then(() => otherwise)]);
+// the way a shell time limit or taskkill ends a process: no handler runs (spec 03, §1.2)
+function hardKill(pid) {
+  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore' });
+  else process.kill(pid, 'SIGKILL');
+}
+const processesOf = (profile) => profileProcesses().filter((p) => p.profile === basename(profile));
+const deadOwner = (profile) => {
+  const owner = ownerOf(profile);
+  return Boolean(owner) && !alive(owner.pid);
+};
+// files under scripts/ that start a browser themselves (H1)
+function launchers(dir = HERE) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) return launchers(p);
+    return e.name.endsWith('.js') && readFileSync(p, 'utf8').includes('--remote-debugging-' + 'port') ? [p.slice(HERE.length + 1).replace(/\\/g, '/')] : [];
+  });
+}
+
+// H1-H6 with real probes: one killed with taskkill /F, then swept by the next start;
+// a sweep while runs are alive; a probe closed normally; the Ctrl+C handler; the
+// manual sweep. This runner's own browser is one of the live runs.
+async function hygiene(ownProfile) {
+  const started = Date.now();
+  const preview = join(tmpdir(), 'agent-world-preview');
+  const previewThere = existsSync(preview);
+  const closedBySweeps = [];
+  const probes = [];
+  const probe = (args) => {
+    const p = startProbe(args);
+    probes.push(p);
+    return p;
+  };
+  try {
+    // H4
+    const a = probe();
+    const infoA = await a.ready;
+    const before = processesOf(infoA.profile).length;
+    hardKill(infoA.pid);
+    await a.exited;
+    await sleep(1000);
+    const leftAfterTheKill = processesOf(infoA.profile).length;
+    const b = probe(); // the next start: launch() sweeps before its browser starts
+    const infoB = await b.ready;
+    closedBySweeps.push(...infoB.swept.killed);
+    const leftAfterTheNextStart = processesOf(infoA.profile).length;
+    report('H4', 'a probe killed with taskkill /F is swept at the next start', before > 0 && leftAfterTheNextStart === 0 && !existsSync(infoA.profile), { browserProcesses: before, leftAfterTheKill, leftAfterTheNextStart, profileLeft: existsSync(infoA.profile), closedByTheNextStart: infoB.swept.killed.length });
+    report('H6', 'the sweep at a start takes at most 2 s', infoB.swept.ms <= 2000, { ms: infoB.swept.ms, closed: infoB.swept.killed.length, removed: infoB.swept.removed.length });
+
+    // H5: probe B and this runner are alive while a sweep runs
+    const live = new Set([...processesOf(ownProfile), ...processesOf(infoB.profile)].map((p) => p.pid));
+    const s = await sweep();
+    closedBySweeps.push(...s.killed);
+    const touched = s.killed.filter((p) => live.has(p.pid)).map((p) => p.pid);
+    const still = { runner: processesOf(ownProfile).length, probe: processesOf(infoB.profile).length };
+    report('H5', 'a sweep leaves live runs alone', live.size > 0 && !touched.length && still.runner > 0 && still.probe > 0 && existsSync(ownProfile) && existsSync(infoB.profile) && (!previewThere || existsSync(preview)), { liveProcesses: live.size, closedAmongThem: touched, stillThere: still, previewKept: !previewThere || existsSync(preview) });
+
+    // H2 for a probe: closed normally, it leaves nothing
+    b.child.stdin.write('close\n');
+    const codeB = await within(b.exited, 20000, 'still running after 20 s');
+    report('H2', 'a probe closed normally leaves nothing', codeB === 0 && !processesOf(infoB.profile).length && !existsSync(infoB.profile), { exit: codeB, left: processesOf(infoB.profile).length, profileLeft: existsSync(infoB.profile) });
+
+    // H3: the Ctrl+C handler (the real Ctrl+C is the user's QA: a script cannot send one)
+    const c = probe(['--emit', 'SIGINT', '--after', '1500']);
+    const infoC = await c.ready;
+    const codeC = await within(c.exited, 20000, 'still running after 20 s');
+    await sleep(500);
+    report('H3', 'the Ctrl+C handler closes the browser and removes the profile', codeC === 130 && !processesOf(infoC.profile).length && !existsSync(infoC.profile), { exit: codeC, left: processesOf(infoC.profile).length, profileLeft: existsSync(infoC.profile) });
+
+    report('H5', 'the sweeps closed only processes of dead owners', closedBySweeps.every((p) => deadOwner(p.profile)), { closed: closedBySweeps });
+    const manual = spawnSync(process.execPath, [join(HERE, 'browser', 'headless.js'), '--sweep', '--dry-run'], { cwd: ROOT, encoding: 'utf8' });
+    report('H6', 'npm run sweep reports what it would do and exits 0', manual.status === 0 && /^sweep \(dry run\): /.test(manual.stdout), { exit: manual.status, firstLine: manual.stdout.split('\n')[0] });
+    const found = launchers();
+    report('H1', 'only headless.js starts a browser', found.length === 1 && found[0] === 'browser/headless.js', { found });
+  } finally {
+    // a probe still there after a failure: stdin closed asks it to close its browser
+    for (const p of probes) {
+      if (p.child.exitCode !== null || p.child.signalCode !== null) continue;
+      p.child.stdin.end();
+      if ((await within(p.exited, 15000, 'stuck')) === 'stuck') hardKill(p.child.pid);
+    }
+  }
+  results.hygieneSeconds = Math.round((Date.now() - started) / 1000);
+  console.log(`       hygiene in ${results.hygieneSeconds} s`);
+}
+
 // ---------- main ----------
 
-const home = mkdtempSync(join(tmpdir(), 'agent-world-browser-'));
-const profile = mkdtempSync(join(tmpdir(), 'agent-world-profile-'));
+const home = ownedDir('browser');
 let server;
 let browser;
 try {
   server = await startServer(home);
-  browser = launchBrowser(profile);
+  onExit(async () => {
+    server.kill();
+    await within(server.exited, 5000);
+  });
+  browser = await launch();
   const cdp = await browser.connect();
   results.browser = browser.exe;
   console.log(`browser checks on ${ROOT} (${TAG}) with ${browser.exe}`);
+  if (PHASES.includes('hygiene')) await hygiene(browser.profile);
   await load(cdp, VIEWPORTS[0]);
   const webgl = await cdp.eval('Boolean(agentWorld.renderer.getContext())');
   if (!webgl) throw new Error('no WebGL in the headless browser');
@@ -780,28 +762,17 @@ try {
   console.error(`FAIL ${e.stack ?? e}`);
 } finally {
   if (browser) {
-    await closeBrowser(browser);
-    const { left, others } = await leftovers(profile);
+    const { left, others } = await close(browser);
     report('runner', "no browser process left with this run's profile", !left.length, { left: left.map((p) => p.pid) });
-    for (const p of left) kill(p.pid);
     for (const p of others) console.log(`note: browser process ${p.pid} of another run is still there (${p.profile})`);
   }
-  server?.kill();
-  await sleep(300);
-  // the browser, or a virus scanner, holds the profile a moment after it closes
-  for (const dir of [home, profile]) {
-    for (let i = 0; existsSync(dir); i++) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch (e) {
-        if (i === 40) {
-          console.warn(`note: could not remove ${dir}: ${e.code}`);
-          break;
-        }
-        await sleep(500);
-      }
-    }
+  if (server) {
+    server.kill();
+    await within(server.exited, 5000);
   }
+  await removeDir(home);
+  const leftDirs = [home, browser?.profile].filter((d) => d && existsSync(d));
+  report('runner', 'no folder left by this run', !leftDirs.length, { left: leftDirs });
 }
 if (arg('--json')) writeFileSync(arg('--json'), JSON.stringify(results, null, 2));
 const reds = Object.entries(results.expectedReds).map(([k, n]) => `${k}: ${n}`).join(', ');

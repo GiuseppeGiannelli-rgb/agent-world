@@ -84,6 +84,14 @@ Nessun file in `public/` cambia.
    - `--root` su un altro checkout: il modulo è di questo checkout, la home pure.
 7. **Verifiche:** `node --check` sui file nuovi; `npm test`; `node scripts/browser-test.js --only hygiene,checks`; la suite completa una volta, perché il runner cambia.
 
+*(Precisato in T1.)*
+- **I gestori di uscita stanno in `scripts/lib/temp.js`**, non in `headless.js`, così valgono anche per gli script senza browser (T2). `headless.js` registra la chiusura del browser con `onExit()`; le pulizie girano dalla più recente, poi si rimuovono le cartelle.
+- **H6 alla prima prova era rosso: 2,45 s.** La seconda ricerca dei processi e l'attesa dopo la chiusura costavano più di un secondo. Ora c'è una sola chiamata `taskkill /T /F` con tutti i PID della prima ricerca, e la rimozione del profilo riprova finché gli ultimi processi escono: 1,22–1,23 s con 16 processi chiusi.
+- **H3 automatico** con `process.emit('SIGINT')` nella sonda; il Ctrl+C vero resta il tuo QA (V6).
+- **La sonda chiude il suo browser anche quando si chiude il suo stdin**, cioè se il runner che l'ha lanciata muore: una sonda non resta mai orfana del runner.
+- **Il server di un test ucciso muore con lui** (misurato: smoke ucciso con `taskkill /F`, porta 4399 chiusa entro 1,5 s; la pipe del suo stdout si chiude). Lo spazzino quindi non cerca server orfani; C3 lo controlla a ogni giro.
+- **Prova "prima"**, con una modifica temporanea mai committata (nessuno spazzino all'avvio, nessun gestore): H4 rosso (16 processi rimasti anche dopo l'avvio successivo, profilo rimasto), H3 rosso (sonda ancora viva dopo 20 s, 11 processi). Con il codice vero: verdi, due giri di fila; un terzo giro su `--port 4396`, in parallelo alla suite completa, verde e senza toccarla.
+
 **Commit:** `feat(test): one module launches and closes the headless browser, and sweeps orphans (T1)`
 
 **Fatto quando:** V1–V5 verdi; la fase `hygiene` vista rossa sul codice di oggi e verde dopo; suite completa verde.
