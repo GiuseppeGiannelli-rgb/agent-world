@@ -1,7 +1,8 @@
-// Page-side helpers for the browser checks of spec 01. scripts/browser-test.js injects
-// this file and then the checks into a running Agent World; in a browser console,
-// paste this file first. Everything drives window.agentWorld: a fixed 60 fps clock,
-// synthetic input, the real panel buttons, insets measured the way main.js does.
+// Page-side helpers for the browser checks of specs 01 and 02. scripts/browser-test.js
+// injects this file and then the checks into a running Agent World; in a browser
+// console, paste this file first. Everything drives window.agentWorld: a fixed 60 fps
+// clock, synthetic input, the real panel buttons, insets measured the way main.js does;
+// for spec 02 also the fixed UI as it should be laid out, and real frames.
 window.__checks = window.__checks ?? {};
 window.__t = (() => {
   const w = window.agentWorld;
