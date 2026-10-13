@@ -86,10 +86,6 @@ export function computeLayout(config) {
   return { rooms, desks, bays };
 }
 
-export function roomAt(layout, x, z) {
-  return layout.rooms.find((r) => Math.abs(x - r.x) <= r.w / 2 && Math.abs(z - r.z) <= r.d / 2) ?? null;
-}
-
 export function groundAt(layout, x, z) {
   return Math.hypot((x - CEO_DESK.x) / 1.35, z - (CEO_DESK.z - 0.7)) <= 3.0 ? 0.2 : 0;
 }

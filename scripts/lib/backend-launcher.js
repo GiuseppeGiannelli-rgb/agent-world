@@ -53,7 +53,7 @@ function keyEnvNames(root) {
 // "demo" run silently goes live -- measured in P7 QA).
 export function demoEnv(root, overrides = {}) {
   const env = { ...process.env, ...overrides };
-  for (const k of Object.keys(env)) if (k.endsWith('_API_KEY') || k.endsWith('_KEY')) env[k] = '';
+  for (const k of Object.keys(env)) if (k.endsWith('_KEY')) env[k] = '';
   for (const k of keyEnvNames(root)) env[k] = '';
   return env;
 }

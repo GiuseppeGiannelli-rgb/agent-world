@@ -2,7 +2,6 @@
 believable answers, reading the [[role:...]] marker in the system prompt."""
 
 import asyncio
-import hashlib
 import json
 import random
 import re

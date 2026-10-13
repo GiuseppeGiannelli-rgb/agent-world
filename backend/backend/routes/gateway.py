@@ -3,7 +3,6 @@ server/index.js. Streaming replies in a single chunk (D7)."""
 
 import os
 import time
-import uuid
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
