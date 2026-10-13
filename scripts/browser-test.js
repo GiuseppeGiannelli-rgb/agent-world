@@ -353,9 +353,10 @@ async function homeView(cdp) {
   await settleView(cdp);
 }
 // A floor point in the free area with no agent and no label over it, looked up just
-// before each action: a click on a room label is a room focus, and a wheel over a
-// label never reaches the canvas. The idle agents' strolls are paused meanwhile, so
-// their labels do not cross the point between the look-up and the event.
+// before each action: a click on a room label is a room focus, and a wheel step there
+// would reach the canvas only through the labels' hand-over (E7, checked apart). The
+// idle agents' strolls are paused meanwhile, so their labels do not cross the point
+// between the look-up and the event.
 const freeFloor = (cdp) =>
   cdp.eval(`(() => {
     const w = agentWorld, r = w.canvas.getBoundingClientRect();
@@ -689,17 +690,21 @@ async function labels(cdp) {
         report('E7', name, false, { error: 'no label of this kind is free under the pointer' });
         continue;
       }
+      // one wheel step: how much the picture grows, and how far the floor point that was
+      // under the pointer ends from it (zoom to the cursor keeps it there)
       const wheel = async (at) => {
         const before = await viewState(cdp);
+        const floor = await cdp.eval(`(() => { const f = __t.floorAt({ clientX: ${at[0]}, clientY: ${at[1]} }); return [f.x, f.y, f.z]; })()`);
         await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at[0], y: at[1], deltaX: 0, deltaY: -120 });
         await settleView(cdp);
         const after = await viewState(cdp);
-        return { ratio: after.scale / before.scale, auto: after.auto };
+        const drift = await cdp.eval(`(() => { const r = __t.rect(); const [x, y] = __t.toScreen(new __t.V3(${floor.join(', ')})); return Math.hypot(r.left + x - ${at[0]}, r.top + y - ${at[1]}); })()`);
+        return { ratio: +(after.scale / before.scale).toFixed(4), auto: after.auto, driftPx: +drift.toFixed(2) };
       };
       const over = await wheel(p);
       await homeView(cdp);
       const canvas = await wheel(await freeFloor(cdp));
-      report('E7', name, Math.abs(over.ratio / canvas.ratio - 1) <= 0.02 && over.auto === false, { at: p.map(Math.round), overTheLabel: { ratio: +over.ratio.toFixed(4), auto: over.auto }, overTheCanvas: { ratio: +canvas.ratio.toFixed(4) } });
+      report('E7', name, Math.abs(over.ratio / canvas.ratio - 1) <= 0.02 && over.auto === false && over.driftPx <= canvas.driftPx + 2, { at: p.map(Math.round), overTheLabel: over, overTheCanvas: canvas });
     }
   } finally {
     await homeView(cdp);

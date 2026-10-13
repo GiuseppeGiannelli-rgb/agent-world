@@ -211,6 +211,16 @@ export class World {
       // the controls cancel the page scroll for the wheel steps they zoom with
       if (e.defaultPrevented && e.deltaY) takeView();
     }, { passive: true });
+    // The labels take the pointer for their clicks, so a wheel step over one would never
+    // reach the canvas: it is handed on, the same step at the same point, to the controls
+    // and to the check above (spec 02, E7). It must be cancelable, the check reads
+    // defaultPrevented; and the listener is not passive, or a touchpad pinch (Ctrl) over
+    // a label would zoom the page.
+    labels.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const { deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, ctrlKey, shiftKey, altKey, metaKey } = e;
+      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, ctrlKey, shiftKey, altKey, metaKey }));
+    }, { passive: false });
     canvas.addEventListener('pointermove', (e) => {
       const p = presses.get(e.pointerId);
       if (p && !e.buttons) release(e); // its release never reached the canvas
