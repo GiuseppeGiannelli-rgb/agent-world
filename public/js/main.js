@@ -873,11 +873,7 @@ function togglePanel(id, other) {
   if (narrow.matches) {
     $(id).classList.toggle('open');
     $(other).classList.remove('open');
-  } else {
-    $(id).classList.toggle('closed');
-    document.body.classList.toggle('left-closed', $('#left').classList.contains('closed'));
-    document.body.classList.toggle('right-closed', $('#right').classList.contains('closed'));
-  }
+  } else $(id).classList.toggle('closed'); // app.css reads it with :has()
 }
 $('#btn-left').addEventListener('click', () => togglePanel('#left', '#right'));
 $('#btn-right').addEventListener('click', () => togglePanel('#right', '#left'));

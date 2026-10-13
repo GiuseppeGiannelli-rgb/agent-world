@@ -176,8 +176,6 @@ window.__checks.manualMode = () =>
       const [x, y] = t.toScreen(new t.V3(room.x, 0, room.z));
       const off = [x - (w.width / 2 + lens.lensX), y - (w.height / 2 + lens.lensY)];
       t.result(out, 'room label with the right panel closed', t.isOpen('#right') && Math.hypot(...off) < 1, { rightPanelOpened: t.isOpen('#right'), offPx: off.map((n) => +n.toFixed(2)) });
-      // switchTab opens the panel without body.right-closed following it (N6, out of scope)
-      document.body.classList.toggle('right-closed', !t.isOpen('#right'));
       rightPanel(true);
     }
 

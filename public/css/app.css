@@ -20,6 +20,11 @@
   --mono: "Cascadia Code", "Consolas", ui-monospace, monospace;
   --left-w: 330px;
   --right-w: 400px;
+  /* the column of the roster and the inspector, between the panels and the minimap,
+     and where the minimap sits: set here alone, from the panels' state (spec 02) */
+  --col-left: calc(var(--left-w) + 24px);
+  --col-right: calc(var(--right-w) + 240px);
+  --map-right: calc(var(--right-w) + 24px);
 }
 body.night {
   --bg-1: #18203a;
@@ -125,7 +130,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
 .brain-label b { display: block; color: #fff; letter-spacing: .2em; }
 
 .minimap {
-  position: fixed; right: calc(var(--right-w) + 24px); bottom: 12px;
+  position: fixed; right: var(--map-right); bottom: 12px;
   width: 204px; height: 184px; border-radius: 14px;
   border: 1px solid var(--line); box-shadow: var(--shadow); cursor: crosshair; z-index: 4;
 }
@@ -338,7 +343,7 @@ body:not(.night) .primary { background: var(--ink); }
 
 /* roster */
 .roster {
-  position: fixed; bottom: 12px; left: calc(var(--left-w) + 24px); right: calc(var(--right-w) + 240px);
+  position: fixed; bottom: 12px; left: var(--col-left); right: var(--col-right);
   display: flex; gap: 2px; padding: 6px;
   background: var(--panel); backdrop-filter: blur(14px);
   border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
@@ -356,7 +361,7 @@ body:not(.night) .primary { background: var(--ink); }
 
 /* inspector */
 .inspector {
-  position: fixed; left: calc(var(--left-w) + 24px); top: 70px; width: 340px; max-height: calc(100vh - 170px); overflow-y: auto;
+  position: fixed; left: var(--col-left); top: 70px; width: 340px; max-height: calc(100vh - 170px); overflow-y: auto;
   background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 14px 16px; z-index: 6;
 }
@@ -397,14 +402,21 @@ body:not(.night) .primary { background: var(--ink); }
 .toast.bad { background: var(--bad); }
 @keyframes in { from { opacity: 0; transform: translateY(-6px); } }
 
-body.left-closed .roster, body.left-closed .inspector { left: 12px; }
-body.right-closed .roster { right: 228px; }
-body.right-closed .minimap { right: 12px; }
-
+/* The panels' state has one truth, their `closed` class, read here. Wide only: the
+   narrow layout places everything itself, whatever the panels were left with. The
+   queries are exact complements of (max-width: 900px), the one main.js matches too. */
+@media (width > 900px) {
+  :root:has(#left.closed) { --col-left: 12px; }
+  :root:has(#right.closed) { --col-right: 228px; --map-right: 12px; }
+}
 @media (max-width: 1250px) {
-  :root { --left-w: 300px; --right-w: 360px; }
+  :root { --left-w: 300px; --right-w: 360px; --col-right: calc(var(--right-w) + 24px); } /* no minimap */
   .minimap { display: none; }
-  .roster { right: calc(var(--right-w) + 24px); }
+}
+/* as specific as the wide rules above, and after them: below 1250 px there is no
+   minimap to leave room for */
+@media (900px < width <= 1250px) {
+  :root:has(#right.closed) { --col-right: 12px; }
 }
 @media (max-width: 900px) {
   .stats { display: none; }
