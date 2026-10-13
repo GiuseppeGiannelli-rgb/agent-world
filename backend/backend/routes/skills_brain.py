@@ -4,6 +4,8 @@ Brain handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.plan import nz
+
 
 def mount(app, *, skills, brain) -> None:
     @app.get("/api/skills")
@@ -43,7 +45,7 @@ def mount(app, *, skills, brain) -> None:
     @app.post("/api/brain")
     async def api_brain_post(request: Request):
         body = await request.json()
-        if not str(body.get("text") or "").strip():
+        if not str(nz(body.get("text"), "")).strip():
             return JSONResponse({"error": "Scrivi il contenuto della nota"}, status_code=400)
-        note = brain.add(title=body.get("title"), text=body.get("text"), tags=body.get("tags") or ["utente"], kind="user", agent_id="user")
+        note = brain.add(title=body.get("title"), text=body.get("text"), tags=nz(body.get("tags"), ["utente"]), kind="user", agent_id="user")
         return JSONResponse(note, status_code=201)

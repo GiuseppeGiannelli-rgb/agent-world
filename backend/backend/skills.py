@@ -8,6 +8,7 @@ import re
 import shutil
 from pathlib import Path
 
+from backend.plan import nz
 from backend.search import Bm25
 
 SKIP = {"node_modules", ".git", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".incoming"}
@@ -73,7 +74,7 @@ class SkillLibrary:
 
     @property
     def sources(self) -> list[dict]:
-        srcs = (self.config.get().get("skills") or {}).get("sources") or ["skills"]
+        srcs = nz((self.config.get().get("skills") or {}).get("sources"), ["skills"])
         return [{"label": s, "dir": _expand(s, self.root)} for s in srcs]
 
     async def _walk(self, dir: Path, out: list[Path], depth: int = 0) -> None:

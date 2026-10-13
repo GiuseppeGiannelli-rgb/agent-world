@@ -4,6 +4,8 @@ adapters over httpx, plus the mock dispatch."""
 import os
 import re
 
+from backend.plan import nz
+
 THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
 DEFAULT_TIMEOUT_S = 180.0
 
@@ -57,7 +59,7 @@ async def openai_chat(provider: dict, provider_id: str, model: str, req: dict, c
     if provider_id == "openrouter":
         headers["http-referer"] = "http://localhost/agent-world"
         headers["x-title"] = "Agent World"
-    body = {"model": model, "messages": req["messages"], "max_tokens": req.get("maxTokens") or 4096}
+    body = {"model": model, "messages": req["messages"], "max_tokens": nz(req.get("maxTokens"), 4096)}
     if req.get("temperature") is not None:
         body["temperature"] = req["temperature"]
     want_json = req.get("json") and provider.get("jsonMode") is not False
@@ -104,7 +106,7 @@ def to_anthropic_messages(messages: list[dict]):
 async def anthropic_chat(provider: dict, model: str, req: dict, client) -> dict:
     key = os.environ.get(provider["keyEnv"])
     system, messages = to_anthropic_messages(req["messages"])
-    body = {"model": model, "max_tokens": req.get("maxTokens") or 4096, "messages": messages}
+    body = {"model": model, "max_tokens": nz(req.get("maxTokens"), 4096), "messages": messages}
     if system:
         body["system"] = system
     if req.get("temperature") is not None:

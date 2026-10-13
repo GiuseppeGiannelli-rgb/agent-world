@@ -8,6 +8,7 @@ import uuid
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from backend.plan import nz
 from backend.router.providers import ProviderError
 
 
@@ -38,13 +39,13 @@ def mount(app, *, config, router) -> None:
         body = await request.json()
         if not isinstance(body.get("messages"), list):
             return JSONResponse({"error": {"message": '"messages" is required'}}, status_code=400)
-        use = str(body.get("model") or f"combo:{config.get()['router']['defaultCombo']}")
+        use = str(nz(body.get("model"), f"combo:{config.get()['router']['defaultCombo']}"))
         try:
             out = await router.chat(
                 use=use,
                 messages=body["messages"],
                 json=(body.get("response_format") or {}).get("type") == "json_object",
-                max_tokens=body.get("max_tokens") or body.get("max_completion_tokens"),
+                max_tokens=nz(body.get("max_tokens"), body.get("max_completion_tokens")),
                 temperature=body.get("temperature"),
                 meta={"agentId": "gateway"},
             )

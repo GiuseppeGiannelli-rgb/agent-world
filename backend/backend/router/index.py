@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from backend.plan import nz
 from backend.router.providers import ProviderError, call_provider
 
 
@@ -59,10 +60,11 @@ class Router:
         return {"combo": None, "strategy": "fallback", "targets": [single]}
 
     def spec_for_role(self, role: str | None) -> str:
+        default = self.cfg["router"]["defaultCombo"]
         if role == "ceo":
-            return (self.cfg.get("ceo") or {}).get("combo") or self.cfg["router"]["defaultCombo"]
-        team = (self.cfg.get("teams") or {}).get(role or "")
-        return (team or {}).get("combo") or self.cfg["router"]["defaultCombo"]
+            return nz((self.cfg.get("ceo") or {}).get("combo"), default)
+        team = (self.cfg.get("teams") or {}).get(role or "") or {}
+        return nz(team.get("combo"), default)
 
     def plan(self, spec: str, role: str | None) -> dict:
         expanded = self.expand(spec)
