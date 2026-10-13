@@ -20,6 +20,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Node's WebSocket is global from Node 22 (package.json allows 20.10 for the app). Without
+// it the runner would start the server and the browser, fail to reach DevTools, and could
+// not close the browser either: on Windows its processes stayed behind. Stop before.
+if (typeof WebSocket !== 'function') {
+  console.error(`FAIL the browser checks need Node 22 or later (global WebSocket); this is Node ${process.versions.node}`);
+  process.exit(1);
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (name, fallback = null) => {
   const i = process.argv.indexOf(name);
