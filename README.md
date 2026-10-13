@@ -367,7 +367,9 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 |---|---|---|
 | [FastAPI](https://fastapi.tiangolo.com/) | 0.143 | API REST, streaming SSE, lifespan |
 | [Starlette](https://www.starlette.io/) | 1.8 | `StreamingResponse`, sotto FastAPI |
-| [uvicorn](https://www.uvicorn.org/) `[standard]` | 0.54 | server ASGI, un processo |
+| [uvicorn](https://www.uvicorn.org/) | 0.54 | server ASGI, un processo |
+| [httptools](https://github.com/MagicStack/httptools) | 0.9 | parser HTTP veloce, usato da uvicorn in automatico |
+| [watchfiles](https://watchfiles.helpmanual.io/) | 1.3 | il reload di `npm run dev` |
 | [httpx](https://www.python-httpx.org/) | 0.28 | chiamate asincrone ai provider e al web |
 | [Pydantic](https://docs.pydantic.dev/) | 2.14 | dipendenza di FastAPI |
 | [uv](https://docs.astral.sh/uv/) | — | Python 3.13, ambiente virtuale, lockfile |
@@ -454,9 +456,10 @@ Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni te
 ## Test
 
 ```sh
-npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, cartelle temporanee
+npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
 npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 min)
+npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
 - **`pytest` (205 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, parità Python/Rust.
@@ -466,6 +469,14 @@ npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 m
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
+
+**Niente segreti nei commit.** `npm install` attiva gli hook di `scripts/hooks/`. A ogni commit, `scripts/secret-scan.js` blocca:
+- chiavi API e token, e valori `NOME_KEY=...` scritti per esteso;
+- percorsi assoluti della tua macchina;
+- file `.env`, `config/local.json` e i dati in `data/`;
+- le parole personali elencate in `.git/info/personal-words`, un file che resta solo sulla tua macchina.
+
+Quello che trova lo stampa oscurato.
 
 ---
 
