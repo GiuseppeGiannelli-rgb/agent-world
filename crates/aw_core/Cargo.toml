@@ -1,0 +1,13 @@
+[package]
+name = "aw_core"
+version = "0.1.0"
+edition = "2021"
+description = "Native accelerators for the Agent World backend (P6): BM25 + tokenizer"
+
+[lib]
+name = "aw_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+unicode-normalization = "0.1"

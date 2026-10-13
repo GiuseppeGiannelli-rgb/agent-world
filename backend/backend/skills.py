@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 from backend.plan import nz
-from backend.search import Bm25
+from backend.search import bm25  # P6: native Rust when built+probed, Python otherwise
 
 SKIP = {"node_modules", ".git", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".incoming"}
 MAX_FILES = 8000
@@ -68,7 +68,7 @@ class SkillLibrary:
         self.bus = bus
         self.skills: list[dict] = []
         self.by_id: dict[str, dict] = {}
-        self.index = Bm25()
+        self.index = bm25()
         self._indexing: asyncio.Task | None = None
         self.vendor_dir = self.root / "skills" / "vendor"
 
@@ -130,7 +130,7 @@ class SkillLibrary:
                 headings = " ".join(m.group(1) for m in list(HEADING_RE.finditer(body))[:12])
                 rel = os.path.relpath(file.parent, src["dir"]).replace(os.sep, "/")
                 skills.append({"id": id_, "name": name, "description": description, "source": src["label"], "path": str(file), "rel": rel if rel != "." else name, "headings": headings})
-        index = Bm25()
+        index = bm25()
         for s in skills:
             index.add(
                 s["id"],

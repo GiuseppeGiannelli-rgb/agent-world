@@ -5,7 +5,7 @@ import time
 import uuid
 from pathlib import Path
 
-from backend.search import Bm25
+from backend.search import bm25  # P6: native Rust when built+probed, Python otherwise
 
 
 class Brain:
@@ -16,7 +16,7 @@ class Brain:
         self.reindex()
 
     def reindex(self) -> None:
-        self.index = Bm25()
+        self.index = bm25()
         for n in self.notes:
             self.index.add(
                 n["id"],
