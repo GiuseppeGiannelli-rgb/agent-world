@@ -1,3 +1,5 @@
+> **Congelata** (2026-10-13): sostituita dalla Spec 04 (backend FastAPI+Rust). Nessuna nuova modifica attesa qui.
+
 # Spec 03 — Memoria e stabilità delle sessioni lunghe
 
 | | |

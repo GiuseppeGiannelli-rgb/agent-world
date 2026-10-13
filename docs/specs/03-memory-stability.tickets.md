@@ -1,3 +1,5 @@
+> **Congelata** (2026-10-13): sostituita dalla Spec 04 (backend FastAPI+Rust). Nessuna nuova modifica attesa qui.
+
 # Ticket — Spec 03, memoria e stabilità delle sessioni lunghe
 
 Riferimento: [03-memory-stability.md](03-memory-stability.md). Gli ID H\*, C\*, M\*, R\*, V\* e D\* rimandano alla spec.
