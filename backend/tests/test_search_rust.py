@@ -6,6 +6,8 @@ back to Python when the native module is missing or fails the parity probe."""
 
 import math
 
+import pytest
+
 from backend import search as search_mod
 from backend.search import Bm25, bm25, tokenize
 
@@ -93,3 +95,41 @@ def test_tokenize_contract_unchanged():
     assert tokenize("CAFÉ, Caffè!") == ["cafe", "caffe"]
     assert tokenize("a an the il di") == []  # len<=2 or stopwords
     assert tokenize(None) == []
+
+
+# ---------- Spec 05: vectors (run when aw_core is built) ----------
+
+VECTOR_TEXTS = ["Caffè e tipografia", "Check the HMAC signature of every incoming webhook", "", "il la di", "x", "İstanbul ŞEHİR", "naïve façade — 2026!"]
+
+
+def test_rust_ngram_vector_is_bit_identical():
+    aw_core = pytest.importorskip("aw_core")
+    from backend.embed import ngram_vector
+
+    for text in VECTOR_TEXTS:
+        for dim in (8, 256):
+            assert list(aw_core.ngram_vector(text, dim)) == ngram_vector(text, dim), (text, dim)
+
+
+def test_rust_cosine_top_k_matches_python():
+    aw_core = pytest.importorskip("aw_core")
+    from backend.embed import ngram_vector
+    from backend.search import _cosine_top_k_py
+
+    vectors = [ngram_vector(t) for t in VECTOR_TEXTS] + [ngram_vector(VECTOR_TEXTS[0])]  # a tie
+    query = ngram_vector("tipografia del caffè")
+    got = aw_core.cosine_top_k(query, [x for v in vectors for x in v], 256, 5)
+    assert [(i, s) for i, s in got] == _cosine_top_k_py(query, vectors, 5)
+    with pytest.raises(ValueError):
+        aw_core.cosine_top_k(query, [1.0, 2.0, 3.0], 256, 1)
+
+
+def test_vector_factories_fall_back_without_aw_core():
+    from backend import embed
+    from backend import search as s
+
+    try:
+        import aw_core  # noqa: F401
+    except ImportError:
+        assert embed.RUST_NGRAM is None and s.RUST_COSINE is None
+        assert embed.local_vectors(["pizza"]) == [embed.ngram_vector("pizza")]

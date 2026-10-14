@@ -10,7 +10,7 @@ from backend.plan import nz
 def mount(app, *, skills, brain) -> None:
     @app.get("/api/skills")
     async def api_skills(q: str | None = None):
-        results = skills.search(q, 40) if q else skills.skills[:400]
+        results = await skills.search(q, 40) if q else skills.skills[:400]
         return {
             **skills.summary(),
             "results": [{"id": r["id"], "name": r["name"], "description": r["description"], "source": r["source"], "rel": r["rel"], "score": r.get("score")} for r in results],
@@ -39,7 +39,7 @@ def mount(app, *, skills, brain) -> None:
 
     @app.get("/api/brain")
     async def api_brain_get(q: str | None = None):
-        notes = brain.search(q, 50, quiet=True) if q else brain.list(200)
+        notes = await brain.search(q, 50, quiet=True) if q else brain.list(200)
         return {"count": brain.count, "notes": notes}
 
     @app.post("/api/brain")

@@ -1,5 +1,10 @@
 """Mirrors server/engine/skills.js: every SKILL.md found in the configured
-folders, indexed for search."""
+folders, indexed for search.
+
+Spec 05: hybrid search. Each skill is a BM25 document and a set of chunk
+vectors: one for "name + description", plus the semantic chunks of its body
+(embed.split_pieces + embed.merge_pieces). All vectors of an index come from
+one model, chosen by embed.Embedder."""
 
 import asyncio
 import hashlib
@@ -8,8 +13,9 @@ import re
 import shutil
 from pathlib import Path
 
+from backend.embed import Embedder, merge_pieces, split_pieces
 from backend.plan import nz
-from backend.search import bm25  # P6: native Rust when built+probed, Python otherwise
+from backend.search import HybridIndex
 
 SKIP = {"node_modules", ".git", "dist", "build", ".next", "__pycache__", ".venv", "venv", ".incoming"}
 MAX_FILES = 8000
@@ -62,15 +68,25 @@ async def _git(args: list[str]) -> None:
 
 
 class SkillLibrary:
-    def __init__(self, root, config, bus=None):
+    def __init__(self, root, config, bus=None, embedder: Embedder | None = None):
         self.root = Path(root)
         self.config = config
         self.bus = bus
+        self.embedder = embedder or Embedder(config)
         self.skills: list[dict] = []
         self.by_id: dict[str, dict] = {}
-        self.index = bm25()
+        self.index = self._new_index()
         self._indexing: asyncio.Task | None = None
         self.vendor_dir = self.root / "skills" / "vendor"
+
+    def _new_index(self) -> HybridIndex:
+        rag = self.embedder.rag
+        fusion = rag.get("fusion") or {}
+        return HybridIndex(
+            rrf_k=int(fusion.get("k", 60)),
+            weights={"bm25": float(fusion.get("bm25", 1.0)), "vector": float(fusion.get("vector", 1.0))},
+            min_cosine=float(rag.get("minCosine", 0.2)),
+        )
 
     @property
     def sources(self) -> list[dict]:
@@ -107,6 +123,7 @@ class SkillLibrary:
 
     async def _do_index(self) -> int:
         skills = []
+        bodies: dict[str, str] = {}  # skill id -> body text, only for chunking
         seen = set()
         for src in self.sources:
             if not src["dir"].exists():
@@ -130,7 +147,8 @@ class SkillLibrary:
                 headings = " ".join(m.group(1) for m in list(HEADING_RE.finditer(body))[:12])
                 rel = os.path.relpath(file.parent, src["dir"]).replace(os.sep, "/")
                 skills.append({"id": id_, "name": name, "description": description, "source": src["label"], "path": str(file), "rel": rel if rel != "." else name, "headings": headings})
-        index = bm25()
+                bodies[id_] = body
+        index = self._new_index()
         for s in skills:
             index.add(
                 s["id"],
@@ -141,6 +159,7 @@ class SkillLibrary:
                     {"text": re.sub(r"[/_-]", " ", s["rel"])},
                 ],
             )
+        await self._add_vectors(index, skills, bodies)
         self.skills = skills
         self.by_id = {s["id"]: s for s in skills}
         self.index = index
@@ -154,11 +173,40 @@ class SkillLibrary:
         q = str(id_or_name or "").lower()
         return next((s for s in self.skills if s["name"].lower() == q), None)
 
-    def search(self, query: str, k: int = 8) -> list[dict]:
+    async def _add_vectors(self, index: HybridIndex, skills: list[dict], bodies: dict[str, str]) -> None:
+        """One embedding call for every piece of every skill, then semantic
+        chunking per skill. The header ("name: description") is its own chunk."""
+        chunk_cfg = self.embedder.rag.get("chunk") or {}
+        max_chars = int(chunk_cfg.get("maxChars", 1200))
+        min_sim = float(chunk_cfg.get("minSimilarity", 0.5))
+        owners, texts = [], []
+        for s in skills:
+            pieces = [f"{s['name']}: {s['description']}", *split_pieces(bodies.get(s["id"], ""), max_chars)]
+            owners.append(len(pieces))
+            texts += pieces
+        if not texts:
+            return
+        model, vectors = await self.embedder.embed(texts)
+        at = 0
+        for s, n in zip(skills, owners):
+            pieces, vecs = texts[at : at + n], vectors[at : at + n]
+            at += n
+            chunks = merge_pieces(pieces[1:], vecs[1:], max_chars=max_chars, min_similarity=min_sim)
+            index.add_vectors(s["id"], [vecs[0], *(v for _, v in chunks)], model)
+
+    async def search(self, query: str, k: int = 8) -> list[dict]:
+        query_vec = None
+        if self.index.model is not None:
+            try:
+                _, (query_vec,) = await self.embedder.embed([query], model=self.index.model)
+            except Exception:  # noqa: BLE001 -- the model stopped answering: BM25 alone
+                query_vec = None
         out = []
-        for h in self.index.search(query, k):
+        for h in self.index.search(query, k, query_vec):
             s = dict(self.by_id[h["id"]])
-            s["score"] = round(h["score"], 2)
+            s["score"] = round(h["score"], 4)
+            s["bm25"] = round(h["bm25"], 2)
+            s["cosine"] = round(h["cosine"], 3)
             out.append(s)
         return out
 
@@ -175,7 +223,7 @@ class SkillLibrary:
         by_source: dict[str, int] = {}
         for s in self.skills:
             by_source[s["source"]] = by_source.get(s["source"], 0) + 1
-        return {"count": len(self.skills), "sources": [{"label": s["label"], "dir": str(s["dir"]), "exists": s["dir"].exists(), "count": by_source.get(s["label"], 0)} for s in self.sources]}
+        return {"count": len(self.skills), "vectors": {"model": self.index.model, "chunks": len(self.index.chunk_vec)}, "sources": [{"label": s["label"], "dir": str(s["dir"]), "exists": s["dir"].exists(), "count": by_source.get(s["label"], 0)} for s in self.sources]}
 
     async def refresh(self):
         if self._indexing is not None:

@@ -30,7 +30,7 @@ async def test_reindex_finds_skills_and_search_ranks(tmp_path):
     lib = SkillLibrary(tmp_path, config, Bus())
     count = await lib.reindex()
     assert count == 2
-    results = lib.search("hero image prompts")
+    results = await lib.search("hero image prompts")
     assert results[0]["name"] == "present-skill"
 
 

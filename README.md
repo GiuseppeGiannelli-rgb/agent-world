@@ -92,7 +92,7 @@ flowchart LR
     end
 
     subgraph Rs["Rust · opzionale"]
-        AW["aw_core<br/>PyO3 · BM25 + tokenizer"]
+        AW["aw_core<br/>PyO3 · BM25 · n-gram · coseno"]
     end
 
     subgraph Disk["File locali"]
@@ -199,7 +199,8 @@ flowchart TD
     R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
 ```
 
-- **Stessa interfaccia:** `add(id, fields)` e `search(query, k)`; c'è anche `tokenize(text)` per i test. Chi chiama non sa quale implementazione sta usando.
+- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk).
+- **Stessa interfaccia:** chi chiama non sa quale implementazione sta usando.
 - **Due livelli di sicurezza:**
   - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
   - `tests/test_search_rust.py` fissa la parità su un corpus di riferimento.
@@ -285,7 +286,7 @@ Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `rea
 
 ## Memoria e recupero (RAG)
 
-L'app recupera il contesto con **BM25**, un ranking lessicale classico, su due corpora:
+L'app recupera il contesto con una **ricerca ibrida**: **BM25**, un ranking lessicale classico, fuso con la **similarità del coseno** tra vettori. La fusione è la *reciprocal rank fusion*, e vale per due corpora:
 
 | Corpus | Documento | Campi e pesi |
 |---|---|---|
@@ -323,18 +324,51 @@ $$
 
 L'implementazione esiste due volte, identica: `backend/backend/search.py` (Python) e `crates/aw_core/src/lib.rs` (Rust). Vedi [il bridge](#il-bridge-python--rust).
 
-### Cosa non c'è (ancora): chunking semantico e similarità del coseno
+### Embedding, chunking semantico e fusione
 
-Oggi il recupero è **solo lessicale**: niente embedding, niente database vettoriale, niente similarità del coseno. I documenti non vengono spezzati in chunk: una nota o una skill è un documento intero, con i limiti di lunghezza della tabella sopra.
+```mermaid
+flowchart LR
+    D["SKILL.md · nota"] --> SPL["pezzi: paragrafi,<br/>titolo + paragrafo"]
+    SPL --> EMB["embedding"]
+    EMB --> MER["chunking semantico:<br/>unisce i vicini simili"]
+    MER --> VEC[("vettori dei chunk")]
+    Q["query"] --> QE["embedding<br/>(stesso modello)"] --> COS["coseno top-k<br/>(Rust se compilato)"]
+    VEC --> COS
+    Q --> BM["BM25"]
+    COS --> RRF["RRF: Σ w / (60 + rank)"]
+    BM --> RRF --> K["top-k"]
+```
 
-È una scelta, non una dimenticanza. BM25 non chiede modelli né servizi in più, funziona offline e in demo, e su corpora piccoli e molto testuali come questi (decine di skill, al massimo 5000 note) è veloce e prevedibile. Il limite è che non trova i sinonimi: "tipografia" non trova "font".
+**Embedding.** `rag.embeddings` in `config/default.json` è una lista ordinata, come una combo. Si usa il primo provider pronto, attraverso il suo endpoint `/embeddings` compatibile OpenAI:
+- l'ordine predefinito è `openai/text-embedding-3-small` (512 dimensioni), `mistral/mistral-embed`, `gemini/gemini-embedding-001`, `ollama/nomic-embed-text`;
+- i vettori restano in cache su disco (`data/embeddings/`), indicizzati per hash del testo;
+- tutti i vettori di un indice vengono dallo stesso modello, e la query usa sempre quello. Se quel modello smette di rispondere, l'indice viene ricostruito con il primo modello che funziona.
 
-**Proposta per un recupero ibrido (non implementata):**
+**Senza chiavi, in demo o offline: `local/ngram`.** Gli n-grammi di 3 e 4 caratteri di ogni token vengono messi in un vettore di 256 dimensioni con un hash firmato (CRC-32). Non serve nessun modello, è deterministico, ed è uguale in Python e in Rust. **Trova le varianti della stessa parola, non il significato.** Misure del 14/10/2026:
 
-1. **Chunking semantico:** spezzare gli `SKILL.md` lunghi sui titoli Markdown e sui paragrafi, unendo i pezzi consecutivi finché il loro embedding resta simile. Le note del Brain restano intere.
-2. **Embedding** di ogni chunk e di ogni query, con un provider del router o un modello locale.
-3. **Similarità del coseno:** $\cos(q, c) = \frac{q \cdot c}{\lVert q \rVert \, \lVert c \rVert}$ tra la query e ogni chunk.
-4. **Fusione:** unire le classifiche di BM25 e del coseno, per esempio con la *reciprocal rank fusion*. Il prodotto scalare su migliaia di vettori è un buon candidato per `aw_core`.
+| Coppia | Coseno |
+|---|---|
+| varianti della stessa parola (*typographic* ~ *typography*) | 0,44–0,76 |
+| la stessa parola tra lingue diverse, in testi lunghi (*typography* ~ *tipografia…*) | circa 0,16, debole |
+| 66 coppie di testi senza relazione | massimo 0,241, p90 0,13 |
+
+Per questo `rag.minCosine` è 0,25. I sinonimi veri ("tipografia" → "font") li trova solo un modello di embedding vero.
+
+**Chunking semantico** (solo per gli `SKILL.md`; una nota del Brain resta intera):
+1. Il testo si divide in paragrafi; ogni titolo resta incollato al paragrafo che lo segue, e un paragrafo troppo lungo si taglia a fine frase.
+2. Ogni pezzo diventa un vettore.
+3. I pezzi vicini si uniscono finché il coseno con il centroide del chunk resta ≥ `chunk.minSimilarity` (0,5) e il chunk non supera `chunk.maxChars` (1200). Un titolo apre sempre un chunk nuovo.
+4. Ogni skill ha in più il chunk "nome: descrizione". Il punteggio vettoriale di un documento è quello del suo chunk migliore.
+
+In questo modo si ritrova anche il testo del corpo, che BM25 non indicizza: lì contano solo nome, descrizione, titoli e percorso.
+
+**Fusione.** $\cos(q, c) = q \cdot c$, perché i vettori sono normalizzati. La classifica vettoriale (solo sopra `minCosine`) e quella BM25 si fondono con la RRF:
+
+$$\text{score}(d) = \frac{w_{bm25}}{60 + r_{bm25}(d)} + \frac{w_{vec}}{60 + r_{vec}(d)}$$
+
+Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta `score` (fuso), `bm25` e `cosine`. Nelle missioni semplici, che non hanno un bibliotecario, le skill si scelgono ancora con la soglia BM25 di prima.
+
+**Il Brain** aggiunge una nota a BM25 in modo incrementale; prima ricostruiva tutto l'indice a ogni nota, circa 0,4–0,7 s a 5000 note. Le note ancora senza vettore ne ricevono uno, tutte in un colpo, alla ricerca successiva.
 
 ---
 

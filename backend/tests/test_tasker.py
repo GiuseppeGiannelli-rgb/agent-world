@@ -120,7 +120,10 @@ class FakeRun:
         self._missing_first = missing_first
         import types
 
-        self.ctx = types.SimpleNamespace(brain=types.SimpleNamespace(search=lambda *a, **k: []))
+        async def no_hits(*a, **k):  # Brain.search is async since Spec 05
+            return []
+
+        self.ctx = types.SimpleNamespace(brain=types.SimpleNamespace(search=no_hits))
         from backend.tools import Workspace
         import tempfile
 

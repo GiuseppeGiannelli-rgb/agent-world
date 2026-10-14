@@ -42,7 +42,7 @@ async def test_api_state_has_stub_and_real_fields(client):
         assert set(body["media"].keys()) == {"image", "speech", "providers"}
         # P4 replaced the skills stub with SkillLibrary.summary() -- real
         # sources, count still 0 because this app wasn't reindexed.
-        assert set(body["skills"].keys()) == {"count", "sources"}
+        assert set(body["skills"].keys()) == {"count", "vectors", "sources"}  # Spec 05: + embedding model and chunks
         assert body["skills"]["count"] == 0
         assert body["brain"] == {"count": 0, "recent": []}
 

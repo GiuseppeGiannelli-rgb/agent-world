@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-EDITABLE = ["limits", "pacing", "router", "providers", "combos", "teams", "ceo", "media", "skills"]
+EDITABLE = ["limits", "pacing", "router", "providers", "combos", "teams", "ceo", "media", "skills", "rag"]
 
 
 def _is_object(v) -> bool:

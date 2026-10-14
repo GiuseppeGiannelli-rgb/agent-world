@@ -82,6 +82,15 @@
     "perTask": 3
   },
 
+  "rag": {
+    "embeddings": ["openai/text-embedding-3-small", "mistral/mistral-embed", "gemini/gemini-embedding-001", "ollama/nomic-embed-text"],
+    "dimensions": 512,
+    "localDim": 256,
+    "minCosine": 0.25,
+    "chunk": { "maxChars": 1200, "minSimilarity": 0.5 },
+    "fusion": { "k": 60, "bm25": 1.0, "vector": 1.0 }
+  },
+
   "ceo": { "id": "ada", "name": "Ada", "title": "CEO · Regia", "color": "#f5c451", "combo": "smart" },
 
   "teams": {

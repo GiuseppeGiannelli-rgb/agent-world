@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from backend.brain import Brain
 from backend.bus import Bus
+from backend.embed import Embedder
 from backend.config import Config
 from backend.media import Media
 from backend.router.index import Router
@@ -53,8 +54,11 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     store = store or Store(home)
     bus = bus or Bus()
     router = router or Router(config, home, bus)
-    skills = skills or SkillLibrary(ROOT, config, bus)
-    brain = brain or Brain(home / "brain.json", bus)
+    # one embedder for the Skill Hub and the Brain (Spec 05): provider models
+    # through the router's HTTP client, vectors cached in data/embeddings/
+    embedder = Embedder(config, router=router, cache_dir=home / "embeddings")
+    skills = skills or SkillLibrary(ROOT, config, bus, embedder)
+    brain = brain or Brain(home / "brain.json", bus, embedder)
     team = team or Team(bus)
     team.load(config.get()["staff"])  # same as server/index.js at boot
     media = media or Media(config=config, bus=bus)
