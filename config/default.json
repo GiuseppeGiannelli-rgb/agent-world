@@ -79,7 +79,18 @@
   "skills": {
     "sources": ["skills", "~/.claude/skills", "~/.claude/plugins", "~/.agents/skills", "~/.codex/skills"],
     "repos": ["https://github.com/vercel-labs/skills"],
-    "perTask": 3
+    "perTask": 3,
+    "skiller": {
+      "enabled": true,
+      "intervalHours": 24,
+      "firstRunMinutes": 10,
+      "queries": ["topic:agent-skills", "topic:claude-skills", "SKILL.md in:readme agent skills"],
+      "webQueries": ["github agent skills SKILL.md repository"],
+      "maxCandidates": 25,
+      "minStars": 20,
+      "maxDaysSinceCommit": 365,
+      "minScore": 60
+    }
   },
 
   "rag": {

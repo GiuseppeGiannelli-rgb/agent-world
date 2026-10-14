@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from backend.plan import nz
 
 
-def mount(app, *, skills, brain) -> None:
+def mount(app, *, skills, brain, skiller=None) -> None:
     @app.get("/api/skills")
     async def api_skills(q: str | None = None):
         results = await skills.search(q, 40) if q else skills.skills[:400]
@@ -36,6 +36,18 @@ def mount(app, *, skills, brain) -> None:
             return await skills.add_repo(body.get("url"))
         except ValueError as err:
             return JSONResponse({"error": str(err)}, status_code=400)
+
+    @app.get("/api/skills/skiller")
+    async def api_skiller():
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        return skiller.report()
+
+    @app.post("/api/skills/skiller/run")
+    async def api_skiller_run():
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        return {**await skiller.run_once(), "report": skiller.report()}
 
     @app.get("/api/brain")
     async def api_brain_get(q: str | None = None):

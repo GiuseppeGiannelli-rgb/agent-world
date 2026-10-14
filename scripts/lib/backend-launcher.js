@@ -52,7 +52,8 @@ function keyEnvNames(root) {
 // so merely deleting them from process.env lets .env resurrect them and the
 // "demo" run silently goes live -- measured in P7 QA).
 export function demoEnv(root, overrides = {}) {
-  const env = { ...process.env, ...overrides };
+  // AGENT_WORLD_SKILLER=0: no background scouting of GitHub during tests (Spec 05)
+  const env = { ...process.env, AGENT_WORLD_SKILLER: '0', ...overrides };
   for (const k of Object.keys(env)) if (k.endsWith('_KEY')) env[k] = '';
   for (const k of keyEnvNames(root)) env[k] = '';
   return env;

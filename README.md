@@ -442,6 +442,30 @@ Lo Skill Hub indicizza ogni `SKILL.md` delle fonti in `skills.sources`:
 
 Dalla scheda **Skill** puoi cercare, leggere e aggiungere altre repo GitHub di skill.
 
+### Lo Skiller: lo scout delle skill
+
+Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro parte 10 minuti dopo l'avvio, poi ce n'è uno ogni 24 ore.
+- **Dove cerca:** nelle repo GitHub delle query in `skills.skiller.queries` (API di ricerca) e nei link a github.com trovati dalla ricerca web.
+- **Cosa scarta subito:** le repo già installate e quelle controllate negli ultimi 7 giorni.
+- **Come valuta:** legge **solo metadati**, cioè la scheda della repo, l'elenco dei file, `package.json` / `pyproject.toml` e i registri npm e PyPI.
+
+| Metrica | Punti |
+|---|---|
+| stelle | fino a 40 (10 × log10(stelle + 1)) |
+| ultimo push | 25 entro 30 giorni, 20 entro 90, 12 entro 180, 5 entro 365 |
+| issue aperte / stelle | 15 fino a 0,05, 10 fino a 0,15, 5 fino a 0,3 |
+| licenza | 10 |
+| almeno uno `SKILL.md` | 10 |
+
+**Bastano a scartare una repo:** archiviata, disattivata, fork, senza licenza, senza `SKILL.md`, descritta come deprecata, con un pacchetto deprecato (npm `deprecated` o PyPI "Inactive"), sotto `minStars` o ferma da più di `maxDaysSinceCommit` giorni. Le altre sono approvate da `minScore` (60) in su.
+
+**Il risultato:**
+- i verdetti stanno in `data/skiller.json` e si leggono da `GET /api/skills/skiller`; `POST /api/skills/skiller/run` lancia un giro subito;
+- `GITHUB_TOKEN` in `.env` (facoltativo) alza il limite delle API GitHub da 60 a 5000 richieste all'ora;
+- i test non lo avviano mai (`AGENT_WORLD_SKILLER=0`).
+
+> **L'installazione delle repo approvate è in attesa.** Lo Skiller non scarica niente finché la revisione di sicurezza dei download esterni (spec 05, §5) non è approvata.
+
 ---
 
 ## Lingue supportate
