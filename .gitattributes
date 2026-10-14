@@ -1,0 +1,4 @@
+# Shell hooks keep LF endings on every checkout: with CRLF, sh would pass
+# "--staged" with a trailing carriage return and the hook would break.
+scripts/hooks/* text eol=lf
+*.sh text eol=lf

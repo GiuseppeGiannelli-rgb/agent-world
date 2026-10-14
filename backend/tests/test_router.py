@@ -2,7 +2,6 @@
 (httpx.MockTransport instead of a real http.Server: no sockets, no keys)."""
 
 import json as jsonlib
-import os
 
 import httpx
 import pytest

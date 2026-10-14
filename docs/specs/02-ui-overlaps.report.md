@@ -7,7 +7,7 @@ Riferimenti: [spec](02-ui-overlaps.md), [ticket](02-ui-overlaps.tickets.md). Gli
 | | |
 |---|---|
 | **Data** | 2026-10-13 |
-| **Codice misurato** | `feat/ui-overlaps` a `0b0eac0`: `main` (`e14f039`) più la spec e i ticket, nessun file di `public/` cambiato |
+| **Codice misurato** | `feat/ui-overlaps` a `51b11e0`: `main` (`0914146`) più la spec e i ticket, nessun file di `public/` cambiato |
 | **Strumento** | `node scripts/browser-test.js --only overlaps,labels`, Edge headless via DevTools, server demo proprio |
 | **Durata delle fasi nuove** | `overlaps` 58–66 s, `labels` 21–22 s (33 s con gli screenshot): circa 85 s in tutto, sotto l'obiettivo di 3 minuti |
 
@@ -142,8 +142,8 @@ La verifica degli ingressi è stata aggiunta dopo questo giro, e le fasi nuove s
 | | |
 |---|---|
 | **Data** | 2026-10-13 |
-| **Codice misurato** | `feat/ui-overlaps` a `6065481` |
-| **Commit dello step 4** | `e89683f` T1; `7836809` e `69879f0` T2; `34bf0e1` T3; `a143fa4` e `6065481` T4 |
+| **Codice misurato** | `feat/ui-overlaps` a `9613ea5` |
+| **Commit dello step 4** | `7c8edc1` T1; `0670445` e `554d700` T2; `2cde96a` T3; `5b89f7d` e `9613ea5` T4 |
 | **Codice di produzione** | 3 file in `public/`, +48 / −21 righe. Test: 6 file in `scripts/`, +1135 / −57 righe |
 | **Suite completa** | `npm run test:browser`: **ALL OK**, 226 verifiche, 0 rossi attesi (`known-red.json` è `{}`), in 6 min con gli screenshot. `npm test` verde |
 

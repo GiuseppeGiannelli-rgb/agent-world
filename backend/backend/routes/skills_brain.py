@@ -4,13 +4,14 @@ Brain handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.downloads import DownloadError
 from backend.plan import nz
 
 
-def mount(app, *, skills, brain) -> None:
+def mount(app, *, skills, brain, skiller=None) -> None:
     @app.get("/api/skills")
     async def api_skills(q: str | None = None):
-        results = skills.search(q, 40) if q else skills.skills[:400]
+        results = await skills.search(q, 40) if q else skills.skills[:400]
         return {
             **skills.summary(),
             "results": [{"id": r["id"], "name": r["name"], "description": r["description"], "source": r["source"], "rel": r["rel"], "score": r.get("score")} for r in results],
@@ -37,9 +38,31 @@ def mount(app, *, skills, brain) -> None:
         except ValueError as err:
             return JSONResponse({"error": str(err)}, status_code=400)
 
+    @app.get("/api/skills/skiller")
+    async def api_skiller():
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        return skiller.report()
+
+    @app.post("/api/skills/skiller/run")
+    async def api_skiller_run():
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        return {**await skiller.run_once(), "report": skiller.report()}
+
+    @app.post("/api/skills/skiller/approve")
+    async def api_skiller_approve(request: Request):
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        body = await request.json()
+        try:
+            return {"slug": body.get("slug"), "install": await skiller.approve(str(body.get("slug") or ""))}
+        except DownloadError as err:
+            return JSONResponse({"error": str(err)}, status_code=400)
+
     @app.get("/api/brain")
     async def api_brain_get(q: str | None = None):
-        notes = brain.search(q, 50, quiet=True) if q else brain.list(200)
+        notes = await brain.search(q, 50, quiet=True) if q else brain.list(200)
         return {"count": brain.count, "notes": notes}
 
     @app.post("/api/brain")

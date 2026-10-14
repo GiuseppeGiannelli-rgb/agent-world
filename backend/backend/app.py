@@ -10,10 +10,13 @@ from fastapi import FastAPI
 
 from backend.brain import Brain
 from backend.bus import Bus
+from backend.embed import Embedder
 from backend.config import Config
+from backend.downloads import DownloadError, resolve_download_root
 from backend.media import Media
 from backend.router.index import Router
 from backend.routes import api_state, events, gateway, runs, skills_brain, static
+from backend.skiller import Skiller
 from backend.skills import SkillLibrary
 from backend.store import Store
 from backend.team import Team
@@ -26,7 +29,7 @@ def data_home() -> Path:
     return home / "data"
 
 
-def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary, media: Media):
+def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary, media: Media, skiller: Skiller):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async def boot_skills():
@@ -37,27 +40,46 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
                 print(f"Skill Hub    →  scaricate le repo predefinite {', '.join(added)} ({len(skills.skills)} skill)")
 
         asyncio.ensure_future(boot_skills())
+        # Spec 05: the Skiller scouts GitHub on a schedule. The test launchers
+        # set AGENT_WORLD_SKILLER=0, so no test ever reaches the network.
+        scout = None
+        if os.environ.get("AGENT_WORLD_SKILLER") != "0":
+            scout = asyncio.ensure_future(skiller.loop(shutdown))
         yield
         # Flips open SSE streams out of their wait loop so uvicorn doesn't
         # hang waiting for connections that would otherwise never close (S3).
         shutdown.set()
+        if scout is not None:
+            scout.cancel()
         await router.client.aclose()
         await media.client.aclose()
 
     return lifespan
 
 
-def create_app(*, config=None, store=None, bus=None, router=None, skills=None, brain=None, team=None, media=None) -> FastAPI:
+def create_app(*, config=None, store=None, bus=None, router=None, skills=None, brain=None, team=None, media=None, skiller=None) -> FastAPI:
     config = config or Config(ROOT / "config")
     home = data_home()
     store = store or Store(home)
     bus = bus or Bus()
     router = router or Router(config, home, bus)
-    skills = skills or SkillLibrary(ROOT, config, bus)
-    brain = brain or Brain(home / "brain.json", bus)
+    # one embedder for the Skill Hub and the Brain (Spec 05): provider models
+    # through the router's HTTP client, vectors cached in data/embeddings/
+    embedder = Embedder(config, router=router, cache_dir=home / "embeddings")
+    skills = skills or SkillLibrary(ROOT, config, bus, embedder)
+    brain = brain or Brain(home / "brain.json", bus, embedder)
     team = team or Team(bus)
     team.load(config.get()["staff"])  # same as server/index.js at boot
     media = media or Media(config=config, bus=bus)
+    # Spec 05 D4: external downloads only with CUSTOM_DOWNLOAD_PATH, checked here
+    download_root = None
+    try:
+        download_root = resolve_download_root(os.environ.get("CUSTOM_DOWNLOAD_PATH"), app_root=ROOT, data_dir=home)
+    except DownloadError as err:
+        print(f"Skiller      →  download spenti: {err}", flush=True)
+    if download_root is not None:
+        skills.extra_sources = [{"label": "downloads", "dir": download_root, "thirdParty": True}]
+    skiller = skiller or Skiller(config, skills, home, client=router.client, bus=bus, download_root=download_root)
     # The same shared context object the Node server hands to every Run.
     ctx = types.SimpleNamespace(
         config=config, bus=bus, store=store, router=router, team=team,
@@ -66,12 +88,12 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     live: dict = {}  # runId -> Run while it is active
     chats: dict = {}  # agentId -> chat history (capped at 60 by talk())
     shutdown = asyncio.Event()
-    app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media))
+    app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media, skiller))
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
     api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)
     runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx)
-    skills_brain.mount(app, skills=skills, brain=brain)
+    skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller)
     events.mount(app, bus=bus, shutdown=shutdown)
     gateway.mount(app, config=config, router=router)
     static.mount(
@@ -90,6 +112,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     app.state.brain = brain
     app.state.team = team
     app.state.media = media
+    app.state.skiller = skiller
     app.state.ctx = ctx
     app.state.live = live
     app.state.chats = chats

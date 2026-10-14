@@ -4,7 +4,7 @@
 |---|---|
 | **Stato** | chiusa: approvata (step 2), implementata (step 4: T0–T4), code-review (step 5) e retro (step 6) fatte. Ticket in `02-ui-overlaps.tickets.md`, misure prima e dopo in `02-ui-overlaps.report.md`, review e retro in `02-ui-overlaps.review.md` e `02-ui-overlaps.retro.md` |
 | **Data** | 2026-10-13 |
-| **Branch** | `feat/ui-overlaps`, da `main` = `e14f039` |
+| **Branch** | `feat/ui-overlaps`, da `main` = `0914146` |
 | **Origine** | difetti N4 e N6 della spec 01 (retro, §5); Plan dello step 1, approvato |
 | **Decisioni già prese** | D1: stato dei pannelli con CSS `:has()`, una sola verità. D2: perimetro N6 più Q1, Q2 e Q3. D3: N4 sul bordo anteriore, con la variante scelta dopo le misure di T0. D4: N7 escluso. Alla revisione della spec: D5 Q4 incluso, D6 Q5 incluso, D7 rotella sulle etichette inclusa; approvate anche `(width > 900px)` e `autoPort`. Dopo T0: D8 variante B con l'ordine "agenti sopra", con due eccezioni (§3.2) |
 

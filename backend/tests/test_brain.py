@@ -9,7 +9,7 @@ class Bus:
         self.events.append((type, payload))
 
 
-def test_add_search_list_count(tmp_path):
+async def test_add_search_list_count(tmp_path):
     from backend.brain import Brain
 
     brain = Brain(tmp_path / "brain.json")
@@ -17,7 +17,7 @@ def test_add_search_list_count(tmp_path):
     assert note["title"] == "Pizza tips"
     assert len(note["id"]) == 8
     assert brain.count == 1
-    hits = brain.search("neapolitan pizza oven")
+    hits = await brain.search("neapolitan pizza oven")
     assert hits and hits[0]["id"] == note["id"]
     assert brain.list(10)[0]["id"] == note["id"]
 
@@ -50,25 +50,25 @@ def test_caps_at_5000_notes(tmp_path):
     assert brain.list(1)[0]["title"] == "n5001"  # the oldest were dropped
 
 
-def test_emits_bus_events(tmp_path):
+async def test_emits_bus_events(tmp_path):
     from backend.brain import Brain
 
     bus = Bus()
     brain = Brain(tmp_path / "brain.json", bus)
     brain.add(title="A", text="x", agent_id="sara")
     assert bus.events[0] == ("brain", {"op": "remember", "agentId": "sara", "count": 1, "note": brain.list(1)[0]})
-    brain.search("x", agent_id="sara")
+    await brain.search("x", agent_id="sara")
     assert bus.events[1][1]["op"] == "recall"
 
 
-def test_search_quiet_suppresses_event(tmp_path):
+async def test_search_quiet_suppresses_event(tmp_path):
     from backend.brain import Brain
 
     bus = Bus()
     brain = Brain(tmp_path / "brain.json", bus)
     brain.add(title="A", text="x")
     bus.events.clear()
-    brain.search("x", quiet=True)
+    await brain.search("x", quiet=True)
     assert bus.events == []
 
 

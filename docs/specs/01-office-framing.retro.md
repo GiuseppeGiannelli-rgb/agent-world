@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Ciclo** | spec 01, "Inquadratura dell'ufficio v3 e cubi", dal 2026-10-12 al 2026-10-13 |
-| **Branch** | `feat/office-framing`: 18 commit sopra `main` (`c1312ff`) prima di questa retro, 19 con essa |
+| **Branch** | `feat/office-framing`: 18 commit sopra `main` (`33d9361`) prima di questa retro, 19 con essa |
 | **Esito** | A1–A11 verdi; QA visivo dell'utente superato per T5–T8 e per la code-review |
 
 ## 1. Il ciclo in numeri
@@ -22,18 +22,18 @@
 
 **Quanto ha pesato ciascuna parte.** Il rapporto tra test e codice di produzione è circa 4 a 1. I test non sono un contorno: sono la parte che ha trovato i difetti. Nei QA registrati (T5–T8 e la review) l'utente ha **confermato** ogni passo senza segnalare difetti: tutti i difetti di questo ciclo sono venuti dalle misure.
 
-## 2. Il commit iniziale `c1312ff`
+## 2. Il commit iniziale `33d9361`
 
-L'`HANDOFF.md` della prima fase descriveva il repo come "repo git inizializzato, **nessun commit**". Poco prima di aprire la spec 01, l'utente ha fatto il commit iniziale `c1312ff` "prima fase" e l'ha pushato su `origin/main`:
+L'`HANDOFF.md` della prima fase descriveva il repo come "repo git inizializzato, **nessun commit**". Poco prima di aprire la spec 01, l'utente ha fatto il commit iniziale `33d9361` "prima fase" e l'ha pushato su `origin/main`:
 - 44 file, +8824 righe;
 - dentro c'è tutta la fase 1: server, motore, router, front-end, ufficio 3D e test.
 
-Il branch `feat/office-framing` parte da lì, e da lì sono partite tutte le misure "Prima": T0, poi lo stesso runner rilanciato su `git archive c1312ff` in T8.
+Il branch `feat/office-framing` parte da lì, e da lì sono partite tutte le misure "Prima": T0, poi lo stesso runner rilanciato su `git archive 33d9361` in T8.
 
 **Tre conseguenze da sistemare:**
-1. **La frase "nessun commit" non è più vera.** È ancora scritta nell'`HANDOFF.md` committato dentro `c1312ff`. La copia di lavoro è già corretta, ma su `origin/main` resta la versione vecchia.
-2. **`HANDOFF.md` è tracciato da git, mentre la regola di lavoro dice di non committarlo.** È entrato in git con `c1312ff`, quindi `git status` lo mostra sempre come modificato, e un `git commit -a` lo includerebbe. Serve una decisione dell'utente (sezione 6).
-3. **`c1312ff` è un commit unico.** La fase 1 non ha una storia granulare: `git blame` e `git log` sul codice della fase 1 portano tutti a "prima fase". La storia leggibile del progetto inizia con `e940ffb`. È accettabile, ma va saputo quando si cerca l'origine di un difetto preesistente: N2, N4, N6 e N7 sono tutti in `c1312ff`.
+1. **La frase "nessun commit" non è più vera.** È ancora scritta nell'`HANDOFF.md` committato dentro `33d9361`. La copia di lavoro è già corretta, ma su `origin/main` resta la versione vecchia.
+2. **`HANDOFF.md` è tracciato da git, mentre la regola di lavoro dice di non committarlo.** È entrato in git con `33d9361`, quindi `git status` lo mostra sempre come modificato, e un `git commit -a` lo includerebbe. Serve una decisione dell'utente (sezione 6).
+3. **`33d9361` è un commit unico.** La fase 1 non ha una storia granulare: `git blame` e `git log` sul codice della fase 1 portano tutti a "prima fase". La storia leggibile del progetto inizia con `8b29350`. È accettabile, ma va saputo quando si cerca l'origine di un difetto preesistente: N2, N4, N6 e N7 sono tutti in `33d9361`.
 
 ## 3. Cosa ha funzionato
 
@@ -128,7 +128,7 @@ C'è poi il backlog precedente alla spec 01, nell'handoff: stile v3, repo e skil
 ## 6. Decisioni per l'utente
 
 1. **Push.**
-   - Gli 8 commit della review e questa retro sono solo in locale. Il push porterebbe `origin/feat/office-framing` da `973fba3` a `HEAD`.
+   - Gli 8 commit della review e questa retro sono solo in locale. Il push porterebbe `origin/feat/office-framing` da `da55a4d` a `HEAD`.
    - Poi va scelto se aprire una pull request verso `main` o fare il merge direttamente.
 2. **`HANDOFF.md` e git.** Due strade:
    - (a) toglierlo dal tracking con `git rm --cached HANDOFF.md`, più una riga in `.gitignore`. La copia locale resta, e la regola "non si committa" diventa vera. Su `main` la versione vecchia sparisce al merge;

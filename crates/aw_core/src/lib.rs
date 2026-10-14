@@ -9,6 +9,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
@@ -192,9 +193,93 @@ fn tokenize(text: &str) -> Vec<String> {
     tokenize_str(text)
 }
 
+// ---------- Spec 05: vectors ----------
+
+/// CRC-32 (IEEE 802.3, reflected, polynomial 0xEDB88320), bit by bit:
+/// equal to Python's zlib.crc32 for the same bytes.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in bytes {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Mirrors backend.embed.ngram_vector: signed feature hashing of "w:<token>"
+/// and of the 3- and 4-grams of " <token> ", then L2 normalization. Tokens are
+/// [a-z0-9] only (tokenize_str), so byte slicing is char slicing.
+fn ngram_vector_str(text: &str, dim: usize) -> Vec<f64> {
+    let mut vec = vec![0.0f64; dim];
+    if dim == 0 {
+        return vec;
+    }
+    for token in tokenize_str(text) {
+        let mut grams: Vec<String> = vec![format!("w:{}", token)];
+        let padded = format!(" {} ", token);
+        for n in [3usize, 4] {
+            if padded.len() >= n {
+                for i in 0..=(padded.len() - n) {
+                    grams.push(padded[i..i + n].to_string());
+                }
+            }
+        }
+        for g in grams {
+            let h = crc32(g.as_bytes());
+            vec[(h as usize) % dim] += if h & 0x8000_0000 != 0 { -1.0 } else { 1.0 };
+        }
+    }
+    // Python: n = sqrt(sum(x * x)), then x / n -- same order of operations.
+    let norm = vec.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if norm > 0.0 {
+        for x in vec.iter_mut() {
+            *x /= norm;
+        }
+    }
+    vec
+}
+
+#[pyfunction]
+#[pyo3(signature = (text, dim = 256))]
+fn ngram_vector(py: Python<'_>, text: &str, dim: usize) -> Vec<f64> {
+    let text = text.to_owned();
+    py.allow_threads(move || ngram_vector_str(&text, dim))
+}
+
+/// [(row, cosine)] best first, ties by row, for unit vectors stored row-major
+/// in `matrix` (rows of `dim` values). Mirrors backend.search._cosine_top_k_py,
+/// summing in the same order, so the scores are bit-identical.
+#[pyfunction]
+fn cosine_top_k(py: Python<'_>, query: Vec<f64>, matrix: Vec<f64>, dim: usize, k: usize) -> PyResult<Vec<(usize, f64)>> {
+    if dim == 0 || query.len() != dim || matrix.len() % dim != 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("cosine_top_k: query and matrix shapes do not match"));
+    }
+    Ok(py.allow_threads(move || {
+        let mut scored: Vec<(usize, f64)> = matrix
+            .chunks(dim)
+            .enumerate()
+            .map(|(i, row)| {
+                let mut s = 0.0f64;
+                for (q, v) in query.iter().zip(row) {
+                    s += q * v;
+                }
+                (i, s)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal).then(a.0.cmp(&b.0)));
+        scored.truncate(k);
+        scored
+    }))
+}
+
 #[pymodule]
 fn aw_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Bm25>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(ngram_vector, m)?)?;
+    m.add_function(wrap_pyfunction!(cosine_top_k, m)?)?;
     Ok(())
 }

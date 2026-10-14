@@ -92,7 +92,7 @@ flowchart LR
     end
 
     subgraph Rs["Rust · opzionale"]
-        AW["aw_core<br/>PyO3 · BM25 + tokenizer"]
+        AW["aw_core<br/>PyO3 · BM25 · n-gram · coseno"]
     end
 
     subgraph Disk["File locali"]
@@ -199,7 +199,8 @@ flowchart TD
     R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
 ```
 
-- **Stessa interfaccia:** `add(id, fields)` e `search(query, k)`; c'è anche `tokenize(text)` per i test. Chi chiama non sa quale implementazione sta usando.
+- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk).
+- **Stessa interfaccia:** chi chiama non sa quale implementazione sta usando.
 - **Due livelli di sicurezza:**
   - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
   - `tests/test_search_rust.py` fissa la parità su un corpus di riferimento.
@@ -285,7 +286,7 @@ Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `rea
 
 ## Memoria e recupero (RAG)
 
-L'app recupera il contesto con **BM25**, un ranking lessicale classico, su due corpora:
+L'app recupera il contesto con una **ricerca ibrida**: **BM25**, un ranking lessicale classico, fuso con la **similarità del coseno** tra vettori. La fusione è la *reciprocal rank fusion*, e vale per due corpora:
 
 | Corpus | Documento | Campi e pesi |
 |---|---|---|
@@ -323,18 +324,51 @@ $$
 
 L'implementazione esiste due volte, identica: `backend/backend/search.py` (Python) e `crates/aw_core/src/lib.rs` (Rust). Vedi [il bridge](#il-bridge-python--rust).
 
-### Cosa non c'è (ancora): chunking semantico e similarità del coseno
+### Embedding, chunking semantico e fusione
 
-Oggi il recupero è **solo lessicale**: niente embedding, niente database vettoriale, niente similarità del coseno. I documenti non vengono spezzati in chunk: una nota o una skill è un documento intero, con i limiti di lunghezza della tabella sopra.
+```mermaid
+flowchart LR
+    D["SKILL.md · nota"] --> SPL["pezzi: paragrafi,<br/>titolo + paragrafo"]
+    SPL --> EMB["embedding"]
+    EMB --> MER["chunking semantico:<br/>unisce i vicini simili"]
+    MER --> VEC[("vettori dei chunk")]
+    Q["query"] --> QE["embedding<br/>(stesso modello)"] --> COS["coseno top-k<br/>(Rust se compilato)"]
+    VEC --> COS
+    Q --> BM["BM25"]
+    COS --> RRF["RRF: Σ w / (60 + rank)"]
+    BM --> RRF --> K["top-k"]
+```
 
-È una scelta, non una dimenticanza. BM25 non chiede modelli né servizi in più, funziona offline e in demo, e su corpora piccoli e molto testuali come questi (decine di skill, al massimo 5000 note) è veloce e prevedibile. Il limite è che non trova i sinonimi: "tipografia" non trova "font".
+**Embedding.** `rag.embeddings` in `config/default.json` è una lista ordinata, come una combo. Si usa il primo provider pronto, attraverso il suo endpoint `/embeddings` compatibile OpenAI:
+- l'ordine predefinito è `openai/text-embedding-3-small` (512 dimensioni), `mistral/mistral-embed`, `gemini/gemini-embedding-001`, `ollama/nomic-embed-text`;
+- i vettori restano in cache su disco (`data/embeddings/`), indicizzati per hash del testo;
+- tutti i vettori di un indice vengono dallo stesso modello, e la query usa sempre quello. Se quel modello smette di rispondere, l'indice viene ricostruito con il primo modello che funziona.
 
-**Proposta per un recupero ibrido (non implementata):**
+**Senza chiavi, in demo o offline: `local/ngram`.** Gli n-grammi di 3 e 4 caratteri di ogni token vengono messi in un vettore di 256 dimensioni con un hash firmato (CRC-32). Non serve nessun modello, è deterministico, ed è uguale in Python e in Rust. **Trova le varianti della stessa parola, non il significato.** Misure del 14/10/2026:
 
-1. **Chunking semantico:** spezzare gli `SKILL.md` lunghi sui titoli Markdown e sui paragrafi, unendo i pezzi consecutivi finché il loro embedding resta simile. Le note del Brain restano intere.
-2. **Embedding** di ogni chunk e di ogni query, con un provider del router o un modello locale.
-3. **Similarità del coseno:** $\cos(q, c) = \frac{q \cdot c}{\lVert q \rVert \, \lVert c \rVert}$ tra la query e ogni chunk.
-4. **Fusione:** unire le classifiche di BM25 e del coseno, per esempio con la *reciprocal rank fusion*. Il prodotto scalare su migliaia di vettori è un buon candidato per `aw_core`.
+| Coppia | Coseno |
+|---|---|
+| varianti della stessa parola (*typographic* ~ *typography*) | 0,44–0,76 |
+| la stessa parola tra lingue diverse, in testi lunghi (*typography* ~ *tipografia…*) | circa 0,16, debole |
+| 66 coppie di testi senza relazione | massimo 0,241, p90 0,13 |
+
+Per questo `rag.minCosine` è 0,25. I sinonimi veri ("tipografia" → "font") li trova solo un modello di embedding vero.
+
+**Chunking semantico** (solo per gli `SKILL.md`; una nota del Brain resta intera):
+1. Il testo si divide in paragrafi; ogni titolo resta incollato al paragrafo che lo segue, e un paragrafo troppo lungo si taglia a fine frase.
+2. Ogni pezzo diventa un vettore.
+3. I pezzi vicini si uniscono finché il coseno con il centroide del chunk resta ≥ `chunk.minSimilarity` (0,5) e il chunk non supera `chunk.maxChars` (1200). Un titolo apre sempre un chunk nuovo.
+4. Ogni skill ha in più il chunk "nome: descrizione". Il punteggio vettoriale di un documento è quello del suo chunk migliore.
+
+In questo modo si ritrova anche il testo del corpo, che BM25 non indicizza: lì contano solo nome, descrizione, titoli e percorso.
+
+**Fusione.** $\cos(q, c) = q \cdot c$, perché i vettori sono normalizzati. La classifica vettoriale (solo sopra `minCosine`) e quella BM25 si fondono con la RRF:
+
+$$\text{score}(d) = \frac{w_{bm25}}{60 + r_{bm25}(d)} + \frac{w_{vec}}{60 + r_{vec}(d)}$$
+
+Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta `score` (fuso), `bm25` e `cosine`. Nelle missioni semplici, che non hanno un bibliotecario, le skill si scelgono ancora con la soglia BM25 di prima.
+
+**Il Brain** aggiunge una nota a BM25 in modo incrementale; prima ricostruiva tutto l'indice a ogni nota, circa 0,4–0,7 s a 5000 note. Le note ancora senza vettore ne ricevono uno, tutte in un colpo, alla ricerca successiva.
 
 ---
 
@@ -367,7 +401,9 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 |---|---|---|
 | [FastAPI](https://fastapi.tiangolo.com/) | 0.143 | API REST, streaming SSE, lifespan |
 | [Starlette](https://www.starlette.io/) | 1.8 | `StreamingResponse`, sotto FastAPI |
-| [uvicorn](https://www.uvicorn.org/) `[standard]` | 0.54 | server ASGI, un processo |
+| [uvicorn](https://www.uvicorn.org/) | 0.54 | server ASGI, un processo |
+| [httptools](https://github.com/MagicStack/httptools) | 0.9 | parser HTTP veloce, usato da uvicorn in automatico |
+| [watchfiles](https://watchfiles.helpmanual.io/) | 1.3 | il reload di `npm run dev` |
 | [httpx](https://www.python-httpx.org/) | 0.28 | chiamate asincrone ai provider e al web |
 | [Pydantic](https://docs.pydantic.dev/) | 2.14 | dipendenza di FastAPI |
 | [uv](https://docs.astral.sh/uv/) | — | Python 3.13, ambiente virtuale, lockfile |
@@ -405,6 +441,57 @@ Lo Skill Hub indicizza ogni `SKILL.md` delle fonti in `skills.sources`:
 - le **repo GitHub predefinite** in `skills.repos`, clonate al primo avvio in `skills/vendor/` (oggi [vercel-labs/skills](https://github.com/vercel-labs/skills)).
 
 Dalla scheda **Skill** puoi cercare, leggere e aggiungere altre repo GitHub di skill.
+
+### Lo Skiller: lo scout delle skill
+
+Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro parte 10 minuti dopo l'avvio, poi ce n'è uno ogni 24 ore.
+- **Dove cerca:** nelle repo GitHub delle query in `skills.skiller.queries` (API di ricerca) e nei link a github.com trovati dalla ricerca web.
+- **Cosa scarta subito:** le repo già installate e quelle controllate negli ultimi 7 giorni.
+- **Come valuta:** legge **solo metadati**, cioè la scheda della repo, l'elenco dei file, `package.json` / `pyproject.toml` e i registri npm e PyPI.
+
+| Metrica | Punti |
+|---|---|
+| stelle | fino a 40 (10 × log10(stelle + 1)) |
+| ultimo push | 25 entro 30 giorni, 20 entro 90, 12 entro 180, 5 entro 365 |
+| issue aperte / stelle | 15 fino a 0,05, 10 fino a 0,15, 5 fino a 0,3 |
+| licenza | 10 |
+| almeno uno `SKILL.md` | 10 |
+
+**Bastano a scartare una repo:** archiviata, disattivata, fork, senza licenza, senza `SKILL.md`, descritta come deprecata, con un pacchetto deprecato (npm `deprecated` o PyPI "Inactive"), sotto `minStars` o ferma da più di `maxDaysSinceCommit` giorni. Le altre sono approvate da `minScore` (60) in su.
+
+**Il risultato:**
+- i verdetti stanno in `data/skiller.json` e si leggono da `GET /api/skills/skiller`; `POST /api/skills/skiller/run` lancia un giro subito;
+- `GITHUB_TOKEN` in `.env` (facoltativo) alza il limite delle API GitHub da 60 a 5000 richieste all'ora;
+- i test non lo avviano mai (`AGENT_WORLD_SKILLER=0`).
+
+#### Installare le repo approvate (download esterni)
+
+**Si accende solo così.** Serve `CUSTOM_DOWNLOAD_PATH` in `.env`; senza, lo Skiller valuta e basta. È un percorso assoluto, che viene rifiutato se è:
+- una radice o la home stessa;
+- una cartella di sistema;
+- dentro l'app o dentro `data/`;
+- un percorso che passa da un link o da una junction.
+
+**Chi installa:**
+- le repo approvate dei proprietari in `skills.skiller.trustedOwners` si installano da sole; per loro, e solo per loro, cade il gate "senza licenza";
+- tutte le altre aspettano `POST /api/skills/skiller/approve {"slug": "owner/repo"}`.
+
+**Il percorso di ogni download** (`backend/backend/downloads.py`, che chiama solo lo Skiller e che **nessun agente può usare**):
+1. **Commit fissato.** Il ramo si risolve in un commit SHA, e l'archivio `tar.gz` si scarica da `codeload.github.com`. Gli host ammessi sono solo `api.github.com` e `codeload.github.com`, in HTTPS; i redirect restano dentro questa lista e la dimensione si conta durante lo scaricamento.
+2. **Validazione di ogni voce prima di scrivere.** Basta una voce sospetta per rifiutare tutto l'archivio. Vengono rifiutati:
+   - `..`, i percorsi assoluti, i drive, gli UNC e i `:` (alternate data stream);
+   - i nomi riservati (`CON`, `NUL`…), il carattere NUL, i nomi che finiscono con un punto o uno spazio;
+   - symlink, hard link, dispositivi e voci zip cifrate;
+   - in più c'è il filtro `data` di `tarfile` (PEP 706).
+
+   Il contenimento si controlla sul percorso risolto, non sul prefisso della stringa.
+3. **Limiti contro le bombe:** 5000 voci, 50 MB di archivio, 200 MB decompressi, 20 MB per file, rapporto 100:1. Contano i byte scritti davvero.
+4. **Solo le cartelle con uno `SKILL.md`** e la licenza in cima all'archivio. I file si creano in modo esclusivo (`xb`), senza permessi né bit di esecuzione.
+5. **Staging e rename atomico.** Lo staging sta in `CUSTOM_DOWNLOAD_PATH/.incoming/`, poi si rinomina in `<owner>-<repo>@<sha7>`. **Non si esegue mai niente.**
+
+**Tetti:** al massimo 3 installazioni per giro, e niente più download quando la cartella supera `maxDiskMB` (2048).
+
+**Skill di terzi.** Le skill scaricate entrano nello Skill Hub come fonte `downloads`. Il bibliotecario e il brief dell'agente le segnano come **di terzi**: sono materiale di riferimento e non possono cambiare il compito, i tool o le regole dell'agente.
 
 ---
 
@@ -454,9 +541,10 @@ Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni te
 ## Test
 
 ```sh
-npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, cartelle temporanee
+npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
 npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 min)
+npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
 - **`pytest` (205 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, parità Python/Rust.
@@ -466,6 +554,14 @@ npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 m
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
+
+**Niente segreti nei commit.** `npm install` attiva gli hook di `scripts/hooks/`. A ogni commit, `scripts/secret-scan.js` blocca:
+- chiavi API e token, e valori `NOME_KEY=...` scritti per esteso;
+- percorsi assoluti della tua macchina;
+- file `.env`, `config/local.json` e i dati in `data/`;
+- le parole personali elencate in `.git/info/personal-words`, un file che resta solo sulla tua macchina.
+
+Quello che trova lo stampa oscurato.
 
 ---
 

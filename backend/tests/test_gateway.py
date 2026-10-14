@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from backend.app import ROOT, create_app
+from backend.app import create_app
 from backend.store import Store
 
 

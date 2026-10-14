@@ -99,7 +99,7 @@ class Tasker:
         cfg = run.cfg
         ws = run.ws_by_id(task["wsId"])
         inputs = run.inputs_for(task)
-        memory = "\n".join(f"- {n['title']}: {n['text'][:280]}" for n in run.ctx.brain.search(f"{task['title']} {task['description']}", 3, agent_id=agent["id"]))
+        memory = "\n".join(f"- {n['title']}: {n['text'][:280]}" for n in await run.ctx.brain.search(f"{task['title']} {task['description']}", 3, agent_id=agent["id"]))
         self.messages = [
             {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=await run.skills_text(task))},
             {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=memory)},

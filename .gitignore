@@ -1,13 +1,46 @@
-node_modules/
+# --- Secrets: never in git. The only tracked env file is the empty template.
 .env
-backend/.venv/
-**/__pycache__/
-*.pyc
-.pytest_cache/
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+secrets.*
+credentials*.json
+service-account*.json
+# this machine's overrides of config/default.json (written by the app)
 config/local.json
+config/*.local.json
+
+# --- Runtime data: runs, call logs (full prompts and answers), the Brain, run folders
 data/
 workspace/
-skills/vendor/
-.vscode
+*.log
+logs/
+
+# --- Local-only notes and tool state
 HANDOFF.md
 .claude/
+.vscode/
+.idea/
+
+# --- Dependencies and build output
+node_modules/
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+target/
+*.pyd
+*.so
+skills/vendor/
+
+# --- OS files
+.DS_Store
+Thumbs.db
+desktop.ini

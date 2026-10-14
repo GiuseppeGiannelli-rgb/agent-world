@@ -162,7 +162,7 @@ Answer with ONLY this JSON object: {{"picks": [{{"id": "...", "why": "one short 
         },
         {
             "role": "user",
-            "content": f"GOAL: {goal}\nTASK ID: {task['id']}\nTEAM: {task['team']}\nTASK: {task['title']}\nDESCRIPTION: {task['description']}\n\nCANDIDATES:\n" + "\n".join(f"- id: {c['id']} | {c['name']}: {c['description'][:220]}" for c in candidates),
+            "content": f"GOAL: {goal}\nTASK ID: {task['id']}\nTEAM: {task['team']}\nTASK: {task['title']}\nDESCRIPTION: {task['description']}\n\nCANDIDATES:\n" + "\n".join(f"- id: {c['id']} | {c['name']}{' [third-party]' if c.get('thirdParty') else ''}: {c['description'][:220]}" for c in candidates),
         },
     ]
 

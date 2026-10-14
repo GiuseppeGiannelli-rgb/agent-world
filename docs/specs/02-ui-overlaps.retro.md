@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Ciclo** | spec 02, "Sovrapposizioni dell'interfaccia", 2026-10-13 |
-| **Branch** | `feat/ui-overlaps`: 13 commit sopra `main` (`e14f039`) prima di questa retro, 14 con essa. Niente è su `origin` |
+| **Branch** | `feat/ui-overlaps`: 13 commit sopra `main` (`0914146`) prima di questa retro, 14 con essa. Niente è su `origin` |
 | **Esito** | V1–V13 verdi; le due eccezioni di D8 come previste; QA visivo superato su T1, T2, T3 e T4; review senza difetti nel codice dell'app |
 
 **In breve**
@@ -146,6 +146,6 @@ C'è poi il backlog precedente alla spec 01, nell'handoff.
 
 **Push e merge.** Il branch `feat/ui-overlaps` ha 14 commit sopra `main` e non esiste su `origin`. Due strade:
 - **(a)** push del branch e pull request verso `main`;
-- **(b)** merge diretto in `main` (fast-forward, perché `main` non si è mosso da `e14f039`) e push di `main`.
+- **(b)** merge diretto in `main` (fast-forward, perché `main` non si è mosso da `0914146`) e push di `main`.
 
 Il push apre la finestra "Select an account" di Git Credential Manager: lo lancio in background e ti avviso quando aspetta la tua scelta.

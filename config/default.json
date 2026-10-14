@@ -79,7 +79,31 @@
   "skills": {
     "sources": ["skills", "~/.claude/skills", "~/.claude/plugins", "~/.agents/skills", "~/.codex/skills"],
     "repos": ["https://github.com/vercel-labs/skills"],
-    "perTask": 3
+    "perTask": 3,
+    "skiller": {
+      "enabled": true,
+      "intervalHours": 24,
+      "firstRunMinutes": 10,
+      "queries": ["topic:agent-skills", "topic:claude-skills", "SKILL.md in:readme agent skills"],
+      "webQueries": ["github agent skills SKILL.md repository"],
+      "maxCandidates": 25,
+      "minStars": 20,
+      "maxDaysSinceCommit": 365,
+      "minScore": 60,
+      "trustedOwners": [],
+      "autoInstall": true,
+      "maxInstallsPerRun": 3,
+      "maxDiskMB": 2048
+    }
+  },
+
+  "rag": {
+    "embeddings": ["openai/text-embedding-3-small", "mistral/mistral-embed", "gemini/gemini-embedding-001", "ollama/nomic-embed-text"],
+    "dimensions": 512,
+    "localDim": 256,
+    "minCosine": 0.25,
+    "chunk": { "maxChars": 1200, "minSimilarity": 0.5 },
+    "fusion": { "k": 60, "bm25": 1.0, "vector": 1.0 }
   },
 
   "ceo": { "id": "ada", "name": "Ada", "title": "CEO · Regia", "color": "#f5c451", "combo": "smart" },

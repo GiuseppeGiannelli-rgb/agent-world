@@ -127,3 +127,109 @@ def bm25(k1: float = 1.4, b: float = 0.75):
         except Exception:
             pass
     return Bm25(k1, b)
+
+
+# ---------- Spec 05: vectors and hybrid search ----------
+#
+# Cosine top-k over unit vectors (cosine = dot product) and the fusion of the
+# BM25 ranking with the vector ranking. aw_core.cosine_top_k takes over when the
+# native module is built and reproduces the Python results on a probe; the
+# same rule as BM25 above.
+
+
+def _cosine_top_k_py(query: list[float], vectors: list[list[float]], k: int) -> list[tuple[int, float]]:
+    scores = [sum(q * v for q, v in zip(query, vec)) for vec in vectors]
+    order = sorted(range(len(scores)), key=lambda i: (-scores[i], i))
+    return [(i, scores[i]) for i in order[:k]]
+
+
+def _load_rust_cosine():
+    try:
+        import aw_core
+
+        fn = aw_core.cosine_top_k
+    except Exception:
+        return None
+    try:
+        vectors = [[1.0, 0.0], [0.6, 0.8], [0.0, 1.0], [0.6, 0.8]]
+        query = [0.8, 0.6]
+        got = fn(query, [x for v in vectors for x in v], 2, 3)
+        want = _cosine_top_k_py(query, vectors, 3)
+        same = [i for i, _ in got] == [i for i, _ in want] and all(math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12) for (_, a), (_, b) in zip(got, want))
+        return fn if same else None
+    except Exception:
+        return None
+
+
+RUST_COSINE = _load_rust_cosine()
+
+
+def cosine_top_k(query: list[float], vectors: list[list[float]], k: int) -> list[tuple[int, float]]:
+    """[(row, cosine)] best first, ties by row; vectors must be unit length."""
+    if not vectors or k <= 0:
+        return []
+    if RUST_COSINE is not None and len(vectors) * len(query) >= 4096:
+        try:
+            return [(int(i), float(s)) for i, s in RUST_COSINE(query, [x for v in vectors for x in v], len(query), k)]
+        except Exception:
+            pass
+    return _cosine_top_k_py(query, vectors, k)
+
+
+def rrf(rankings: list[tuple[list, float]], k: int = 60) -> dict:
+    """Reciprocal rank fusion: score(d) = sum of weight / (k + rank), rank from 1."""
+    fused: dict = {}
+    for ids, weight in rankings:
+        for rank, id_ in enumerate(ids, start=1):
+            fused[id_] = fused.get(id_, 0.0) + weight / (k + rank)
+    return fused
+
+
+class HybridIndex:
+    """BM25 plus chunk vectors of the same documents, fused with RRF.
+
+    add() feeds BM25 (incrementally); add_vectors() attaches one or more chunk
+    vectors to a document. search() ranks with BM25 alone when no query vector
+    is given (or the index has no vectors), and fuses both rankings otherwise.
+    Every hit carries "score" (fused), "bm25" and "cosine" (raw, 0 if absent)."""
+
+    def __init__(self, k1: float = 1.4, b: float = 0.75, *, rrf_k: int = 60, weights: dict | None = None, min_cosine: float = 0.2, pool: int = 50):
+        self.bm25 = bm25(k1, b)
+        self.rrf_k = rrf_k
+        self.weights = {"bm25": 1.0, "vector": 1.0, **(weights or {})}
+        self.min_cosine = min_cosine
+        self.pool = pool
+        self.model: str | None = None  # embedding model of the vectors
+        self.chunk_doc: list = []  # chunk row -> doc id
+        self.chunk_vec: list[list[float]] = []
+        self.has_vectors: set = set()
+
+    def add(self, id_, fields: list[dict]) -> None:
+        self.bm25.add(id_, fields)
+
+    def add_vectors(self, id_, vectors: list[list[float]], model: str) -> None:
+        if self.model is not None and model != self.model:
+            raise ValueError(f"index holds {self.model} vectors, got {model}")
+        self.model = model
+        for vec in vectors:
+            self.chunk_doc.append(id_)
+            self.chunk_vec.append(vec)
+        self.has_vectors.add(id_)
+
+    def search(self, query: str, k: int = 10, query_vec: list[float] | None = None) -> list[dict]:
+        lexical = self.bm25.search(query, self.pool)
+        bm25_score = {h["id"]: h["score"] for h in lexical}
+        cos: dict = {}
+        if query_vec is not None and self.chunk_vec:
+            for row, score in cosine_top_k(query_vec, self.chunk_vec, self.pool * 4):
+                if score < self.min_cosine:
+                    break
+                doc = self.chunk_doc[row]
+                if doc not in cos:  # best chunk of each document
+                    cos[doc] = score
+        rankings = [([h["id"] for h in lexical], self.weights["bm25"])]
+        if cos:
+            rankings.append((sorted(cos, key=lambda d: -cos[d]), self.weights["vector"]))
+        fused = rrf(rankings, self.rrf_k)
+        order = sorted(fused, key=lambda d: (-fused[d], -bm25_score.get(d, 0.0)))
+        return [{"id": d, "score": fused[d], "bm25": bm25_score.get(d, 0.0), "cosine": cos.get(d, 0.0)} for d in order[:k]]

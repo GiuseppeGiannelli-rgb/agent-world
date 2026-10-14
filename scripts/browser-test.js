@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { close, launch, profileProcesses, sweep } from './browser/headless.js';
-import { launchCommand } from './lib/backend-launcher.js';
+import { demoEnv, launchCommand } from './lib/backend-launcher.js';
 import { alive, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
 
 // Node's WebSocket is global from Node 22 (package.json allows 20.10 for the app). Without
@@ -94,28 +94,10 @@ const phaseOf = (key) => {
 
 // ---------- demo server ----------
 
-function keyNames() {
-  const names = new Set();
-  const walk = (o) => {
-    if (!o || typeof o !== 'object') return;
-    for (const [k, v] of Object.entries(o)) {
-      if (k === 'keyEnv' && typeof v === 'string') names.add(v);
-      else walk(v);
-    }
-  };
-  // local.json (this machine's settings) may add providers of its own
-  for (const file of ['default.json', 'local.json']) {
-    const path = join(ROOT, 'config', file);
-    if (existsSync(path)) walk(JSON.parse(readFileSync(path, 'utf8')));
-  }
-  return names;
-}
-
 async function startServer(home) {
-  const env = { ...process.env, PORT: String(PORT), AGENT_WORLD_HOME: home };
+  // demo: every provider key blanked, also the ones of local.json and .env
+  const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_HOME: home });
   delete env.AGENT_WORLD_FAST; // the mission at its normal pace, as in T0
-  for (const k of Object.keys(env)) if (/_KEY$/.test(k)) env[k] = '';
-  for (const k of keyNames()) env[k] = '';
   const { cmd, args, cwd } = launchCommand(ROOT);
   const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
   server.exited = new Promise((ok) => server.once('exit', ok));

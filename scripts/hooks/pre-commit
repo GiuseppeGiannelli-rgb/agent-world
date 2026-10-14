@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that would record a secret, a forbidden file or personal data.
+# Enabled by `npm install` (package.json "prepare": git config core.hooksPath scripts/hooks).
+exec node scripts/secret-scan.js --staged
