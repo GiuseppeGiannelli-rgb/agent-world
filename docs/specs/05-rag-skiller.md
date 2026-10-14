@@ -5,7 +5,7 @@
 2. **Fase 2 (snellimento): fatta.** Codice morto e dipendenze inutili tolti, suite browser 235/235.
 3. **RAG ibrido: fatto.** BM25 fuso con la similarità del coseno tramite RRF, chunking semantico, embedding dei provider o vettori locali. La parte Rust è scritta ma **non compilata** su questa macchina.
 4. **Skiller: scoperta e valutazione fatte.** Lavora sui soli metadati e non scarica nulla.
-5. **Download esterni (`CUSTOM_DOWNLOAD_PATH`): non implementati.** Il §5 è la logica di sicurezza proposta, in attesa del via libera dell'utente.
+5. **Download esterni (`CUSTOM_DOWNLOAD_PATH`): fatti.** L'utente ha approvato il §5 e le decisioni D1–D4 il 14/10/2026: prima i test d'attacco, poi il codice in `backend/backend/downloads.py`. Spec chiusa.
 
 ## 1. RAG ibrido (fatto)
 
@@ -78,16 +78,16 @@
 - `browser-test.js` ora usa `demoEnv()`;
 - `uvicorn[standard]` diventa `uvicorn` + `httptools` + `watchfiles`: via websockets, pyyaml e python-dotenv.
 
-## 4. Decisioni aperte
+## 4. Decisioni (approvate dall'utente il 14/10/2026)
 
-| # | Domanda | Consiglio |
+| # | Domanda | Decisione |
 |---|---|---|
 | D1 | Installazione delle repo approvate | in automatico solo per i proprietari in una allowlist (`skills.skiller.trustedOwners`); per gli altri serve l'approvazione dell'utente da API/UI |
 | D2 | Gate della licenza (scarta `anthropics/skills`) | resta, ma con l'allowlist di D1 che lo scavalca |
 | D3 | Cosa si estrae | solo le cartelle che contengono uno `SKILL.md`, non il progetto intero |
 | D4 | `CUSTOM_DOWNLOAD_PATH` | nessun default: se non è impostato, i download sono spenti |
 
-## 5. Download esterni: logica di sicurezza (proposta, da approvare)
+## 5. Download esterni: logica di sicurezza (approvata e implementata)
 
 **Minacce:**
 - **Path traversal ("zip slip")**: voci come `../`, percorsi assoluti, `C:\`, UNC `\\server\share`, drive-relative `C:foo`.
@@ -145,3 +145,58 @@
 9. **Test.**
    - Le fixture coprono: `../`, assoluti, `C:\`, UNC, ADS, `CON.txt`, symlink in tar e in zip, bomba zip, cartella "sorella" con lo stesso prefisso, `CUSTOM_DOWNLOAD_PATH` pericolosi.
    - Ogni fixture va rifiutata **senza scrivere nulla fuori dallo staging**, e ogni difesa va vista rossa con una mutazione.
+
+### 5.1 Come è stata fatta
+
+**Dove sta il codice.** In `backend/backend/downloads.py`, non in `tools.py` (§5.8): `tools.py` contiene i tool degli agenti, e il download non deve diventarlo. Lo chiama solo lo Skiller: `Skiller.install()` / `approve()`, `POST /api/skills/skiller/approve`.
+
+**Lo Skiller:**
+- D1 e D2: `trustedOwners`, con il gate della licenza che cade solo per loro;
+- `autoInstall`, `maxInstallsPerRun` (3), `maxDiskMB` (2048);
+- gli esiti stanno in `skiller.json`: SHA, sha256 dell'archivio, file e byte.
+
+**La cartella dei download** diventa la fonte `downloads` dello Skill Hub, con `thirdParty`. Il segno compare nel prompt del bibliotecario, nel brief (`skills_text`) e nel tool `read_skill` (§5.7).
+
+**Test scritti prima del codice** (`test_downloads.py`, 70 test: visti rossi senza il modulo):
+- **Nomi:** 20 nomi pericolosi (traversal con `/` e `\`, assoluti, drive, drive-relative, UNC, ADS, `CON`/`NUL`/`COM1`/`LPT9`, punto o spazio finale, NUL, oltre 240 caratteri) e 5 nomi buoni normalizzati.
+- **Contenimento:** con il prefisso "fratello" e il caso diverso.
+- **Archivi veri:**
+  - zip slip e traversal in tar;
+  - symlink e hard link in tar e il symlink spoofing (cartella-link più file "dentro");
+  - dispositivi e FIFO, symlink e voci cifrate in zip;
+  - una voce cattiva fuori dalle skill (fail closed);
+  - bombe zip e gzip, limiti di file, totale, voci e archivio, formato non valido;
+  - estrazione selettiva in zip e tar, archivio senza skill, destinazione esistente, duplicati, clash di maiuscole su Windows.
+- **Radice dei download:** spenta per default; i percorsi pericolosi rifiutati; una junction vera (`mklink /J`) rifiutata.
+- **Sorgente:** URL ammessi e rifiutati; SHA fissato; redirect fuori allowlist; archivi troppo grandi (dichiarati e in streaming).
+- **Installazione end-to-end:** idempotente; pulizia dopo un archivio malevolo.
+
+**Integrazione** (`test_skiller.py`, 7 test):
+- installazione automatica dei fidati, con l'override della sola licenza;
+- gli altri gate valgono anche per i fidati;
+- approvazione di uno sconosciuto;
+- download spenti;
+- tetto per giro e budget di disco;
+- route di approvazione;
+- segno di terzi nel prompt.
+
+**Mutazioni**, tutte prese:
+- contenimento con un prefisso di stringa; check dei link tar; check dei symlink zip; cartelle di sistema; host dei redirect; `wb` al posto di `xb`; estrazione del repo intero;
+- integrazione: il fidato che salta ogni gate, gli sconosciuti in automatico, niente budget, niente segno di terzi.
+
+Tre mutazioni sopravvivevano da sole, e il motivo è la difesa a strati. **`..`** lo prendevano anche la regola del punto finale e il contenimento. **I quattro controlli del rapporto di compressione** si coprono a vicenda. **Il test del symlink zip** prendeva la parola "link" dal nome del file: l'ho corretto. Con gli strati tolti insieme, i test diventano rossi.
+
+Un punto di progetto che ne viene fuori: con l'estrazione selettiva, un `../` fuori dalle cartelle delle skill verrebbe saltato in silenzio. Per questo il "fail closed" dipende dalla validazione di **tutti** i nomi, e i test lo fissano.
+
+**Prova reale:** `vercel-labs/skills` scaricata in una cartella temporanea. Commit fissato `13e4063`; 4 file (3 `SKILL.md` più `LICENSE`, 15 KB) su un repo di 1,7 MB; staging pulito.
+
+**Difetto trovato dai test.** Molti zip, compresi quelli scritti da `zipfile`, portano solo i permessi senza i bit di tipo, e il primo controllo li scambiava per file speciali. Ora conta solo `S_IFMT` quando è presente.
+
+## 6. Ticket aperti, fuori da questa spec
+
+- **N12 — A10 "sub-agents work at their bay seat" è intermittente** (decisione dell'utente del 14/10/2026: si chiude la spec 05 e A10 diventa un ticket).
+  - **Le esecuzioni:** rosso il 13/10 (2 su 2, su `feat/backend-port`, quindi prima di ogni modifica della spec 05), verde il 14/10 dopo la fase 2, rosso alla chiusura della spec 05 (234/235).
+  - **Il sintomo:** è sempre `research-sub3`, il terzo sub-agente del team Ricerca, che sta in `thinking`/`tool` a 1,0–2,7 unità dal suo posto (il limite è 0,5).
+  - **La causa probabile:** la sequenza degli stati è identica in Node e in Python (assegnato, pausa `pickupMs` di 1,8 s, lavoro). Ma con l'ordine approvato in P5 (i sub-agenti prima dei worker liberi) il posto più lontano della bay si usa più spesso, e il cammino a volte dura più di 1,8 s.
+  - **Strade possibili:** la UI passa a "lavora" solo all'arrivo al posto (front-end); oppure la pausa di pickup tiene conto della distanza (pacing).
+- La parità Rust (`test_search_rust.py`, 2 test) si salta finché `aw_core` non è compilato su questa macchina.

@@ -73,6 +73,9 @@ class SkillLibrary:
         self.config = config
         self.bus = bus
         self.embedder = embedder or Embedder(config)
+        # Spec 05: CUSTOM_DOWNLOAD_PATH joins as the "downloads" source; its skills
+        # are third-party and are marked so in the prompts
+        self.extra_sources: list[dict] = []
         self.skills: list[dict] = []
         self.by_id: dict[str, dict] = {}
         self.index = self._new_index()
@@ -91,7 +94,7 @@ class SkillLibrary:
     @property
     def sources(self) -> list[dict]:
         srcs = nz((self.config.get().get("skills") or {}).get("sources"), ["skills"])
-        return [{"label": s, "dir": _expand(s, self.root)} for s in srcs]
+        return [{"label": s, "dir": _expand(s, self.root)} for s in srcs] + list(self.extra_sources)
 
     async def _walk(self, dir: Path, out: list[Path], depth: int = 0) -> None:
         if depth > 9 or len(out) >= MAX_FILES:
@@ -146,7 +149,7 @@ class SkillLibrary:
                 id_ = hashlib.sha1(str(file).encode()).hexdigest()[:10]
                 headings = " ".join(m.group(1) for m in list(HEADING_RE.finditer(body))[:12])
                 rel = os.path.relpath(file.parent, src["dir"]).replace(os.sep, "/")
-                skills.append({"id": id_, "name": name, "description": description, "source": src["label"], "path": str(file), "rel": rel if rel != "." else name, "headings": headings})
+                skills.append({"id": id_, "name": name, "description": description, "source": src["label"], "path": str(file), "rel": rel if rel != "." else name, "headings": headings, "thirdParty": bool(src.get("thirdParty"))})
                 bodies[id_] = body
         index = self._new_index()
         for s in skills:

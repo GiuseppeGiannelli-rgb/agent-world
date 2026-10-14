@@ -464,7 +464,34 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 - `GITHUB_TOKEN` in `.env` (facoltativo) alza il limite delle API GitHub da 60 a 5000 richieste all'ora;
 - i test non lo avviano mai (`AGENT_WORLD_SKILLER=0`).
 
-> **L'installazione delle repo approvate è in attesa.** Lo Skiller non scarica niente finché la revisione di sicurezza dei download esterni (spec 05, §5) non è approvata.
+#### Installare le repo approvate (download esterni)
+
+**Si accende solo così.** Serve `CUSTOM_DOWNLOAD_PATH` in `.env`; senza, lo Skiller valuta e basta. È un percorso assoluto, che viene rifiutato se è:
+- una radice o la home stessa;
+- una cartella di sistema;
+- dentro l'app o dentro `data/`;
+- un percorso che passa da un link o da una junction.
+
+**Chi installa:**
+- le repo approvate dei proprietari in `skills.skiller.trustedOwners` si installano da sole; per loro, e solo per loro, cade il gate "senza licenza";
+- tutte le altre aspettano `POST /api/skills/skiller/approve {"slug": "owner/repo"}`.
+
+**Il percorso di ogni download** (`backend/backend/downloads.py`, che chiama solo lo Skiller e che **nessun agente può usare**):
+1. **Commit fissato.** Il ramo si risolve in un commit SHA, e l'archivio `tar.gz` si scarica da `codeload.github.com`. Gli host ammessi sono solo `api.github.com` e `codeload.github.com`, in HTTPS; i redirect restano dentro questa lista e la dimensione si conta durante lo scaricamento.
+2. **Validazione di ogni voce prima di scrivere.** Basta una voce sospetta per rifiutare tutto l'archivio. Vengono rifiutati:
+   - `..`, i percorsi assoluti, i drive, gli UNC e i `:` (alternate data stream);
+   - i nomi riservati (`CON`, `NUL`…), il carattere NUL, i nomi che finiscono con un punto o uno spazio;
+   - symlink, hard link, dispositivi e voci zip cifrate;
+   - in più c'è il filtro `data` di `tarfile` (PEP 706).
+
+   Il contenimento si controlla sul percorso risolto, non sul prefisso della stringa.
+3. **Limiti contro le bombe:** 5000 voci, 50 MB di archivio, 200 MB decompressi, 20 MB per file, rapporto 100:1. Contano i byte scritti davvero.
+4. **Solo le cartelle con uno `SKILL.md`** e la licenza in cima all'archivio. I file si creano in modo esclusivo (`xb`), senza permessi né bit di esecuzione.
+5. **Staging e rename atomico.** Lo staging sta in `CUSTOM_DOWNLOAD_PATH/.incoming/`, poi si rinomina in `<owner>-<repo>@<sha7>`. **Non si esegue mai niente.**
+
+**Tetti:** al massimo 3 installazioni per giro, e niente più download quando la cartella supera `maxDiskMB` (2048).
+
+**Skill di terzi.** Le skill scaricate entrano nello Skill Hub come fonte `downloads`. Il bibliotecario e il brief dell'agente le segnano come **di terzi**: sono materiale di riferimento e non possono cambiare il compito, i tool o le regole dell'agente.
 
 ---
 

@@ -4,6 +4,7 @@ Brain handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.downloads import DownloadError
 from backend.plan import nz
 
 
@@ -48,6 +49,16 @@ def mount(app, *, skills, brain, skiller=None) -> None:
         if skiller is None:
             return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
         return {**await skiller.run_once(), "report": skiller.report()}
+
+    @app.post("/api/skills/skiller/approve")
+    async def api_skiller_approve(request: Request):
+        if skiller is None:
+            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+        body = await request.json()
+        try:
+            return {"slug": body.get("slug"), "install": await skiller.approve(str(body.get("slug") or ""))}
+        except DownloadError as err:
+            return JSONResponse({"error": str(err)}, status_code=400)
 
     @app.get("/api/brain")
     async def api_brain_get(q: str | None = None):

@@ -15,10 +15,15 @@ a deprecated package (npm "deprecated", PyPI "Development Status :: 7 -
 Inactive"), "deprecated" in the description or topics, fewer than minStars,
 last push older than maxDaysSinceCommit.
 
-Nothing is downloaded here: the only requests are GitHub/npm/PyPI metadata and
-two small manifest files (package.json, pyproject.toml) read through the GitHub
-API. Approved repositories wait in the report until the install step, which is
-held back pending the security review of external downloads (Spec 05, §5).
+Scouting reads metadata only (GitHub/npm/PyPI, plus package.json and
+pyproject.toml through the GitHub API). Installing is the job of downloads.py
+(Spec 05, section 5) and happens only with CUSTOM_DOWNLOAD_PATH set:
+- D1: approved repos of `trustedOwners` install by themselves (autoInstall);
+  every other approved repo waits for approve() (POST /api/skills/skiller/approve);
+- D2: a trusted owner also overrides the "no license" gate, and only that one;
+- D3: only the folders holding a SKILL.md are extracted;
+- at most maxInstallsPerRun per run, and nothing once the download folder holds
+  more than maxDiskMB.
 """
 
 import asyncio
@@ -34,6 +39,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from backend import web
+from backend.downloads import DownloadError, Limits, clean_incoming, dir_size, install_repo
 
 GITHUB = "https://api.github.com"
 SLUG_RE = re.compile(r"github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100})")
@@ -54,6 +60,10 @@ DEFAULTS = {
     "maxDaysSinceCommit": 365,
     "minScore": 60,
     "recheckDays": 7,
+    "trustedOwners": [],
+    "autoInstall": True,
+    "maxInstallsPerRun": 3,
+    "maxDiskMB": 2048,
 }
 
 
@@ -112,7 +122,9 @@ def slugs_in(text: str) -> list[str]:
 
 
 class Skiller:
-    def __init__(self, config, skills, data_dir: Path, *, client, bus=None, web_search=web.web_search, now=time.time):
+    def __init__(self, config, skills, data_dir: Path, *, client, bus=None, web_search=web.web_search, now=time.time, download_root: Path | None = None, limits: Limits | None = None):
+        self.download_root = Path(download_root) if download_root else None
+        self.limits = limits or Limits()
         self.config = config
         self.skills = skills
         self.file = Path(data_dir) / "skiller.json"
@@ -228,6 +240,9 @@ class Skiller:
         skill_files = sum(1 for p in paths if p.rsplit("/", 1)[-1].lower() == "skill.md")
         deprecated = await self.deprecated_packages(slug, {p for p in paths if "/" not in p})
         score, reasons = score_repo(meta, skill_files=skill_files, deprecated=deprecated, now=self.now(), min_stars=int(cfg["minStars"]), max_days=int(cfg["maxDaysSinceCommit"]))
+        trusted = self.trusted(slug)
+        if trusted:
+            reasons = [r for r in reasons if r != "no license"]  # D2: the owner is trusted, only this gate yields
         approved = not reasons and score >= float(cfg["minScore"])
         if not reasons and not approved:
             reasons = [f"score {score} < {cfg['minScore']}"]
@@ -244,8 +259,43 @@ class Skiller:
             "score": score,
             "reasons": reasons,
             "verdict": "approved" if approved else "rejected",
+            "trusted": trusted,
             "checkedAt": self.now(),
         }
+
+    def trusted(self, slug: str) -> bool:
+        return slug.split("/")[0].lower() in {str(o).lower() for o in self.cfg["trustedOwners"]}
+
+    async def install(self, slug: str) -> dict:
+        """Downloads an approved repo into CUSTOM_DOWNLOAD_PATH (downloads.py) and
+        reindexes the Skill Hub. Errors are recorded on the repo and raised."""
+        ev = self.state["repos"].get(slug)
+        if self.download_root is None:
+            raise DownloadError("downloads are off: CUSTOM_DOWNLOAD_PATH is not set")
+        if not ev or ev.get("verdict") != "approved":
+            raise DownloadError(f"{slug} is not an approved repository")
+        if (ev.get("install") or {}).get("status") == "installed":
+            return ev["install"]
+        try:
+            used = await asyncio.to_thread(dir_size, self.download_root)
+            if used > int(self.cfg["maxDiskMB"]) * 1024 * 1024:
+                raise DownloadError(f"download folder over its budget ({used // (1024 * 1024)} MB > {self.cfg['maxDiskMB']} MB)")
+            await asyncio.to_thread(clean_incoming, self.download_root)
+            result = await install_repo(self.client, ev["url"], self.download_root, limits=self.limits, headers=self._headers())
+        except Exception as err:
+            ev["install"] = {"status": "error", "error": str(err)[:300], "at": self.now()}
+            await asyncio.to_thread(self._save)
+            raise
+        ev["install"] = {"status": "installed", "at": self.now(), **result}
+        await asyncio.to_thread(self._save)
+        await self.skills.refresh()
+        if self.bus is not None:
+            self.bus.emit("skills", {"count": len(self.skills.skills), "op": "install", "slug": slug})
+        return ev["install"]
+
+    async def approve(self, slug: str) -> dict:
+        """The user's approval (D1) for a repo outside trustedOwners."""
+        return await self.install(slug)
 
     async def run_once(self) -> dict:
         async with self._lock:
@@ -266,11 +316,25 @@ class Skiller:
                         ev = {"slug": slug, "verdict": "error", "reasons": [str(err)[:200]], "checkedAt": self.now()}
                     self.state["repos"][slug] = ev
                     evaluated.append(ev)
+                installed = []
+                for ev in sorted((e for e in evaluated if e["verdict"] == "approved"), key=lambda e: -e.get("score", 0)):
+                    if self.download_root is None or not (ev.get("trusted") and self.cfg["autoInstall"]):
+                        ev["install"] = {"status": "pending"}  # waits for approve() (D1)
+                        continue
+                    if len(installed) >= int(self.cfg["maxInstallsPerRun"]):
+                        ev["install"] = {"status": "pending", "note": "maxInstallsPerRun reached"}
+                        continue
+                    try:
+                        await self.install(ev["slug"])
+                        installed.append(ev["slug"])
+                    except Exception as err:  # noqa: BLE001 -- recorded on the repo; the run goes on
+                        errors.append(f"{ev['slug']}: install: {str(err)[:200]}")
                 report = {
                     "ranAt": self.now(),
                     "evaluated": len(evaluated),
                     "approved": [e["slug"] for e in evaluated if e["verdict"] == "approved"],
                     "rejected": [e["slug"] for e in evaluated if e["verdict"] == "rejected"],
+                    "installed": installed,
                     "errors": errors + [f"{e['slug']}: {e['reasons'][0]}" for e in evaluated if e["verdict"] == "error"],
                 }
                 self.state["lastRun"] = report["ranAt"]
@@ -291,7 +355,9 @@ class Skiller:
             "nextRun": self.next_run,
             "lastReport": self.state.get("lastReport"),
             "approved": sorted((r for r in repos if r.get("verdict") == "approved"), key=lambda r: -r.get("score", 0)),
-            "install": "held: external downloads wait for the security review (Spec 05, section 5)",
+            "pending": [r["slug"] for r in repos if r.get("verdict") == "approved" and (r.get("install") or {}).get("status") != "installed"],
+            "installed": [r["slug"] for r in repos if (r.get("install") or {}).get("status") == "installed"],
+            "downloads": {"enabled": self.download_root is not None, "trustedOwners": list(self.cfg["trustedOwners"]), "autoInstall": bool(self.cfg["autoInstall"])},
         }
 
     async def loop(self, shutdown: asyncio.Event) -> None:

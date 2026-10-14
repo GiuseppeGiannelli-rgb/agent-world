@@ -89,7 +89,11 @@
       "maxCandidates": 25,
       "minStars": 20,
       "maxDaysSinceCommit": 365,
-      "minScore": 60
+      "minScore": 60,
+      "trustedOwners": [],
+      "autoInstall": true,
+      "maxInstallsPerRun": 3,
+      "maxDiskMB": 2048
     }
   },
 

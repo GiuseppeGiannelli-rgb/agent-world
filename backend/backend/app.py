@@ -12,6 +12,7 @@ from backend.brain import Brain
 from backend.bus import Bus
 from backend.embed import Embedder
 from backend.config import Config
+from backend.downloads import DownloadError, resolve_download_root
 from backend.media import Media
 from backend.router.index import Router
 from backend.routes import api_state, events, gateway, runs, skills_brain, static
@@ -70,7 +71,15 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     team = team or Team(bus)
     team.load(config.get()["staff"])  # same as server/index.js at boot
     media = media or Media(config=config, bus=bus)
-    skiller = skiller or Skiller(config, skills, home, client=router.client, bus=bus)
+    # Spec 05 D4: external downloads only with CUSTOM_DOWNLOAD_PATH, checked here
+    download_root = None
+    try:
+        download_root = resolve_download_root(os.environ.get("CUSTOM_DOWNLOAD_PATH"), app_root=ROOT, data_dir=home)
+    except DownloadError as err:
+        print(f"Skiller      →  download spenti: {err}", flush=True)
+    if download_root is not None:
+        skills.extra_sources = [{"label": "downloads", "dir": download_root, "thirdParty": True}]
+    skiller = skiller or Skiller(config, skills, home, client=router.client, bus=bus, download_root=download_root)
     # The same shared context object the Node server hands to every Run.
     ctx = types.SimpleNamespace(
         config=config, bus=bus, store=store, router=router, team=team,
