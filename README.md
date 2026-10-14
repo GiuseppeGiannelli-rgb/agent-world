@@ -55,13 +55,27 @@ Sono catture vere dell'app in modalità demo, a 1920×1080, durante una missione
 
 **Requisiti:** [uv](https://docs.astral.sh/uv/) nel PATH (al primo avvio scarica da solo Python 3.13 e le dipendenze) e Node 20.10 o più recente (per three.js e gli strumenti di test).
 
+**La prima volta**, da un terminale nella cartella del progetto:
+
 ```sh
-npm install     # three.js per il front-end 3D
-npm start       # backend FastAPI su http://127.0.0.1:4300
+npm install
 ```
 
-- Apri http://127.0.0.1:4300.
-- Per lo sviluppo con reload automatico: `npm run dev`.
+Installa three.js per il 3D. Le dipendenze Python le scarica `uv` da solo al primo avvio.
+
+**Ogni volta che vuoi usarlo:**
+
+```sh
+npm start
+```
+
+1. Aspetta la riga `Agent World  →  http://127.0.0.1:4300`.
+2. Apri **http://127.0.0.1:4300** nel browser.
+3. Per fermarlo: **Ctrl+C** nella finestra del terminale.
+
+- **Senza npm:** è lo stesso server. Entra in `backend/` e lancia `uv run python -m backend`.
+- **Porta già in uso?** Se all'avvio leggi "la porta 4300 è già in uso", un altro server occupa quella porta: spesso è Agent World stesso, avviato in un'altra finestra. Chiudilo con Ctrl+C nella sua finestra, oppure scegli un'altra porta con `PORT=4301` nel file `.env`.
+- **Per lo sviluppo**, con il reload automatico a ogni modifica: `npm run dev`.
 - **Demo o modelli veri.** Senza chiavi API l'app parte in **modalità demo** (pillola `DEMO` in alto). Per usare modelli veri copia `.env.example` in `.env`, inserisci almeno una chiave e riavvia: l'app passa in modalità `LIVE`.
 
 > ⚠️ In modalità `LIVE` ogni missione consuma token veri: in demo una missione complessa fa circa 200 chiamate al modello.
