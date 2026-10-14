@@ -13,6 +13,7 @@
     "test:backend": "node scripts/backend-boot-test.js && cd backend && uv run pytest -q",
     "sweep": "node scripts/browser/headless.js --sweep",
     "scan:secrets": "node scripts/secret-scan.js --history",
+    "screenshots": "node scripts/readme-shots.js",
     "prepare": "git config core.hooksPath scripts/hooks"
   },
   "dependencies": {

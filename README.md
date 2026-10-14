@@ -36,7 +36,7 @@
 
 ## Screenshot
 
-Le immagini stanno in [`docs/assets/`](docs/assets/): l'elenco dei file attesi è in [`docs/assets/README.md`](docs/assets/README.md).
+Sono catture vere dell'app in modalità demo, a 1920×1080, durante una missione. Si rigenerano con `npm run screenshots` (vedi [`docs/assets/README.md`](docs/assets/README.md)).
 
 | | |
 |---|---|
