@@ -81,15 +81,25 @@ async def test_config_post_produces_sse_frame(live_server):
     app, base_url = live_server
     async with httpx.AsyncClient(base_url=base_url) as client:
         async with client.stream("GET", "/api/events") as resp:
-            reader = asyncio.ensure_future(_read_frames(resp, 2))
-            await asyncio.sleep(0.05)
+            reader = FrameReader(resp)
+            assert (await reader.read(1))[0] == "retry: 2000\n\n"
             post = await client.post("/api/config", json={"limits": {"maxParallel": 5}})
             assert post.status_code == 200
-            frames = await reader
-            assert frames[0] == "retry: 2000\n\n"
-            body = json.loads(frames[1][len("data: "):-2])
-            assert body["type"] == "config"
-            assert body["seq"] == 1
+            # The real SkillLibrary's startup reindex emits "skills" on this bus
+            # too, and on a fast machine it lands before the POST: skip past
+            # whatever else arrives first, as test_ping_on_idle does.
+            seqs = []
+            for _ in range(20):
+                frame = (await asyncio.wait_for(reader.read(1), 5))[0]
+                if not frame.startswith("data: "):
+                    continue  # a ping
+                body = json.loads(frame[len("data: "):-2])
+                seqs.append(body["seq"])
+                if body["type"] == "config":
+                    break
+            else:
+                pytest.fail("no config frame seen")
+            assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)  # one bus, increasing seq
             assert body["payload"]["limits"]["maxParallel"] == 5
 
 
