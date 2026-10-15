@@ -89,7 +89,7 @@ async def test_api_runs_list_and_get(client, app_and_store):
 
 
 # lists and objects are unhashable: `x in LANGUAGES` raised TypeError, a 500
-@pytest.mark.parametrize("bad", ["fr", None, 3, ["it"], {"code": "en"}])
+@pytest.mark.parametrize("bad", ["xx", None, 3, ["it"], {"code": "en"}])
 async def test_api_config_post_rejects_an_unknown_ui_language(client, app_and_store, bad):
     _, _, config = app_and_store
     before = config.get()["ui"]["language"]
@@ -114,4 +114,4 @@ async def test_api_config_post_rejects_a_ui_that_is_not_an_object(client, app_an
 async def test_api_state_exposes_the_ui_language(client):
     async with client as c:
         body = (await c.get("/api/state")).json()
-        assert body["config"]["ui"]["language"] in ("it", "en")
+        assert body["config"]["ui"]["language"] in ("en", "it", "es", "fr", "de")

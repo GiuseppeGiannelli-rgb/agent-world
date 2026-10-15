@@ -102,14 +102,14 @@ def test_staff_order_matches_teams_order(config_dir):
 # ---------- spec 06: ui.language ----------
 
 
-def test_ui_language_defaults_to_italian(config_dir):
+def test_ui_language_defaults_to_english(config_dir):
     from backend.config import Config
 
-    assert Config(config_dir).get()["ui"]["language"] == "it"
+    assert Config(config_dir).get()["ui"]["language"] == "en"
 
 
 def test_real_default_json_declares_the_ui_language():
-    assert json.loads((ROOT / "config" / "default.json").read_text(encoding="utf-8"))["ui"] == {"language": "it"}
+    assert json.loads((ROOT / "config" / "default.json").read_text(encoding="utf-8"))["ui"] == {"language": "en"}
 
 
 def test_ui_language_is_editable_persisted_and_public(config_dir):
