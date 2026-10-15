@@ -524,9 +524,14 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 
 ### Lingue parlate dagli agenti
 
-- **Gli agenti rispondono nella lingua della missione.** Ogni prompt dice di scrivere pensieri, riassunti e consegne nella lingua in cui è scritto l'obiettivo, e il QA boccia una consegna nella lingua sbagliata. Quindi qualsiasi lingua supportata dal modello in uso: italiano, inglese, spagnolo, francese, tedesco…
-- **L'interfaccia è in italiano.** Lo sono anche le risposte del simulatore demo.
-- **La voce.** La dettatura (🎙) e la lettura ad alta voce (🔊) usano la Web Speech API del browser in `it-IT`. La voce generata dagli agenti (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
+- **Una lingua per tutta l'app: italiano o inglese** (spec 06). Si sceglie dal selettore IT/EN nella barra in alto o dalle Impostazioni, e si salva in `config/local.json` come `ui.language`.
+  - Cambia subito l'interfaccia, senza ricaricare la pagina.
+  - Cambia la voce: la dettatura (🎙) e la lettura ad alta voce (🔊) usano `it-IT` o `en-US`.
+  - Cambia la lingua degli agenti: ogni prompt (CEO, lead, worker, sub-agenti, QA, Skill Hub, Prompt Lab, chat) impone di ragionare, scrivere i log e rispondere nella lingua scelta.
+  - Cambia i messaggi del backend: quelli del run nel pannello Messaggi e i fumetti.
+
+  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano gli errori HTTP (ticket N13) e i testi del simulatore demo (ticket N14).
+- **La voce generata dagli agenti** (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
 - **La ricerca BM25** toglie le stopword italiane e inglesi e gli accenti (`più` → `piu`). Funziona bene con le lingue in alfabeto latino. Le scritture non latine (cirillico, greco, cinese…) oggi non producono token, perché il tokenizer tiene solo `a-z` e `0-9` dopo aver tolto gli accenti.
 
 ---

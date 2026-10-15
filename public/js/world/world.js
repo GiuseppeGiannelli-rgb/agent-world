@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Actor } from './character.js';
 import { applyFrustum, fitOffice, maxZoomFor, MIN_ZOOM, REF_UNITS_PER_PX, safeRect, scaleAt, VIEW_OFFSET, zoomFor } from './framing.js';
+import { t } from '../i18n.js';
 import { Fx } from './fx.js';
-import { BOARD, BRAIN, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
+import { BOARD, BRAIN, boardFace, brainParticles, buildOffice, cardSlot, columnOf, computeLayout, DESK_TOP, ENVELOPE, groundAt, SPOTS, WORLD } from './office.js';
 
 const TOOL_ICON = {
   list_files: '📂',
@@ -379,9 +380,23 @@ export class World {
     }
     this.brainLabel = document.createElement('div');
     this.brainLabel.className = 'brain-label';
-    this.brainLabel.innerHTML = '<b>THE BRAIN</b><span>0 note · memoria condivisa</span>';
+    this.brainLabel.innerHTML = `<b>THE BRAIN</b><span>${t('world.brain', { n: this.brainShown ?? 0 })}</span>`;
     this.labelsEl.append(this.brainLabel);
     for (const a of agents) this.applyState(a, true);
+  }
+
+  // Spec 06: a new language rewrites the words only; build() would rebuild the scene
+  // and move every agent back to its desk in the middle of a run.
+  relabel(teamName) {
+    for (const r of this.roomLabels) r.el.querySelector('b').textContent = teamName(r.team);
+    if (this.brainLabel) this.brainLabel.querySelector('span').textContent = t('world.brain', { n: this.brainShown ?? 0 });
+    const surface = this.hub?.board?.surface;
+    const columns = ['todo', 'running', 'review', 'done'].map((k) => t(`world.column.${k}`));
+    if (surface && surface.material.map?.userData.columns?.join() !== columns.join()) {
+      surface.material.map?.dispose();
+      surface.material.map = boardFace(columns);
+      surface.material.needsUpdate = true;
+    }
   }
 
   colorOf(agent) {
@@ -886,7 +901,8 @@ export class World {
   }
 
   onBrain({ op, agentId, count }) {
-    if (this.brainLabel) this.brainLabel.querySelector('span').textContent = `${count} note · memoria condivisa`;
+    this.brainShown = count;
+    if (this.brainLabel) this.brainLabel.querySelector('span').textContent = t('world.brain', { n: count });
     if (this.hub && Math.abs((this.brainCount ?? 0) - count) >= 3) {
       brainParticles(this.hub.brain, count);
       this.brainCount = count;
@@ -944,7 +960,7 @@ export class World {
       ghost.userData.material.opacity = 0.85;
       ghost.userData.material.emissiveIntensity = 0.25;
     }
-    this.bubble(agent.id, '✨ creato dal lead', 2400);
+    this.bubble(agent.id, t('world.spawned'), 2400);
   }
 
   onDespawn({ id, team }) {
@@ -1063,7 +1079,7 @@ export class World {
         break;
       case 'waiting':
         actor.setBase('idle');
-        this.bubble(a.id, '⏳ attendo la revisione', 3000);
+        this.bubble(a.id, t('world.waiting'), 3000);
         break;
       case 'delivering': {
         const key = a.taskId ?? [...this.cubes.entries()].find(([, c]) => c.owner === a.id)?.[0];
@@ -1271,7 +1287,7 @@ export class World {
   setRoomStats(stats) {
     for (const r of this.roomLabels) {
       const s = stats[r.team] ?? { agents: 0, busy: 0 };
-      r.el.querySelector('span').textContent = `${s.agents} agenti · ${s.busy} al lavoro`;
+      r.el.querySelector('span').textContent = t('teams.members', { n: s.agents, busy: s.busy });
       r.el.classList.toggle('active', s.busy > 0);
     }
   }

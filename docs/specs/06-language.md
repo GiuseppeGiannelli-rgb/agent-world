@@ -92,3 +92,13 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 
   In entrambi i casi il test è diventato rosso.
 - La demo non passa da `rescue` e da `advise`: per quei due builder la regola della lingua è coperta dai test dei prompt, non dal run end-to-end.
+
+**Frontend (15/10/2026)**
+- Quando cambia la lingua, `world.build()` non viene chiamato, perché ricostruirebbe la scena e riporterebbe ogni agente alla scrivania a metà run. Al suo posto c'è `World.relabel()`, che cambia solo i testi delle etichette delle stanze e del Brain.
+- La lingua si applica a ogni evento `config`: una scelta fatta in un'altra scheda arriva anche a questa.
+- Il selettore delle Impostazioni manda `ui.language` insieme alle altre impostazioni. Quello della topbar la salva subito.
+- Fase browser `language` (L1–L7) in `scripts/browser-test.js`:
+  - il server di prova legge il `config/` del repo, quindi la fase salva `config/local.json` e alla fine lo rimette identico (verificato con `diff`);
+  - la richiesta del run e la voce sono simulate dentro la pagina: non parte nessuna missione e nessun audio;
+  - ho provato che i controlli possono fallire con tre mutazioni: senza `language` nel payload diventa rosso L4, con `u.lang = 'it-IT'` diventa rosso L5, senza `relabel()` diventa rosso L2. In ogni caso è diventato rosso solo il controllo atteso.
+- `brief` e `title` dei team sono già in inglese in `default.json` e restano come sono. Il titolo del CEO (`ceo.title`, "CEO · Regia") si traduce come le etichette dei team (D3): la chiave `team.ceo.title` c'è solo in inglese, e in italiano si usa il valore di config.

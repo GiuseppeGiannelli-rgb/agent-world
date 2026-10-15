@@ -16,7 +16,8 @@
 // A8 and the trap mutation), cubes (A9), input (A7 with real mouse events), run (A10).
 // Spec 02: overlaps (P1-P5: the fixed UI over the matrix of inputs and states), labels
 // (E1-E7 and the N4 variants of the room labels). Spec 03: hygiene (H1-H6: probes
-// killed, interrupted and closed, and the sweep of what they leave).
+// killed, interrupted and closed, and the sweep of what they leave). Spec 06: language
+// (L1-L7: the IT/EN switch, its persistence, the run payload, the voice).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
@@ -24,7 +25,7 @@
 // so .env cannot fill it in), and a run that is not in demo mode is stopped at once.
 // At the end no browser process may be left with this run's profile, and no folder.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +48,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,run').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -89,6 +90,7 @@ const phaseOf = (key) => {
   if (/^(P\d|walk|inputs)$/.test(c)) return 'overlaps';
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
+  if (/^L\d$/.test(c)) return 'language';
   return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run' }[c] ?? c;
 };
 
@@ -607,6 +609,120 @@ async function run(cdp) {
   report('A10', 'sub-agents work at their bay seat', p.counts.spawn > 0 && p.counts.spawn === p.counts.despawn && Object.values(p.subs).every((s) => s.workingMax <= 0.5), { spawned: p.counts.spawn, removed: p.counts.despawn, subs: p.subs });
 }
 
+// ---------- spec 06: the language ----------
+
+// The demo server reads the repo's own config/ (no AGENT_WORLD_HOME for it): the
+// language is saved in config/local.json, so the file is put back exactly as it was.
+const LOCAL_JSON = join(ROOT, 'config', 'local.json');
+
+const waitFor = async (cdp, expression, ms = 5000) => {
+  for (let i = 0; i < ms / 100; i++) {
+    if (await cdp.eval(expression).catch(() => false)) return true;
+    await sleep(100);
+  }
+  return false;
+};
+const pick = (cdp, lang) => cdp.eval(`(() => { const s = document.querySelector('#lang'); s.value = '${lang}'; s.dispatchEvent(new Event('change')); })()`);
+const words = (cdp) => cdp.eval(`({
+  lang: document.documentElement.lang,
+  select: document.querySelector('#lang').value,
+  start: document.querySelector('#btn-start').textContent,
+  tab: document.querySelector('[data-tab="comms"]').textContent,
+  goal: document.querySelector('#goal').placeholder,
+  rooms: [...document.querySelectorAll('.room-label b')].map((b) => b.textContent),
+  roomStats: document.querySelector('.room-label span')?.textContent,
+  board: agentWorld.hub.board.surface.material.map.userData.columns,
+  examples: document.querySelector('#examples .chip')?.textContent,
+  marker: window.__noReload === true,
+})`);
+
+async function language(cdp) {
+  const saved = existsSync(LOCAL_JSON) ? readFileSync(LOCAL_JSON) : null;
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+    const before = await words(cdp);
+    await cdp.eval('window.__noReload = true');
+
+    // L1: the switch rewrites the UI in place, no reload
+    await pick(cdp, 'en');
+    await waitFor(cdp, "document.documentElement.lang === 'en'");
+    await cdp.eval('__t.frames(3)');
+    const en = await words(cdp);
+    report('L1', 'IT -> EN rewrites the UI without a reload', en.marker && en.lang === 'en' && en.start === 'Start the company' && en.tab === 'Messages' && en.goal.startsWith('What should the company do') && Boolean(en.examples?.startsWith('The complete launch website')), { before, after: en });
+    report('L2', 'the 3D room labels and the task board follow the language (D3)', en.rooms.includes('Research') && en.rooms.includes('Quality & Security') && !en.rooms.includes('Ricerca') && /agents · \d+ working$/.test(en.roomStats ?? '') && en.board?.join() === 'TO DO,IN PROGRESS,REVIEW,DONE', { rooms: en.rooms, roomStats: en.roomStats, board: en.board });
+
+    // L3: saved in the config and still there after a reload
+    const cfg = await api('/api/config');
+    await load(cdp, VIEWPORTS[0]);
+    const reloaded = await words(cdp);
+    report('L3', 'the choice is saved in ui.language and survives a reload', cfg.ui?.language === 'en' && reloaded.lang === 'en' && reloaded.select === 'en' && reloaded.start === 'Start the company', { saved: cfg.ui, reloaded });
+
+    // L4: POST /api/runs carries the language; the page answers it, no mission starts
+    const payload = await cdp.eval(`(async () => {
+      const real = window.fetch;
+      let body = null;
+      window.fetch = (url, opts = {}) => {
+        if (url === '/api/runs' && opts.method === 'POST') {
+          body = JSON.parse(opts.body);
+          return Promise.resolve(new Response(JSON.stringify({ id: 'none' }), { status: 201 }));
+        }
+        return real(url, opts);
+      };
+      document.querySelector('#goal').value = 'A landing page for my yoga studio';
+      document.querySelector('#btn-start').click();
+      for (let i = 0; i < 50 && !body; i++) await new Promise((r) => setTimeout(r, 50));
+      window.fetch = real;
+      return body;
+    })()`);
+    report('L4', 'the run request carries the selected language', payload?.language === 'en', { payload });
+
+    // L5: the voice speaks and listens in the selected language
+    const voice = await cdp.eval(`(async () => {
+      const spoken = [];
+      const heard = [];
+      const later = (ms) => new Promise((r) => setTimeout(r, ms));
+      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: { cancel() {}, speak(u) { spoken.push(u.lang); } } });
+      window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+      window.SpeechRecognition = class { start() { heard.push(this.lang); this.onend?.(); } stop() {} };
+      document.querySelector('#goal-mic').click();
+      document.querySelector('#roster [data-agent="ada"]').click();
+      for (let i = 0; i < 40 && !document.querySelector('[data-act="speak"]'); i++) await later(50);
+      const toggle = () => document.querySelector('[data-act="speak"]');
+      const wasOn = toggle().textContent.includes('🔊');
+      if (!wasOn) toggle().click();
+      for (let i = 0; i < 40 && !toggle().textContent.includes('🔊'); i++) await later(50);
+      document.querySelector('#chat-input').value = 'How is it going?';
+      document.querySelector('[data-act="chat-send"]').click();
+      for (let i = 0; i < 100 && !spoken.length; i++) await later(50);
+      if (!wasOn && toggle()?.textContent.includes('🔊')) toggle().click();
+      await later(100);
+      document.querySelector('[data-act="close-inspector"]')?.click();
+      return { spoken, heard };
+    })()`);
+    report('L5', 'speech synthesis and recognition use en-US', voice.spoken[0] === 'en-US' && voice.heard[0] === 'en-US', voice);
+
+    // L6: back to Italian, the Italian words come back
+    await pick(cdp, 'it');
+    await waitFor(cdp, "document.documentElement.lang === 'it'");
+    await cdp.eval('__t.frames(3)');
+    const it = await words(cdp);
+    report('L6', 'EN -> IT brings the Italian words back', it.lang === 'it' && it.start === "Avvia l'azienda" && it.tab === 'Messaggi' && it.rooms.includes('Ricerca') && it.board?.join() === 'DA FARE,IN CORSO,REVISIONE,FATTO', { after: it });
+
+    // L7: the two dictionaries have the same keys (team labels: EN only, D3)
+    const keys = await cdp.eval(`import('/js/i18n.js').then((m) => {
+      const d = m.dictionaries();
+      const own = (lang) => Object.keys(d[lang]).filter((k) => !k.startsWith('team.') || k === 'team.ceo');
+      return { missingInEn: own('it').filter((k) => !(k in d.en)), missingInIt: own('en').filter((k) => !(k in d.it)) };
+    })`);
+    report('L7', 'the IT and EN dictionaries have the same keys', !keys.missingInEn.length && !keys.missingInIt.length, keys);
+  } finally {
+    await api('/api/config', { ui: { language: 'it' } }).catch(() => null);
+    if (saved) writeFileSync(LOCAL_JSON, saved);
+    else if (existsSync(LOCAL_JSON)) rmSync(LOCAL_JSON);
+  }
+}
+
 // ---------- spec 03: the hygiene of the tools ----------
 
 const PROBE = join(HERE, 'browser', 'probe.js');
@@ -738,6 +854,7 @@ try {
   if (PHASES.includes('input')) await input(cdp);
   if (PHASES.includes('overlaps')) await overlaps(cdp);
   if (PHASES.includes('labels')) await labels(cdp);
+  if (PHASES.includes('language')) await language(cdp);
   if (PHASES.includes('run')) await run(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });

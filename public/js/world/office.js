@@ -353,16 +353,15 @@ function zoneRug(group, z) {
   group.add(border);
 }
 
-function board(group) {
-  const g = new THREE.Group();
-  const w = BOARD.width;
-  g.add(box(w + 0.5, 4.3, 0.16, mat('#3b4756'), 0, 2.45, 0));
+// The face of the task board with its column titles; spec 06 redraws it in the
+// language of the UI (World.relabel), so the titles travel with the texture.
+export function boardFace(columns) {
   const face = canvasTexture(2048, 480, (c, cw, ch) => {
     c.fillStyle = '#fbf8f2';
     c.fillRect(0, 0, cw, ch);
     const colors = ['#9aa5b1', '#4b8ff2', '#f28a3a', '#3fbf6f'];
     const colW = cw / 4;
-    BOARD.columns.forEach((label, i) => {
+    columns.forEach((label, i) => {
       c.fillStyle = i % 2 ? '#f4efe6' : '#f8f4ec';
       c.fillRect(i * colW, 0, colW, ch);
       c.fillStyle = colors[i];
@@ -377,7 +376,15 @@ function board(group) {
       }
     });
   });
-  const surface = new THREE.Mesh(new THREE.PlaneGeometry(w, 4.0), new THREE.MeshStandardMaterial({ map: face, roughness: 0.9 }));
+  face.userData.columns = [...columns];
+  return face;
+}
+
+function board(group) {
+  const g = new THREE.Group();
+  const w = BOARD.width;
+  g.add(box(w + 0.5, 4.3, 0.16, mat('#3b4756'), 0, 2.45, 0));
+  const surface = new THREE.Mesh(new THREE.PlaneGeometry(w, 4.0), new THREE.MeshStandardMaterial({ map: boardFace(BOARD.columns), roughness: 0.9 }));
   surface.position.set(0, 2.45, 0.09);
   surface.receiveShadow = true;
   g.add(surface);
