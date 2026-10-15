@@ -132,7 +132,7 @@ Fatte su Linux (container cloud), quindi non sulla macchina Windows di riferimen
 - `views` ×4 ("floor under the UI", a 2560×1440 e 1440×900, con i pannelli LR e -R);
 - `input` ×2 ("a real drag…", "a real click on an agent…");
 - D8 ("painted bay text covered at most 27%": 30,9%);
-- A10 (ticket N12).
+- A10 (ticket N12, chiuso dopo con la correzione in `world.js`: vedi spec 05, §6).
 
 Con `--only views,input,labels`, su `main` sono rossi gli stessi 7 controlli (tutti tranne A10, che sta nella fase `run`), con valori vicini. Quindi dipendono dall'ambiente (Chromium headless con SwiftShader a circa 3 fps, font di Linux) e non da questa spec. Il riferimento resta `npm run test:browser` su Windows.
 

@@ -113,7 +113,7 @@ const api = (path, body) => fetch(BASE + path, body ? { method: 'POST', headers:
 
 // ---------- the page ----------
 
-const SCRIPTS = ['lib.js', 'coverage.js', 'framing.js', 'manual-mode.js', 'absolute-scale.js', 'cube-stress.js', 'run-probe.js', 'overlaps.js', 'labels.js'].map((f) => readFileSync(join(HERE, 'browser', f), 'utf8'));
+const SCRIPTS = ['lib.js', 'coverage.js', 'framing.js', 'manual-mode.js', 'absolute-scale.js', 'cube-stress.js', 'sub-seat.js', 'run-probe.js', 'overlaps.js', 'labels.js'].map((f) => readFileSync(join(HERE, 'browser', f), 'utf8'));
 
 // settle: the wait for the first insets and frames; the overlaps phase, which only reads
 // the CSS layout, waits for real frames instead
@@ -187,6 +187,8 @@ async function checks(cdp) {
 async function cubes(cdp) {
   const out = await cdp.eval('window.__checks.cubeStress()');
   for (const [k, v] of Object.entries(out)) report('A9', k, TAG === 'prima' || v.ok, v);
+  // N12: the seat rule of A10, on a fixed clock instead of a real mission
+  for (const [k, v] of Object.entries(await cdp.eval('window.__checks.subSeat()'))) report('A10', k, v.ok, v);
 }
 
 // ---------- real input ----------
