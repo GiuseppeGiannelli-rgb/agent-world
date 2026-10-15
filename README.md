@@ -29,8 +29,9 @@
 9. [Tech stack](#tech-stack)
 10. [Lingue supportate](#lingue-supportate)
 11. [Configurazione](#configurazione)
-12. [Test](#test)
-13. [Struttura del repository](#struttura-del-repository)
+12. [Sicurezza](#sicurezza)
+13. [Test](#test)
+14. [Struttura del repository](#struttura-del-repository)
 
 ---
 
@@ -444,7 +445,7 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 |---|---|---|
 | [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 205 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (235 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (246 verifiche) |
 
 ### Skill e plugin
 
@@ -554,34 +555,62 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
 
-### Sicurezza del server locale (spec 07)
-
-Il server non ha login: ascolta su `127.0.0.1`, e per questo si difende dalle pagine web che apri nel browser.
-- Rifiuta i nomi host sconosciuti (DNS rebinding).
-- Rifiuta le richieste di modifica che arrivano da un'altra origine (CSRF) e le letture di `/api` e `/v1` fatte da altri siti.
-- Non si lascia incorniciare.
-- I siti generati dagli agenti si aprono in una sandbox con un'origine opaca: i loro script girano, ma non possono usare le API dell'app. Per questo, nell'anteprima, non hanno `localStorage`; aprili dalla cartella del run se serve.
-- `web_fetch` non legge indirizzi locali o privati.
-
-I dettagli e i rischi accettati sono in [`docs/specs/07-security.md`](docs/specs/07-security.md).
-
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
+
+---
+
+## Sicurezza
+
+Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine web che apri nel browser (spec 07, [`docs/specs/07-security.md`](docs/specs/07-security.md)). Tutte le regole stanno in `backend/backend/security.py` e in `routes/static.py`, e valgono prima di ogni route.
+
+| Regola | Contro cosa |
+|---|---|
+| Accetta solo i nomi host `127.0.0.1`, `localhost` e `::1`, più quelli di `AGENT_WORLD_ALLOWED_HOSTS` | DNS rebinding: un dominio esterno fatto risolvere in `127.0.0.1` |
+| Rifiuta le richieste di modifica (POST…) con un `Origin` diverso da quello dell'app. Un client senza `Origin`, come uno script o un IDE sul gateway `/v1`, passa | CSRF: una pagina che cambia la configurazione e punta un provider su un suo server per ricevere la chiave API |
+| Rifiuta le richieste a `/api` e `/v1` fatte dal browser per conto di un altro sito (`Sec-Fetch-Site`), anche in lettura | letture e chiamate a pagamento lanciate da altri siti |
+| Serve i siti generati dagli agenti in una sandbox con un'origine opaca (`Content-Security-Policy: sandbox`, senza `allow-same-origin`) | un sito generato, magari guidato da una pagina malevola, che usa le API dell'app |
+| `X-Frame-Options: DENY` e `frame-ancestors 'none'` su ogni pagina, più `nosniff` | clickjacking |
+| `web_fetch` legge solo indirizzi pubblici e si connette all'indirizzo che ha controllato | SSRF: un agente spinto a leggere `127.0.0.1`, la rete privata o i metadati cloud |
+| Il token di `AGENT_WORLD_API_KEY` si confronta a tempo costante | indovinare il token del gateway `/v1` |
+
+**Da sapere:**
+- **Anteprima dei siti generati.** Nella sandbox i loro script girano, ma non hanno `localStorage` né cookie. Se un sito ne ha bisogno, aprilo dalla cartella del run.
+- **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve.
+- **I 403 di queste regole** hanno il messaggio "Richiesta rifiutata: …".
+
+### Usarlo in LAN
+
+Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispositivi della rete:
+
+1. In `config/local.json` fai ascoltare il server su tutte le interfacce:
+   ```json
+   { "server": { "host": "0.0.0.0" } }
+   ```
+2. In `.env` elenca i nomi o gli indirizzi con cui gli altri lo raggiungeranno, separati da virgole:
+   ```sh
+   AGENT_WORLD_ALLOWED_HOSTS=192.168.1.20,studio.lan
+   ```
+   Senza questa riga ogni richiesta con un altro `Host` riceve 403 "Host non ammesso".
+3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo.
+
+> **Attenzione: `/api` non ha login.** Chi raggiunge il server dalla rete ne ha il controllo completo: avvia missioni, legge i file dei run e cambia la configurazione, compresi gli URL dei provider a cui il router manda le tue chiavi. Fallo solo su una rete di cui ti fidi. `AGENT_WORLD_API_KEY` protegge solo il gateway `/v1`.
 
 ---
 
 ## Test
 
 ```sh
-npm test               # tutto: mondo 3D, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
+npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 235 verifiche sul front-end vero (~5 min)
+npm run test:browser   # runner headless: 246 verifiche sul front-end vero (~5 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (205 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, parità Python/Rust.
+- **`pytest` (410 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust.
+- **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input e una missione completa. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
@@ -601,13 +630,13 @@ Quello che trova lo stampa oscurato.
 ```
 agent-world/
 ├─ backend/                 backend FastAPI (progetto uv)
-│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py
 │  │  ├─ routes/            api_state · runs · skills_brain · events (SSE) · gateway (/v1) · static
 │  │  └─ router/            index (OmniRoute) · providers · mock (demo)
 │  ├─ tests/                pytest
 │  └─ bench/                bm25_bench.py (soglia 5×)
 ├─ crates/aw_core/          modulo nativo Rust (PyO3 + maturin)
-├─ public/                  front-end: index.html, css/, js/main.js, js/world/ (three.js)
+├─ public/                  front-end: index.html, css/, js/main.js, js/i18n.js, js/world/ (three.js)
 ├─ config/default.json      team, combo, provider, skill
 ├─ skills/                  skill dell'app (+ vendor/ per le repo clonate)
 ├─ scripts/                 strumenti di test Node e runner del browser
@@ -616,4 +645,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md).
