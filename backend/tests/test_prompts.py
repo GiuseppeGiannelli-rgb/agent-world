@@ -199,7 +199,7 @@ def _systems(language):
     }
 
 
-@pytest.mark.parametrize("language,name", [("it", "Italian"), ("en", "English")])
+@pytest.mark.parametrize("language,name", [("en", "English"), ("it", "Italian"), ("es", "Spanish"), ("fr", "French"), ("de", "German")])
 def test_every_builder_imposes_the_selected_language(language, name):
     from backend.prompts import language_rule
 
@@ -234,7 +234,7 @@ def test_unknown_language_is_rejected():
     from backend.prompts import language_rule
 
     with pytest.raises(ValueError):
-        language_rule("fr")
+        language_rule("xx")
     with pytest.raises(ValueError):
         _systems("xx")
 

@@ -69,7 +69,7 @@ class TestLanguage:
 
     def test_unknown_language_is_refused(self, make_run):
         with pytest.raises(ValueError):
-            make_run(options={"language": "fr"})
+            make_run(options={"language": "xx"})
 
 
 class TestDataShape:
@@ -251,6 +251,8 @@ class TestFiles:
         task = {"outputs": ["a.md", "b.md", "empty.md"]}
         await run.ws.write("empty.md", "")
         assert await run.missing_outputs(task) == ["b.md", "empty.md"]
+        assert await run.machine_check(task) == ["Missing or empty files: b.md, empty.md"]  # no language: English
+        run.data["language"] = "it"
         assert await run.machine_check(task) == ["File mancanti o vuoti: b.md, empty.md"]
 
     @pytest.mark.asyncio
@@ -364,7 +366,7 @@ class TestDemoRun:
         run.answer(item["id"], {"text": "Non ora", "decision": "reject"})
         await asyncio.wait_for(starter, timeout=30)
         assert run.data["status"] == "stopped"
-        assert "Piano rifiutato" in (run.data["error"] or "")
+        assert "Plan rejected" in (run.data["error"] or "")  # default.json: English
 
     @pytest.mark.asyncio
     async def test_stop_during_planning(self, demo_ctx):

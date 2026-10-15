@@ -67,7 +67,8 @@ try {
   console.log('ok  plan approval, busy refusal, chat steering');
 
   // 2. rejection stops the run before any work
-  const b = await j('/api/runs', { goal: 'Una ricerca sul compostaggio', approvePlan: true });
+  // spec 06: the language is explicit, so the run's messages do not depend on config/local.json
+  const b = await j('/api/runs', { goal: 'Una ricerca sul compostaggio', approvePlan: true, language: 'en' });
   const itemB = await until(async () => (await j(`/api/runs/${b.id}`)).waiting?.find((w) => w.status === 'open'));
   await j(`/api/runs/${b.id}/answer`, { itemId: itemB.id, decision: 'reject', text: 'non ora' });
   const doneB = await until(async () => {
@@ -76,7 +77,7 @@ try {
   });
   assert.equal(doneB.status, 'stopped');
   assert.equal(doneB.tasks.length, 0);
-  assert.match(doneB.error, /rifiutato/);
+  assert.match(doneB.error, /Plan rejected/);
   console.log('ok  plan rejection');
 
   // 3. pause / resume / stop

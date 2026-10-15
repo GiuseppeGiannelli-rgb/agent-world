@@ -54,6 +54,8 @@ const short = (s, n = 46) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 const LIVE_TASK = ['assigned', 'working', 'review', 'revise'];
+// the states shown at the desk: they wait for the end of a pickup trip (A10, N12)
+const AT_DESK = ['thinking', 'tool'];
 // Below this size on screen (a zoom of the old fixed framing) the labels of idle
 // workers hide: from 0.52 down they overlap their lead's at the desks (T7 report).
 const FAR_ZOOM = 0.55;
@@ -995,6 +997,16 @@ export class World {
     if (!actor && a.kind === 'sub' && this.hub) actor = this.addActor(a);
     const label = this.labels.get(a.id);
     if (!actor) return;
+    // A10 (N12): the backend starts the work a fixed pickupMs after the assignment, but
+    // the trip to the lead and back lasts as long as the path (and the frame rate) says.
+    // While the actor is still on that trip, a working state waits for the arrival, as
+    // a verdict waits for the reviewer: the latest one is applied there. Any other
+    // state shows at once and drops the one put aside.
+    if (!initial && AT_DESK.includes(a.state) && actor.queue.some((s) => s.arrival)) {
+      actor.pending = a;
+      return;
+    }
+    actor.pending = null;
     const prev = actor.state;
     actor.state = a.state;
     if (label) {
@@ -1059,6 +1071,7 @@ export class World {
         } else {
           actor.goHome().do({ type: 'call', fn: () => this.takeTaskCube(actor, a.taskId) }, { type: 'wait', ms: 500 }, { type: 'call', fn: () => this.dropCube(actor) });
         }
+        actor.do({ type: 'call', arrival: true, fn: () => this.arrived(actor) });
         this.bubble(a.id, `📋 ${esc(short(this.tasks.get(a.taskId)?.title ?? a.text))}`, 3000);
         break;
       }
@@ -1128,6 +1141,13 @@ export class World {
           if (task && !LIVE_TASK.includes(task.status) && task.status !== 'queued') this.sinkCube(key);
         }
     }
+  }
+
+  // The end of a pickup trip: the working state put aside meanwhile, if any (A10).
+  arrived(actor) {
+    const a = actor.pending;
+    actor.pending = null;
+    if (a && this.actors.get(a.id) === actor) this.applyState(a);
   }
 
   // Free agents stretch their legs: a walk to the Brain, a peek at the board.

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,39 +21,39 @@
     <span class="pill" id="mode">…</span>
     <div class="grow"></div>
     <div class="stats" id="stats"></div>
-    <select class="lang-select" id="lang" title="Lingua" data-i18n-title="html.language"><option value="it">IT</option><option value="en">EN</option></select>
-    <button class="icon-btn" id="btn-theme" title="Giorno / notte" data-i18n-title="html.theme">☀</button>
-    <button class="icon-btn" id="btn-home" title="Vista completa" data-i18n-title="html.home">⌂</button>
-    <button class="icon-btn" id="btn-left" title="Missione" data-i18n-title="html.left">☰</button>
-    <button class="icon-btn" id="btn-right" title="Pannello" data-i18n-title="html.right">▤</button>
-    <button class="icon-btn" id="btn-settings" title="Impostazioni" data-i18n-title="html.settings">⚙</button>
+    <select class="lang-select" id="lang" title="Language" data-i18n-title="html.language"><option value="en">EN</option></select>
+    <button class="icon-btn" id="btn-theme" title="Day / night" data-i18n-title="html.theme">☀</button>
+    <button class="icon-btn" id="btn-home" title="Full view" data-i18n-title="html.home">⌂</button>
+    <button class="icon-btn" id="btn-left" title="Mission" data-i18n-title="html.left">☰</button>
+    <button class="icon-btn" id="btn-right" title="Panel" data-i18n-title="html.right">▤</button>
+    <button class="icon-btn" id="btn-settings" title="Settings" data-i18n-title="html.settings">⚙</button>
   </header>
 
   <aside class="panel left" id="left">
     <section class="mission">
-      <h2 data-i18n="html.newMission">Nuova missione</h2>
+      <h2 data-i18n="html.newMission">New mission</h2>
       <div class="composer">
-        <textarea id="goal" rows="4" data-i18n-placeholder="html.goal" placeholder="Cosa deve fare l'azienda? Es. il sito completo per il lancio del mio studio di yoga, con immagini e testi"></textarea>
-        <button class="mic" id="goal-mic" title="Detta l'obiettivo" data-i18n-title="html.dictate">🎙</button>
+        <textarea id="goal" rows="4" data-i18n-placeholder="html.goal" placeholder="What should the company do? E.g. the complete launch website for my yoga studio, with images and copy"></textarea>
+        <button class="mic" id="goal-mic" title="Dictate the goal" data-i18n-title="html.dictate">🎙</button>
       </div>
       <div class="chips" id="examples"></div>
-      <label class="check"><input type="checkbox" id="approve-plan"> <span data-i18n="html.approve">Voglio approvare il piano prima che partano</span></label>
-      <button class="primary" id="btn-start">Avvia l'azienda</button>
+      <label class="check"><input type="checkbox" id="approve-plan"> <span data-i18n="html.approve">I want to approve the plan before they start</span></label>
+      <button class="primary" id="btn-start">Start the company</button>
     </section>
     <section id="waiting" class="waiting hidden"></section>
     <section id="current"></section>
     <section class="history">
-      <h3 data-i18n="html.history">Run precedenti</h3>
+      <h3 data-i18n="html.history">Previous runs</h3>
       <div id="runs"></div>
     </section>
   </aside>
 
   <aside class="panel right" id="right">
     <nav class="tabs" id="tabs">
-      <button data-tab="board" class="active" data-i18n="html.tab.board">Task</button>
-      <button data-tab="comms" data-i18n="html.tab.comms">Messaggi</button>
-      <button data-tab="teams" data-i18n="html.tab.teams">Team</button>
-      <button data-tab="skills" data-i18n="html.tab.skills">Skill</button>
+      <button data-tab="board" class="active" data-i18n="html.tab.board">Tasks</button>
+      <button data-tab="comms" data-i18n="html.tab.comms">Messages</button>
+      <button data-tab="teams" data-i18n="html.tab.teams">Teams</button>
+      <button data-tab="skills" data-i18n="html.tab.skills">Skills</button>
       <button data-tab="brain" data-i18n="html.tab.brain">Brain</button>
       <button data-tab="router" data-i18n="html.tab.router">Router</button>
       <button data-tab="output" data-i18n="html.tab.output">Output</button>
@@ -68,7 +68,7 @@
   </aside>
 
   <footer class="roster" id="roster"></footer>
-  <canvas class="minimap" id="minimap" width="204" height="184" title="Mappa: clicca per spostarti" data-i18n-title="html.minimap"></canvas>
+  <canvas class="minimap" id="minimap" width="204" height="184" title="Map: click to move there" data-i18n-title="html.minimap"></canvas>
   <div class="inspector hidden" id="inspector"></div>
 
   <div class="modal hidden" id="settings"><div class="sheet" id="settings-body"></div></div>

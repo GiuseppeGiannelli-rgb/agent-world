@@ -88,7 +88,7 @@ def app_and_store(tmp_path, monkeypatch):
 @pytest.fixture
 def client(app_and_store):
     app, _, _ = app_and_store
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1")
 
 
 # ---------- POST /api/runs ----------
@@ -153,7 +153,7 @@ async def test_create_run_defaults_to_the_configured_language(client, app_and_st
         assert FakeRun.instances[0].options["language"] == config.get()["ui"]["language"]
 
 
-@pytest.mark.parametrize("bad", ["fr", "", 3, ["en"]])
+@pytest.mark.parametrize("bad", ["xx", "", 3, ["en"]])
 async def test_create_run_rejects_an_unknown_language(client, bad):
     async with client as c:
         res = await c.post("/api/runs", json={"goal": "Un sito per il bar", "language": bad})

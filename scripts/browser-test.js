@@ -113,7 +113,7 @@ const api = (path, body) => fetch(BASE + path, body ? { method: 'POST', headers:
 
 // ---------- the page ----------
 
-const SCRIPTS = ['lib.js', 'coverage.js', 'framing.js', 'manual-mode.js', 'absolute-scale.js', 'cube-stress.js', 'run-probe.js', 'overlaps.js', 'labels.js'].map((f) => readFileSync(join(HERE, 'browser', f), 'utf8'));
+const SCRIPTS = ['lib.js', 'coverage.js', 'framing.js', 'manual-mode.js', 'absolute-scale.js', 'cube-stress.js', 'sub-seat.js', 'run-probe.js', 'overlaps.js', 'labels.js'].map((f) => readFileSync(join(HERE, 'browser', f), 'utf8'));
 
 // settle: the wait for the first insets and frames; the overlaps phase, which only reads
 // the CSS layout, waits for real frames instead
@@ -187,6 +187,8 @@ async function checks(cdp) {
 async function cubes(cdp) {
   const out = await cdp.eval('window.__checks.cubeStress()');
   for (const [k, v] of Object.entries(out)) report('A9', k, TAG === 'prima' || v.ok, v);
+  // N12: the seat rule of A10, on a fixed clock instead of a real mission
+  for (const [k, v] of Object.entries(await cdp.eval('window.__checks.subSeat()'))) report('A10', k, v.ok, v);
 }
 
 // ---------- real input ----------
@@ -638,25 +640,63 @@ const words = (cdp) => cdp.eval(`({
 
 async function language(cdp) {
   const saved = existsSync(LOCAL_JSON) ? readFileSync(LOCAL_JSON) : null;
+  const initial = (await api('/api/config')).ui?.language;
   try {
     await load(cdp, VIEWPORTS[0]);
     await layout(cdp, LAYOUTS.LR);
-    const before = await words(cdp);
     await cdp.eval('window.__noReload = true');
+    // the expected words come from the page's own dictionaries, not from copies here
+    const d = await cdp.eval(`import('/js/i18n.js').then((m) => ({ langs: Object.keys(m.LANGS), dict: m.dictionaries() }))`);
+    const teamWord = (lang, team, label) => (lang === 'it' ? label : d.dict[lang][`team.${team}`]);
+    const cfg0 = await api('/api/config');
 
-    // L1: the switch rewrites the UI in place, no reload
-    await pick(cdp, 'en');
-    await waitFor(cdp, "document.documentElement.lang === 'en'");
-    await cdp.eval('__t.frames(3)');
-    const en = await words(cdp);
-    report('L1', 'IT -> EN rewrites the UI without a reload', en.marker && en.lang === 'en' && en.start === 'Start the company' && en.tab === 'Messages' && en.goal.startsWith('What should the company do') && Boolean(en.examples?.startsWith('The complete launch website')), { before, after: en });
-    report('L2', 'the 3D room labels and the task board follow the language (D3)', en.rooms.includes('Research') && en.rooms.includes('Quality & Security') && !en.rooms.includes('Ricerca') && /agents · \d+ working$/.test(en.roomStats ?? '') && en.board?.join() === 'TO DO,IN PROGRESS,REVIEW,DONE', { rooms: en.rooms, roomStats: en.roomStats, board: en.board });
+    // L1: English unless config/local.json says otherwise; the selector lists LANGS
+    let localLang = null;
+    try {
+      localLang = saved ? JSON.parse(saved).ui?.language ?? null : null;
+    } catch {}
+    const expected = localLang ?? 'en';
+    const first = await words(cdp);
+    const options = await cdp.eval(`[...document.querySelectorAll('#lang option')].map((o) => o.value)`);
+    report('L1', 'the default language is English (or the one in config/local.json), and the selector lists all five', initial === expected && first.lang === expected && first.select === expected && options.join() === d.langs.join() && d.langs.join() === 'en,it,es,fr,de' && (expected !== 'en' || first.start === 'Start the company'), { localLang, initial, first, options });
+
+    // L2: every language rewrites the UI in place, no reload; L8: and it fits
+    const seen = {};
+    const fits = {};
+    for (const lang of [...d.langs.filter((l) => l !== first.lang), first.lang]) {
+      await pick(cdp, lang);
+      await waitFor(cdp, `document.documentElement.lang === '${lang}'`);
+      await cdp.eval('__t.frames(3)');
+      const w = await words(cdp);
+      const x = d.dict[lang];
+      seen[lang] = w.marker && w.lang === lang && w.select === lang && w.start === x['current.start'] && w.tab === x['html.tab.comms'] && w.goal === x['html.goal'] && w.examples === x.examples[0] && w.board?.join() === ['todo', 'running', 'review', 'done'].map((c) => x[`world.column.${c}`]).join() && w.rooms.includes(teamWord(lang, 'research', cfg0.teams.research.label)) && w.rooms.includes(teamWord(lang, 'qa', cfg0.teams.qa.label)) ? true : w;
+      fits[lang] = {};
+      for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+        await viewport(cdp, vp);
+        fits[lang][vp.join('x')] = await cdp.eval(`(() => {
+          const bar = document.querySelector('#tabs').getBoundingClientRect();
+          const tabs = [...document.querySelectorAll('#tabs button')].map((b) => b.getBoundingClientRect());
+          const top = document.querySelector('.topbar');
+          return {
+            clipped: tabs.filter((r) => r.left < bar.left - 0.5 || r.right > bar.right + 0.5 || r.bottom > bar.bottom + 0.5).length,
+            rows: new Set(tabs.map((r) => Math.round(r.top))).size,
+            topbar: top.scrollWidth - top.clientWidth,
+          };
+        })()`);
+      }
+      await viewport(cdp, VIEWPORTS[0]);
+    }
+    report('L2', 'every language rewrites the UI, the 3D room labels and the task board without a reload (D3)', Object.values(seen).every((v) => v === true), seen);
+    // a tab may wrap to a second row (fonts differ by system), but none is ever cut off
+    report('L8', 'in every language every tab is fully visible and the topbar fits, at 1920x1080 and 1440x900', Object.values(fits).every((f) => Object.values(f).every((o) => o.clipped === 0 && o.topbar <= 1)), fits);
 
     // L3: saved in the config and still there after a reload
+    await pick(cdp, 'de');
+    await waitFor(cdp, "document.documentElement.lang === 'de'");
     const cfg = await api('/api/config');
     await load(cdp, VIEWPORTS[0]);
     const reloaded = await words(cdp);
-    report('L3', 'the choice is saved in ui.language and survives a reload', cfg.ui?.language === 'en' && reloaded.lang === 'en' && reloaded.select === 'en' && reloaded.start === 'Start the company', { saved: cfg.ui, reloaded });
+    report('L3', 'the choice is saved in ui.language and survives a reload', cfg.ui?.language === 'de' && reloaded.lang === 'de' && reloaded.select === 'de' && reloaded.start === d.dict.de['current.start'], { saved: cfg.ui, reloaded });
 
     // L4: POST /api/runs carries the language; the page answers it, no mission starts
     const payload = await cdp.eval(`(async () => {
@@ -669,13 +709,13 @@ async function language(cdp) {
         }
         return real(url, opts);
       };
-      document.querySelector('#goal').value = 'A landing page for my yoga studio';
+      document.querySelector('#goal').value = 'Eine Landingpage für mein Yogastudio';
       document.querySelector('#btn-start').click();
       for (let i = 0; i < 50 && !body; i++) await new Promise((r) => setTimeout(r, 50));
       window.fetch = real;
       return body;
     })()`);
-    report('L4', 'the run request carries the selected language', payload?.language === 'en', { payload });
+    report('L4', 'the run request carries the selected language', payload?.language === 'de', { payload });
 
     // L5: the voice speaks and listens in the selected language
     const voice = await cdp.eval(`(async () => {
@@ -692,7 +732,7 @@ async function language(cdp) {
       const wasOn = toggle().textContent.includes('🔊');
       if (!wasOn) toggle().click();
       for (let i = 0; i < 40 && !toggle().textContent.includes('🔊'); i++) await later(50);
-      document.querySelector('#chat-input').value = 'How is it going?';
+      document.querySelector('#chat-input').value = 'Wie läuft es?';
       document.querySelector('[data-act="chat-send"]').click();
       for (let i = 0; i < 100 && !spoken.length; i++) await later(50);
       if (!wasOn && toggle()?.textContent.includes('🔊')) toggle().click();
@@ -700,24 +740,27 @@ async function language(cdp) {
       document.querySelector('[data-act="close-inspector"]')?.click();
       return { spoken, heard };
     })()`);
-    report('L5', 'speech synthesis and recognition use en-US', voice.spoken[0] === 'en-US' && voice.heard[0] === 'en-US', voice);
+    report('L5', 'speech synthesis and recognition use de-DE', voice.spoken[0] === 'de-DE' && voice.heard[0] === 'de-DE', voice);
 
-    // L6: back to Italian, the Italian words come back
+    // L6: Italian, whose team labels are the config's own (D3)
     await pick(cdp, 'it');
     await waitFor(cdp, "document.documentElement.lang === 'it'");
     await cdp.eval('__t.frames(3)');
     const it = await words(cdp);
-    report('L6', 'EN -> IT brings the Italian words back', it.lang === 'it' && it.start === "Avvia l'azienda" && it.tab === 'Messaggi' && it.rooms.includes('Ricerca') && it.board?.join() === 'DA FARE,IN CORSO,REVISIONE,FATTO', { after: it });
+    report('L6', 'Italian brings back the config labels and the Italian words', it.lang === 'it' && it.start === "Avvia l'azienda" && it.tab === 'Messaggi' && it.rooms.includes('Ricerca') && it.board?.join() === 'DA FARE,IN CORSO,REVISIONE,FATTO', { after: it });
 
-    // L7: the two dictionaries have the same keys (team labels: EN only, D3)
-    const keys = await cdp.eval(`import('/js/i18n.js').then((m) => {
-      const d = m.dictionaries();
-      const own = (lang) => Object.keys(d[lang]).filter((k) => !k.startsWith('team.') || k === 'team.ceo');
-      return { missingInEn: own('it').filter((k) => !(k in d.en)), missingInIt: own('en').filter((k) => !(k in d.it)) };
-    })`);
-    report('L7', 'the IT and EN dictionaries have the same keys', !keys.missingInEn.length && !keys.missingInIt.length, keys);
+    // L7: the Settings selector lists the same five languages, each in its own name
+    const settings = await cdp.eval(`(async () => {
+      document.querySelector('#btn-settings').click();
+      for (let i = 0; i < 40 && !document.querySelector('[data-ui-lang]'); i++) await new Promise((r) => setTimeout(r, 50));
+      const s = document.querySelector('[data-ui-lang]');
+      const out = s ? { values: [...s.options].map((o) => o.value), names: [...s.options].map((o) => o.textContent), value: s.value } : null;
+      document.querySelector('#settings').classList.add('hidden');
+      return out;
+    })()`);
+    report('L7', 'the Settings selector lists the five languages in their own names', settings?.values.join() === 'en,it,es,fr,de' && settings?.names.join() === 'English,Italiano,Español,Français,Deutsch' && settings?.value === 'it', { settings });
   } finally {
-    await api('/api/config', { ui: { language: 'it' } }).catch(() => null);
+    await api('/api/config', { ui: { language: initial ?? 'en' } }).catch(() => null);
     if (saved) writeFileSync(LOCAL_JSON, saved);
     else if (existsSync(LOCAL_JSON)) rmSync(LOCAL_JSON);
   }

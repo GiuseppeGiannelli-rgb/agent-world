@@ -194,9 +194,19 @@ Un punto di progetto che ne viene fuori: con l'estrazione selettiva, un `../` fu
 
 ## 6. Ticket aperti, fuori da questa spec
 
-- **N12 — A10 "sub-agents work at their bay seat" è intermittente** (decisione dell'utente del 14/10/2026: si chiude la spec 05 e A10 diventa un ticket).
+- **N12 — A10 "sub-agents work at their bay seat" è intermittente (chiuso)** (decisione dell'utente del 14/10/2026: si chiude la spec 05 e A10 diventa un ticket).
   - **Le esecuzioni:** rosso il 13/10 (2 su 2, su `feat/backend-port`, quindi prima di ogni modifica della spec 05), verde il 14/10 dopo la fase 2, rosso alla chiusura della spec 05 (234/235).
   - **Il sintomo:** è sempre `research-sub3`, il terzo sub-agente del team Ricerca, che sta in `thinking`/`tool` a 1,0–2,7 unità dal suo posto (il limite è 0,5).
   - **La causa probabile:** la sequenza degli stati è identica in Node e in Python (assegnato, pausa `pickupMs` di 1,8 s, lavoro). Ma con l'ordine approvato in P5 (i sub-agenti prima dei worker liberi) il posto più lontano della bay si usa più spesso, e il cammino a volte dura più di 1,8 s.
   - **Strade possibili:** la UI passa a "lavora" solo all'arrivo al posto (front-end); oppure la pausa di pickup tiene conto della distanza (pacing).
+  - **Chiuso il 15/10/2026, con la strada front-end.**
+    - **Causa confermata.** Il backend passa a `thinking` dopo una pausa fissa (`pickupMs`, 1,8 s). Il mondo invece mostra subito lo stato, mentre il sub-agente sta ancora tornando dal lead al suo posto. A 60 fps il viaggio fino al posto più lontano della bay di Ricerca dura 2,33 s, quindi il sub-agente "lavorava" ancora in cammino, a 5,34 unità dal posto. Sotto i 20 fps il mondo rallenta rispetto al clock e il viaggio dura ancora di più.
+    - **Perché non il pacing.** Il backend non conosce né la lunghezza del cammino né il frame rate. Allungare `pickupMs` avrebbe rallentato ogni run, e sotto i 20 fps non sarebbe bastato comunque.
+    - **Correzione** (`public/js/world/world.js`). Il viaggio di `assigned` finisce con un passo `arrival` nella coda dell'attore. Mentre quel passo è in coda, `thinking` e `tool` vengono messi da parte: all'arrivo si applica l'ultimo ricevuto. Qualunque altro stato (`paused`, `asking`, `idle`…) si mostra subito e scarta quello messo da parte. È lo stesso schema del verdetto del QA, che già aspettava che il revisore arrivasse alla scrivania.
+    - **Test** (`scripts/browser/sub-seat.js`, fase `cubes`, su un clock fisso a 60 fps):
+      - S1: `thinking` e `tool` arrivano durante il viaggio verso il posto più lontano. Restano in attesa fino all'arrivo e vince l'ultimo. Senza la correzione è rosso con `workingAway` 5,34, lo stesso valore della run reale;
+      - S2: una pausa durante il viaggio si mostra subito;
+      - S3: un sub-agente già seduto lavora subito.
+
+      La fase `run` (missione vera) è verde anche a 3,5 fps, con il mondo al 18% del clock.
 - La parità Rust (`test_search_rust.py`, 2 test) si salta finché `aw_core` non è compilato su questa macchina.

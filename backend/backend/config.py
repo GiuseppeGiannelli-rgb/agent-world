@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+from backend.i18n import DEFAULT as DEFAULT_LANGUAGE
+
 EDITABLE = ["limits", "pacing", "router", "providers", "combos", "teams", "ceo", "media", "skills", "rag", "ui"]
 
 
@@ -36,7 +38,7 @@ class Config:
         self.value = merge(defaults, self.local)
         if os.environ.get("PORT"):
             self.value["server"]["port"] = int(os.environ["PORT"])
-        self.value.setdefault("ui", {}).setdefault("language", "it")  # spec 06
+        self.value.setdefault("ui", {}).setdefault("language", DEFAULT_LANGUAGE)  # spec 06: English
         self.value["limits"]["allowShell"] = os.environ.get("AGENT_WORLD_ALLOW_SHELL") == "1"
         if os.environ.get("AGENT_WORLD_FAST") == "1":
             for k in list(self.value["pacing"].keys()):

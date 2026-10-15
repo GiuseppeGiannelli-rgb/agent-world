@@ -11,7 +11,7 @@ async def client(tmp_path, monkeypatch):
     app = create_app(store=Store(tmp_path))
     await app.state.skills.reindex()
     transport = httpx.ASGITransport(app=app)
-    return app, httpx.AsyncClient(transport=transport, base_url="http://test")
+    return app, httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1")
 
 
 async def test_api_skills_summary_and_search(client):
