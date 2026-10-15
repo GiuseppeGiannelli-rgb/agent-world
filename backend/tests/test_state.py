@@ -88,7 +88,8 @@ async def test_api_runs_list_and_get(client, app_and_store):
         assert res3.status_code == 404
 
 
-@pytest.mark.parametrize("bad", ["fr", None, 3])
+# lists and objects are unhashable: `x in LANGUAGES` raised TypeError, a 500
+@pytest.mark.parametrize("bad", ["fr", None, 3, ["it"], {"code": "en"}])
 async def test_api_config_post_rejects_an_unknown_ui_language(client, app_and_store, bad):
     _, _, config = app_and_store
     before = config.get()["ui"]["language"]
@@ -97,6 +98,17 @@ async def test_api_config_post_rejects_an_unknown_ui_language(client, app_and_st
         assert res.status_code == 400
         assert res.json()["error"].startswith("Lingua non supportata")
     assert config.get()["ui"]["language"] == before  # nothing was written
+
+
+@pytest.mark.parametrize("bad", ["en", ["en"], 1])
+async def test_api_config_post_rejects_a_ui_that_is_not_an_object(client, app_and_store, bad):
+    _, _, config = app_and_store
+    before = config.get()["ui"]["language"]
+    async with client as c:
+        res = await c.post("/api/config", json={"ui": bad})
+        assert res.status_code == 400
+        assert res.json()["error"].startswith("Lingua non supportata")
+    assert config.get()["ui"]["language"] == before
 
 
 async def test_api_state_exposes_the_ui_language(client):

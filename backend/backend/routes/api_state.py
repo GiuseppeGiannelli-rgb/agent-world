@@ -38,7 +38,8 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None,
                 if not isinstance(models, list) or any(not isinstance(m, str) or "/" not in m for m in models):
                     return JSONResponse({"error": _bad_combo_message(name)}, status_code=400)
         ui = body.get("ui")
-        if ui is not None and (not isinstance(ui, dict) or ("language" in ui and ui["language"] not in LANGUAGES)):
+        # isinstance first: a list or an object is unhashable, and `in` would raise (a 500)
+        if ui is not None and (not isinstance(ui, dict) or ("language" in ui and (not isinstance(ui["language"], str) or ui["language"] not in LANGUAGES))):
             return JSONResponse({"error": _bad_language_message(ui.get("language") if isinstance(ui, dict) else ui)}, status_code=400)
         config.update(body)
         public = public_config(config)
