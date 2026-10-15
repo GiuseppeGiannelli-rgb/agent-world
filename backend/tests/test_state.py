@@ -86,3 +86,20 @@ async def test_api_runs_list_and_get(client, app_and_store):
 
         res3 = await c.get("/api/runs/missing")
         assert res3.status_code == 404
+
+
+@pytest.mark.parametrize("bad", ["fr", None, 3])
+async def test_api_config_post_rejects_an_unknown_ui_language(client, app_and_store, bad):
+    _, _, config = app_and_store
+    before = config.get()["ui"]["language"]
+    async with client as c:
+        res = await c.post("/api/config", json={"ui": {"language": bad}})
+        assert res.status_code == 400
+        assert res.json()["error"].startswith("Lingua non supportata")
+    assert config.get()["ui"]["language"] == before  # nothing was written
+
+
+async def test_api_state_exposes_the_ui_language(client):
+    async with client as c:
+        body = (await c.get("/api/state")).json()
+        assert body["config"]["ui"]["language"] in ("it", "en")

@@ -2,7 +2,7 @@
 every subsystem not yet ported (A1). Each stub is replaced, not reshaped,
 when its phase lands."""
 
-PUBLIC_CONFIG_KEYS = ["ceo", "teams", "staff", "limits", "pacing", "router", "combos", "providers", "media", "skills"]
+PUBLIC_CONFIG_KEYS = ["ceo", "teams", "staff", "limits", "pacing", "router", "combos", "providers", "media", "skills", "ui"]
 
 STUB_AGENTS: list = []
 STUB_ROUTER = {"mode": "demo", "providers": [], "combos": [], "recent": []}

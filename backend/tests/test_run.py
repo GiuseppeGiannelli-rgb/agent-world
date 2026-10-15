@@ -54,11 +54,29 @@ def make_run(tmp_path):
     return factory
 
 
+class TestLanguage:
+    """Spec 06: the run freezes its language at creation."""
+
+    def test_language_option_is_stored(self, make_run):
+        assert make_run(options={"language": "en"}).data["language"] == "en"
+
+    def test_no_language_falls_back_to_config_then_none(self, make_run, tmp_path):
+        assert make_run().data["language"] is None  # mini ctx has no ui section: legacy rule
+        ctx = mini_ctx(tmp_path)
+        cfg = ctx.config.get()
+        cfg["ui"] = {"language": "en"}
+        assert make_run(ctx=ctx).data["language"] == "en"
+
+    def test_unknown_language_is_refused(self, make_run):
+        with pytest.raises(ValueError):
+            make_run(options={"language": "fr"})
+
+
 class TestDataShape:
     def test_constructor_mirrors_node(self, make_run, tmp_path):
         run = make_run("Apri un bar sulla luna!")
         d = run.data
-        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "report", "error", "usage", "workspace"}
+        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "report", "error", "usage", "workspace"}
         assert d["status"] == "planning" and d["paused"] is False and d["mode"] == "demo"
         assert len(d["id"]) == 8
         assert d["slug"].startswith("apri-un-bar-sulla-luna-")
@@ -364,3 +382,124 @@ class TestDemoRun:
         assert run.data["status"] == "stopped"
         assert all(t["status"] == "skipped" for t in run.data["tasks"])
         assert all(w["status"] == "skipped" for w in run.data["workstreams"])
+
+
+def _italian_fragments() -> list[str]:
+    """The fixed parts of every Italian backend text: in an English run none
+    of them may reach the UI. Short fragments are skipped, they could be
+    plain names or ids."""
+    import re
+    import string
+
+    from backend.i18n import MESSAGES
+
+    english = " ".join(MESSAGES["en"].values())
+    out = []
+    for template in MESSAGES["it"].values():
+        for literal, *_ in string.Formatter().parse(template):
+            for piece in re.split(r"[\n:·()\"]", literal):
+                piece = piece.strip(" .,!?…→")
+                if len(piece) >= 8 and piece not in english:  # REPORT.md, workstream: same in both
+                    out.append(piece)
+    return out
+
+
+def _model_strings(replies: list[str]) -> list[str]:
+    from backend.json_repair import extract_json
+
+    out = []
+
+    def walk(v):
+        if isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+
+    for r in replies:
+        out.append(r.strip())
+        try:
+            walk(extract_json(r))
+        except Exception:
+            pass
+    return sorted({x for x in out if x}, key=len, reverse=True)
+
+
+def _without_model_text(text: str, replies: list[str], goal: str) -> str:
+    for piece in [goal, *_model_strings(replies)]:
+        text = text.replace(piece, "")
+    return text
+
+
+class TestDemoRunInEnglish:
+    @pytest.mark.asyncio
+    async def test_every_call_and_every_backend_text_follow_english(self, demo_ctx):
+        from backend.prompts import language_rule
+        from backend.run import Run
+
+        calls, replies = [], []
+        real_chat = demo_ctx.router.chat
+
+        async def spy(**kw):
+            calls.append(kw["messages"])
+            out = await real_chat(**kw)
+            replies.append(out["text"])
+            return out
+
+        demo_ctx.router.chat = spy
+        bubbles = []
+        real_set = demo_ctx.team.set
+        demo_ctx.team.set = lambda id, patch: (bubbles.append(patch.get("text") or ""), real_set(id, patch))[1]
+
+        run = Run(goal="Una campagna social completa con video e podcast per il lancio", ctx=demo_ctx, options={"approvePlan": True, "language": "en"})
+        starter = asyncio.ensure_future(run.start())
+        for _ in range(500):
+            if run.data["status"] == "awaiting_approval":
+                break
+            await asyncio.sleep(0.02)
+        item = next(w for w in run.data["waiting"] if w["kind"] == "plan")
+        run.answer(item["id"], {"text": "", "decision": "approve"})
+        await asyncio.wait_for(starter, timeout=120)
+        d = run.data
+        assert d["status"] in ("completed", "completed_with_failures"), d["error"]
+        assert d["language"] == "en"
+
+        # every model call carries the English rule in its system prompt
+        rule = language_rule("en")
+        assert calls
+        for msgs in calls:
+            system = next(m["content"] for m in msgs if m["role"] == "system")
+            assert rule in system, system[:80]
+
+        # no Italian backend text reaches the UI (D4)
+        texts = [m["text"] for m in d["messages"]] + bubbles + [w["text"] for w in d["waiting"]]
+        texts += [x.get("error") or "" for x in d["tasks"] + d["workstreams"]]
+        texts += [h["text"] for t in d["tasks"] for h in t["history"]]
+        texts += [n["title"] for n in demo_ctx.brain.notes]
+        # The demo provider answers in Italian whatever the language (D5, N14):
+        # what the model wrote is cut out, only the backend's own words remain.
+        texts = [_without_model_text(t, replies, d["goal"]) for t in texts]
+        fragments = _italian_fragments()
+        assert fragments
+        leaks = sorted({f for f in fragments for t in texts if f in t})
+        assert not leaks
+        assert any(n["title"].startswith("Mission · ") for n in demo_ctx.brain.notes)
+
+    @pytest.mark.asyncio
+    async def test_rejecting_the_plan_in_english(self, demo_ctx):
+        from backend.i18n import tr
+        from backend.run import Run
+
+        run = Run(goal="A research document", ctx=demo_ctx, options={"approvePlan": True, "language": "en"})
+        starter = asyncio.ensure_future(run.start())
+        for _ in range(500):
+            if run.data["status"] == "awaiting_approval":
+                break
+            await asyncio.sleep(0.02)
+        run.answer(run.data["waiting"][0]["id"], {"text": "Not now", "decision": "reject"})
+        await asyncio.wait_for(starter, timeout=30)
+        assert run.data["status"] == "stopped"
+        assert run.data["error"] == tr("en", "plan_rejected_because", reason="Not now")

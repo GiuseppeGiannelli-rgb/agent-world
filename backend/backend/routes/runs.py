@@ -10,6 +10,7 @@ import traceback
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.i18n import LANGUAGES
 from backend.prompts import chat_prompt
 from backend.run import Run
 from backend.tools import Workspace
@@ -34,10 +35,12 @@ async def talk(agent: dict, text: str, *, config, router, chats, bus, active_run
     history = chats.get(agent["id"]) or []
     run = active_run()
     context = "No mission is running right now."
+    language = config.get()["ui"]["language"]
     if run is not None:
         scope = "all" if agent["kind"] == "ceo" else (f"team:{agent['team']}" if agent["kind"] == "lead" else f"agent:{agent['id']}")
         run.steer(scope, text)
         run.message("user", agent["id"], "chat", text)
+        language = run.data.get("language") or language
         task = run.task_by_id(agent["taskId"]) if agent.get("taskId") else None
         context = (
             f"Mission: {run.data['goal']}\nStatus: {run.data['status']}\nYour state: {agent['state']}"
@@ -47,7 +50,7 @@ async def talk(agent: dict, text: str, *, config, router, chats, bus, active_run
     try:
         out = await router.chat(
             role="ceo" if agent["kind"] == "ceo" else agent["team"],
-            messages=chat_prompt(agent=agent, who=describe_agent(agent, config), context=context, history=history[-10:], text=text),
+            messages=chat_prompt(agent=agent, who=describe_agent(agent, config), context=context, history=history[-10:], text=text, language=language),
             max_tokens=600,
             meta={"agentId": agent["id"]},
         )
@@ -87,8 +90,14 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
             return _err(400, "Scrivi un obiettivo per la squadra.")
         if active_run() is not None:
             return _err(409, "La squadra sta già lavorando a un run. Fermalo o aspetta che finisca.")
+        language = body.get("language")
+        if language is None:
+            language = config.get()["ui"]["language"]
+        elif not isinstance(language, str) or language not in LANGUAGES:
+            return _err(400, f"Lingua non supportata: {language!r}. Scegli fra {', '.join(LANGUAGES)}.")
         team.load(config.get()["staff"])
-        options = {"approvePlan": body["approvePlan"]} if "approvePlan" in body else None
+        options = {"approvePlan": body["approvePlan"]} if "approvePlan" in body else {}
+        options["language"] = language  # D1: frozen for the whole run
         run = Run(goal=goal[:4000], ctx=ctx, options=options)
         live[run.data["id"]] = run
         run.emit_run(True)

@@ -97,3 +97,27 @@ def test_staff_order_matches_teams_order(config_dir):
     v = cfg.get()
     ids = [s["id"] for s in v["staff"]]
     assert ids == ["ada", "rino", "sara", "leo"]
+
+
+# ---------- spec 06: ui.language ----------
+
+
+def test_ui_language_defaults_to_italian(config_dir):
+    from backend.config import Config
+
+    assert Config(config_dir).get()["ui"]["language"] == "it"
+
+
+def test_real_default_json_declares_the_ui_language():
+    assert json.loads((ROOT / "config" / "default.json").read_text(encoding="utf-8"))["ui"] == {"language": "it"}
+
+
+def test_ui_language_is_editable_persisted_and_public(config_dir):
+    from backend.config import Config
+    from backend.state import public_config
+
+    cfg = Config(config_dir)
+    cfg.update({"ui": {"language": "en"}})
+    assert json.loads((config_dir / "local.json").read_text(encoding="utf-8"))["ui"] == {"language": "en"}
+    assert Config(config_dir).get()["ui"]["language"] == "en"  # survives a restart
+    assert public_config(cfg)["ui"] == {"language": "en"}

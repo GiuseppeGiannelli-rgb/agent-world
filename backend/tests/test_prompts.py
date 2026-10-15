@@ -167,3 +167,78 @@ def test_chat_prompt_maps_history_roles():
     assert [m["role"] for m in msgs[1:]] == ["user", "assistant", "user"]
     assert msgs[-1]["content"] == "Come va?"
     assert "You are Ada," in msgs[0]["content"]  # the mock's chat_reply reads the name from here
+
+
+# ---------- spec 06: the language rule ----------
+
+import pytest  # noqa: E402
+
+LEGACY_RULE = "in the language the GOAL is written in"
+
+
+def _systems(language):
+    """The system prompt of every builder, for one language. tasker_system
+    covers both workers and sub-agents, so both are listed."""
+    from backend import prompts as p
+
+    w = {**WS, "status": "done", "summary": "ok", "error": None}
+    t = {**TASK, "status": "done", "escalated": False}
+    kw = {} if language == "omit" else {"language": language}
+    return {
+        "ceo_plan": p.ceo_plan_prompt(cfg=CFG, ceo={"name": "Ada"}, goal="g", memory="", **kw)[0]["content"],
+        "lead_plan": p.lead_plan_prompt(cfg=CFG, lead={"name": "Rino"}, team="research", goal="g", ws=WS, upstream=[], **kw)[0]["content"],
+        "advisor": p.advisor_prompt(lead={"name": "Rino"}, team="Ricerca", goal="g", ws=WS, task=TASK, from_="Sara", question="?", progress="", **kw)[0]["content"],
+        "rescue": p.rescue_prompt(lead={"name": "Rino"}, goal="g", task=TASK, feedback="f", **kw)[0]["content"],
+        "librarian": p.librarian_prompt(librarian={"name": "Otto"}, goal="g", task=TASK, candidates=[], per_task=2, **kw)[0]["content"],
+        "prompt_eng": p.prompt_eng_prompt(pe={"name": "Pia"}, goal="g", task=TASK, team="Ricerca", skills=[], **kw)[0]["content"],
+        "tasker_worker": p.tasker_system(agent={"name": "Sara", "kind": "worker", "team": "research"}, team_cfg=CFG["teams"]["research"], lead={"name": "Rino"}, tools=["finish"], skills_text="", **kw),
+        "tasker_sub": p.tasker_system(agent={"name": "Sub 1", "kind": "sub", "team": "research"}, team_cfg=CFG["teams"]["research"], lead={"name": "Rino"}, tools=["finish"], skills_text="", **kw),
+        "judge": p.judge_prompt(judge={"name": "Bruno"}, goal="g", task=TASK, attempt=1, summary="", file_dump="", checks="", security=False, **kw)[0]["content"],
+        "synth": p.synth_prompt(ceo={"name": "Ada"}, goal="g", plan_summary="", workstreams=[w], tasks=[t], files="", **kw)[0]["content"],
+        "chat": p.chat_prompt(agent={"name": "Ada"}, who="the CEO", context="", history=[], text="ciao", **kw)[0]["content"],
+    }
+
+
+@pytest.mark.parametrize("language,name", [("it", "Italian"), ("en", "English")])
+def test_every_builder_imposes_the_selected_language(language, name):
+    from backend.prompts import language_rule
+
+    rule = language_rule(language)
+    assert name in rule
+    for builder, system in _systems(language).items():
+        assert rule in system, f"{builder} lacks the {name} rule"
+        assert LEGACY_RULE not in system, f"{builder} still follows the GOAL language"
+        assert "in the language they use" not in system, f"{builder} still follows the user's language"
+
+
+def test_language_rule_keeps_the_machine_contract_in_english():
+    from backend.prompts import language_rule
+
+    rule = language_rule("it")
+    # JSON keys, enum values and tool names must not be translated, or
+    # run.py's validators and the demo provider stop understanding the reply
+    assert "JSON keys" in rule and '"pass"' in rule and "tool names" in rule
+
+
+@pytest.mark.parametrize("language", [None, "omit"])
+def test_no_language_keeps_the_legacy_rule(language):
+    systems = _systems(language)
+    for builder, system in systems.items():
+        if builder in ("librarian", "chat"):
+            continue  # they never had the GOAL rule
+        assert LEGACY_RULE in system, builder
+    assert "in the language they use" in systems["chat"]
+
+
+def test_unknown_language_is_rejected():
+    from backend.prompts import language_rule
+
+    with pytest.raises(ValueError):
+        language_rule("fr")
+    with pytest.raises(ValueError):
+        _systems("xx")
+
+
+def test_the_rule_does_not_break_the_role_marker():
+    for builder, system in _systems("en").items():
+        assert system.startswith("[[role:"), builder

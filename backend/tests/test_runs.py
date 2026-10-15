@@ -127,10 +127,67 @@ async def test_create_run_conflict_while_active(client, app_and_store):
         await asyncio.sleep(0.05)
 
 
-async def test_create_run_passes_approve_plan_option(client):
+async def test_create_run_passes_approve_plan_option(client, app_and_store):
+    _, _, config = app_and_store
     async with client as c:
         await c.post("/api/runs", json={"goal": "Con approvazione", "approvePlan": True})
-        assert FakeRun.instances[0].options == {"approvePlan": True}
+        assert FakeRun.instances[0].options == {"approvePlan": True, "language": config.get()["ui"]["language"]}
+
+
+# ---------- spec 06: language ----------
+
+
+async def test_create_run_passes_the_language(client):
+    async with client as c:
+        res = await c.post("/api/runs", json={"goal": "A site for my bar", "language": "en"})
+        assert res.status_code == 201
+        assert FakeRun.instances[0].options["language"] == "en"
+
+
+@pytest.mark.parametrize("body", [{}, {"language": None}])
+async def test_create_run_defaults_to_the_configured_language(client, app_and_store, body):
+    _, _, config = app_and_store
+    async with client as c:
+        res = await c.post("/api/runs", json={"goal": "Un sito per il bar", **body})
+        assert res.status_code == 201
+        assert FakeRun.instances[0].options["language"] == config.get()["ui"]["language"]
+
+
+@pytest.mark.parametrize("bad", ["fr", "", 3, ["en"]])
+async def test_create_run_rejects_an_unknown_language(client, bad):
+    async with client as c:
+        res = await c.post("/api/runs", json={"goal": "Un sito per il bar", "language": bad})
+        assert res.status_code == 400
+        assert res.json()["error"].startswith("Lingua non supportata")  # N13: HTTP errors stay Italian
+        assert FakeRun.instances == []
+
+
+async def test_chat_uses_the_language_of_the_active_run(client, app_and_store, monkeypatch):
+    import backend.routes.runs as runs_mod
+
+    seen = []
+    real = runs_mod.chat_prompt
+    monkeypatch.setattr(runs_mod, "chat_prompt", lambda **kw: seen.append(kw.get("language")) or real(**kw))
+    FakeRun.auto_finish = False
+    async with client as c:
+        await c.post("/api/runs", json={"goal": "A site for my bar", "language": "en"})
+        FakeRun.instances[0].data["language"] = "en"
+        await c.post("/api/chat/ada", json={"text": "How is it going?"})
+        assert seen == ["en"]
+        FakeRun.instances[0].stop()
+        await asyncio.sleep(0.05)
+
+
+async def test_chat_without_a_run_uses_the_configured_language(client, app_and_store, monkeypatch):
+    import backend.routes.runs as runs_mod
+
+    _, _, config = app_and_store
+    seen = []
+    real = runs_mod.chat_prompt
+    monkeypatch.setattr(runs_mod, "chat_prompt", lambda **kw: seen.append(kw.get("language")) or real(**kw))
+    async with client as c:
+        await c.post("/api/chat/ada", json={"text": "Come va?"})
+    assert seen == [config.get()["ui"]["language"]]
 
 
 # ---------- GET /api/runs/{id} and actions ----------

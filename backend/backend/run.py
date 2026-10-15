@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.i18n import check as check_language
+from backend.i18n import team_label, tr
 from backend.json_repair import extract_json
 from backend.plan import normalize_plan, normalize_subtasks, safe_rel_path, single_subtask, slugify, strings
 from backend.prompts import (
@@ -78,6 +80,8 @@ class Run:
         run_id = uuid.uuid4().hex[:8]
         slug = f"{slugify(goal)}-{run_id}"
         approve = options["approvePlan"] if "approvePlan" in options else ctx.config.get()["limits"].get("approvePlan")
+        # D1: frozen at creation; None keeps the legacy rules (D2)
+        language = check_language(options.get("language") or (ctx.config.get().get("ui") or {}).get("language"))
         self.data = {
             "id": run_id,
             "slug": slug,
@@ -86,6 +90,7 @@ class Run:
             "complexity": None,
             "paused": False,
             "approvePlan": bool(approve),
+            "language": language,
             "mode": ctx.router.mode(),
             "createdAt": _iso_now(),
             "finishedAt": None,
@@ -100,6 +105,13 @@ class Run:
             "workspace": str(Path(ctx.workspace_root) / slug),
         }
         self.ws = Workspace(self.data["workspace"])
+
+    @property
+    def lang(self) -> str | None:
+        return self.data.get("language")
+
+    def t(self, key: str, **vars) -> str:
+        return tr(self.lang, key, **vars)
 
     @property
     def cfg(self) -> dict:
@@ -197,7 +209,7 @@ class Run:
             return
         self.data["paused"] = True
         self._resume.clear()
-        self.message(self.ceo["id"], "*", "system", "Run in pausa: il lavoro in corso termina il passo attuale.")
+        self.message(self.ceo["id"], "*", "system", self.t("paused"))
         self.emit_run(True)
 
     def resume(self) -> None:
@@ -205,7 +217,7 @@ class Run:
             return
         self.data["paused"] = False
         self._resume.set()
-        self.message(self.ceo["id"], "*", "system", "Si riparte.")
+        self.message(self.ceo["id"], "*", "system", self.t("resumed"))
         self.emit_run(True)
         self.tick()
 
@@ -271,7 +283,7 @@ class Run:
             return False
         item["answer"] = {"text": str(text)[:4000], "decision": decision, "at": _now_ms()}
         item["status"] = "answered"
-        label = f"{'Approvato' if decision == 'approve' else 'Rifiutato'}{': ' + text if text else ''}" if decision else text
+        label = f"{self.t('answer_approved') if decision == 'approve' else self.t('answer_rejected')}{': ' + text if text else ''}" if decision else text
         self.message("user", item["from"], "reply", label)
         done(item["answer"])
         return True
@@ -334,7 +346,7 @@ class Run:
         except Exception as err:
             self.data["status"] = "failed"
             self.data["error"] = str(err)
-            self.message(self.ceo["id"], "*", "error", f"Il run si è fermato: {err}")
+            self.message(self.ceo["id"], "*", "error", self.t("run_failed", err=err))
         finally:
             self.data["finishedAt"] = _iso_now()
             self.data["paused"] = False
@@ -343,18 +355,18 @@ class Run:
                     w["status"] = "expired"
             for a in self.team.list():
                 if a["runId"] == self.data["id"] or a["kind"] == "ceo":
-                    patch = {"state": "celebrating", "text": "Missione compiuta!"} if a["kind"] == "ceo" and self.data["status"] == "completed" else {}
+                    patch = {"state": "celebrating", "text": self.t("mission_done")} if a["kind"] == "ceo" and self.data["status"] == "completed" else {}
                     self.team.release(a["id"], patch)
             self.emit_run(True)
             self.ctx.bus.emit("run.done", {"runId": self.data["id"], "status": self.data["status"]})
 
     async def plan(self) -> None:
         ceo = self.ceo
-        self.team.set(ceo["id"], {"state": "thinking", "runId": self.data["id"], "text": "Studio l'obiettivo e organizzo i team…"})
+        self.team.set(ceo["id"], {"state": "thinking", "runId": self.data["id"], "text": self.t("ceo_studying")})
         self.message("user", ceo["id"], "goal", self.data["goal"])
         memory = "\n".join(f"- {n['title']}: {n['text'][:240]}" for n in await self.ctx.brain.search(self.data["goal"], 4, agent_id=ceo["id"]))
         obj = await self.chat_json(
-            {"role": "ceo", "messages": ceo_plan_prompt(cfg=self.cfg, ceo=ceo, goal=self.data["goal"], memory=memory), "max_tokens": 6000, "agent": ceo},
+            {"role": "ceo", "messages": ceo_plan_prompt(cfg=self.cfg, ceo=ceo, goal=self.data["goal"], memory=memory, language=self.lang), "max_tokens": 6000, "agent": ceo},
             lambda o: isinstance(o.get("workstreams"), list) and len(o["workstreams"]) > 0,
         )
         if not obj:
@@ -364,28 +376,26 @@ class Run:
         self.data["planSummary"] = plan["summary"]
         self.data["workstreams"] = plan["workstreams"]
         self.ctx.bus.emit("plan", {"runId": self.data["id"], "workstreams": plan["workstreams"], "complexity": plan["complexity"], "summary": plan["summary"]})
-        label = lambda t: (self.cfg["teams"].get(t) or {}).get("label") or t
-        listing = "\n".join(f"{w['id']} · {w['title']} → {label(w['team'])}{' (dopo ' + ', '.join(w['dependsOn']) + ')' if w['dependsOn'] else ''}" for w in plan["workstreams"])
-        self.message(ceo["id"], "*", "plan", f"{'Missione complessa' if plan['complexity'] == 'complex' else 'Missione semplice'}. {plan['summary']}\n\n{listing}")
-        self.team.set(ceo["id"], {"state": "idle", "text": f"Piano: {len(plan['workstreams'])} workstream"})
+        listing = "\n".join(f"{w['id']} · {w['title']} → {team_label(self.cfg, w['team'], self.lang)}{self.t('after', deps=', '.join(w['dependsOn'])) if w['dependsOn'] else ''}" for w in plan["workstreams"])
+        self.message(ceo["id"], "*", "plan", f"{self.t('plan_complex') if plan['complexity'] == 'complex' else self.t('plan_simple')}. {plan['summary']}\n\n{listing}")
+        self.team.set(ceo["id"], {"state": "idle", "text": self.t("plan_bubble", n=len(plan["workstreams"]))})
         self.emit_run(True)
         await self.sleep(1200 + len(plan["workstreams"]) * 200)
 
     async def approval(self) -> None:
         self.data["status"] = "awaiting_approval"
-        label = lambda t: (self.cfg["teams"].get(t) or {}).get("label") or t
-        item = self.add_waiting({"kind": "plan", "from": self.ceo["id"], "text": f"Approvi il piano?\n{self.data['planSummary']}\n\n" + "\n".join(f"{w['id']} · {w['title']} → {label(w['team'])}" for w in self.data["workstreams"])})
-        self.team.set(self.ceo["id"], {"state": "asking", "text": "Aspetto la tua approvazione del piano"})
+        item = self.add_waiting({"kind": "plan", "from": self.ceo["id"], "text": f"{self.t('plan_question')}\n{self.data['planSummary']}\n\n" + "\n".join(f"{w['id']} · {w['title']} → {team_label(self.cfg, w['team'], self.lang)}" for w in self.data["workstreams"])})
+        self.team.set(self.ceo["id"], {"state": "asking", "text": self.t("plan_waiting")})
         answer = await self.wait_answer(item, 0)
         if self._abort.is_set():
             raise RunStopped(str(self.data.get("error") or "Stopped by the user"))
         if answer and answer.get("decision") == "reject":
-            self.data["error"] = f"Piano rifiutato{': ' + answer['text'] if answer.get('text') else ''}"
+            self.data["error"] = self.t("plan_rejected_because", reason=answer["text"]) if answer.get("text") else self.t("plan_rejected")
             self._abort.set()
             raise RunStopped(self.data["error"])
         if answer and answer.get("text"):
             self.steer("all", answer["text"])
-        self.team.set(self.ceo["id"], {"state": "idle", "text": "Piano approvato"})
+        self.team.set(self.ceo["id"], {"state": "idle", "text": self.t("plan_approved")})
 
     async def schedule(self) -> None:
         self._finish_schedule = asyncio.Event()
@@ -412,14 +422,14 @@ class Run:
                 blocker = next((d for d in w["dependsOn"] if bad((self.ws_by_id(d) or {}).get("status"))), None)
                 if w["status"] == "queued" and blocker:
                     w["status"] = "skipped"
-                    w["error"] = f"Dipende da {blocker}, che non è stato completato"
+                    w["error"] = self.t("depends_on_failed", blocker=blocker)
                     self.emit_ws(w)
                     changed = True
             for t in tasks:
                 blocker = next((d for d in t["dependsOn"] if bad((self.task_by_id(d) or {}).get("status"))), None)
                 if t["status"] == "queued" and blocker:
                     t["status"] = "skipped"
-                    t["error"] = f"Dipende da {blocker}, che non è stato completato"
+                    t["error"] = self.t("depends_on_failed", blocker=blocker)
                     self.emit_task(t)
                     changed = True
             for w in ws_all:
@@ -434,7 +444,7 @@ class Run:
                 self.emit_ws(w)
                 lead = self.team.lead(w["team"])
                 ok = w["status"] == "done"
-                self.message((lead or self.ceo)["id"], self.ceo["id"], "deliver" if ok else "error", f"{w['id']} completato: {w['title']}" if ok else f"{w['id']} chiuso con task non completati")
+                self.message((lead or self.ceo)["id"], self.ceo["id"], "deliver" if ok else "error", self.t("ws_done", id=w["id"], title=w["title"]) if ok else self.t("ws_failed", id=w["id"]))
                 changed = True
 
         if not self.data["paused"]:
@@ -462,7 +472,7 @@ class Run:
                             return
                         w["status"] = "failed"
                         w["error"] = str(err)
-                        self.message(lead["id"], self.ceo["id"], "error", f"Non riesco a organizzare {w['id']}: {err}")
+                        self.message(lead["id"], self.ceo["id"], "error", self.t("ws_prepare_failed", id=w["id"], err=err))
                         self.emit_ws(w)
                     finally:
                         self.preparing.discard(w["id"])
@@ -485,7 +495,7 @@ class Run:
                 if agent["kind"] == "sub" and not agent.get("counted"):
                     agent["counted"] = True
                     self.data["usage"]["subAgents"] += 1
-                    self.message((self.team.lead(t["team"]) or self.ceo)["id"], agent["id"], "spawn", f"Ti ho creato per {t['id']} · {t['title']}")
+                    self.message((self.team.lead(t["team"]) or self.ceo)["id"], agent["id"], "spawn", self.t("spawned", id=t["id"], title=t["title"]))
                 self.active.add(t["id"])
 
                 async def run_one(t=t, agent=agent):
@@ -500,7 +510,7 @@ class Run:
                         t["error"] = str(err)
                         t["finishedAt"] = _iso_now()
                         self.note(t, agent, "error", str(err))
-                        self.message(agent["id"], (self.team.lead(t["team"]) or self.ceo)["id"], "error", f"Non riesco a completare \"{t['title']}\": {err}")
+                        self.message(agent["id"], (self.team.lead(t["team"]) or self.ceo)["id"], "error", self.t("task_failed", title=t["title"], err=err))
                         self.emit_task(t)
                     finally:
                         self.active.discard(t["id"])
@@ -521,13 +531,13 @@ class Run:
         self.message(self.ceo["id"], lead["id"], "brief", f"{ws['id']} · {ws['title']}\n{ws['objective']}")
         self.team.set(lead["id"], {"state": "fetching", "wsId": ws["id"], "runId": self.data["id"], "text": ws["title"]})
         await self.sleep(pacing["fetchMs"])
-        self.team.set(lead["id"], {"state": "thinking", "text": "Divido il lavoro del team…"})
+        self.team.set(lead["id"], {"state": "thinking", "text": self.t("lead_splitting")})
 
         tasks = single_subtask(ws)
         if complex_:
             upstream = [f"{w['id']} {w['title']}: {w['summary'] or 'done'} (files: {', '.join(w['deliverables'])})" for w in (self.ws_by_id(d) for d in ws["dependsOn"])]
             raw = await self.chat_json(
-                {"role": ws["team"], "messages": lead_plan_prompt(cfg=self.cfg, lead=lead, team=ws["team"], goal=self.data["goal"], ws=ws, upstream=upstream), "max_tokens": 4000, "agent": lead},
+                {"role": ws["team"], "messages": lead_plan_prompt(cfg=self.cfg, lead=lead, team=ws["team"], goal=self.data["goal"], ws=ws, upstream=upstream, language=self.lang), "max_tokens": 4000, "agent": lead},
                 lambda o: isinstance(o.get("subtasks"), list),
             )
             if raw:
@@ -539,9 +549,9 @@ class Run:
 
         self.data["tasks"].extend(tasks)
         self.ctx.bus.emit("subtasks", {"runId": self.data["id"], "wsId": ws["id"], "leadId": lead["id"], "tasks": tasks})
-        listing = "\n".join(f"{t['id']} · {t['title']}{' (dopo ' + ', '.join(t['dependsOn']) + ')' if t['dependsOn'] else ''}" for t in tasks)
-        self.message(lead["id"], self.ceo["id"], "split", f"{ws['id']} diviso in {len(tasks)} sotto-task:\n{listing}" if len(tasks) > 1 else f"{ws['id']}: lo affido al team così com'è.")
-        self.team.set(lead["id"], {"state": "idle", "text": f"{len(tasks)} sotto-task pronti"})
+        listing = "\n".join(f"{t['id']} · {t['title']}{self.t('after', deps=', '.join(t['dependsOn'])) if t['dependsOn'] else ''}" for t in tasks)
+        self.message(lead["id"], self.ceo["id"], "split", self.t("split_many", id=ws["id"], n=len(tasks), listing=listing) if len(tasks) > 1 else self.t("split_one", id=ws["id"]))
+        self.team.set(lead["id"], {"state": "idle", "text": self.t("subtasks_ready", n=len(tasks))})
         self.emit_run(True)
 
     async def assign_skills(self, tasks: list[dict], lead: dict, complex_: bool) -> None:
@@ -551,7 +561,7 @@ class Run:
         per_task = (self.cfg.get("skills") or {}).get("perTask", 3)
         librarian = self.team.lead("skills") or (self.team.of_team("skills") or [None])[0]
         if librarian:
-            self.team.set(librarian["id"], {"state": "tool", "tool": "search_skills", "toolTarget": f"{len(lib.skills)} skill", "text": f"Cerco le skill giuste per {len(tasks)} task", "runId": self.data["id"]})
+            self.team.set(librarian["id"], {"state": "tool", "tool": "search_skills", "toolTarget": f"{len(lib.skills)} skill", "text": self.t("skills_searching", n=len(tasks)), "runId": self.data["id"]})
 
         async def for_task(t):
             label = (self.cfg["teams"].get(t["team"]) or {}).get("label") or ""
@@ -561,7 +571,7 @@ class Run:
             picks = None
             if complex_ and librarian and len(candidates) > 1:
                 obj = await self.chat_json(
-                    {"role": "skills", "messages": librarian_prompt(librarian=librarian, goal=self.data["goal"], task=t, candidates=candidates, per_task=per_task), "max_tokens": 800, "agent": librarian, "task": t},
+                    {"role": "skills", "messages": librarian_prompt(librarian=librarian, goal=self.data["goal"], task=t, candidates=candidates, per_task=per_task, language=self.lang), "max_tokens": 800, "agent": librarian, "task": t},
                     lambda o: isinstance(o.get("picks"), list),
                 )
                 if obj:
@@ -578,7 +588,7 @@ class Run:
         await asyncio.gather(*(for_task(t) for t in tasks))
         if librarian:
             lines = [f"{t['id']} → {', '.join(s['name'] for s in t['skills'])}" for t in tasks if t["skills"]]
-            self.message(librarian["id"], lead["id"], "skills", "\n".join(lines) if lines else "Nessuna skill adatta: meglio niente che una sbagliata.")
+            self.message(librarian["id"], lead["id"], "skills", "\n".join(lines) if lines else self.t("skills_none"))
             self.team.set(librarian["id"], {"state": "idle", "tool": None, "text": ""})
 
     async def refine_briefs(self, tasks: list[dict], lead: dict) -> None:
@@ -587,11 +597,11 @@ class Run:
             return
         pe["busy"] = True
         try:
-            self.team.set(pe["id"], {"state": "thinking", "runId": self.data["id"], "text": f"Riscrivo {len(tasks)} brief"})
+            self.team.set(pe["id"], {"state": "thinking", "runId": self.data["id"], "text": self.t("briefs_rewriting", n=len(tasks))})
 
             async def for_task(t):
                 obj = await self.chat_json(
-                    {"role": "prompt", "messages": prompt_eng_prompt(pe=pe, goal=self.data["goal"], task=t, team=(self.cfg["teams"].get(t["team"]) or {}).get("label") or t["team"], skills=[s["name"] for s in t["skills"]]), "max_tokens": 1500, "agent": pe, "task": t},
+                    {"role": "prompt", "messages": prompt_eng_prompt(pe=pe, goal=self.data["goal"], task=t, team=(self.cfg["teams"].get(t["team"]) or {}).get("label") or t["team"], skills=[s["name"] for s in t["skills"]], language=self.lang), "max_tokens": 1500, "agent": pe, "task": t},
                     lambda o: isinstance(o.get("brief"), str),
                 )
                 if not obj:
@@ -601,7 +611,7 @@ class Run:
                 t["pitfalls"] = strings(obj.get("pitfalls"), 4)
 
             await asyncio.gather(*(for_task(t) for t in tasks))
-            self.message(pe["id"], lead["id"], "prompt", f"Brief affinati per {', '.join(t['id'] for t in tasks)}")
+            self.message(pe["id"], lead["id"], "prompt", self.t("briefs_done", ids=", ".join(t["id"] for t in tasks)))
         finally:
             pe["busy"] = False
             self.team.set(pe["id"], {"state": "idle", "runId": None, "text": ""})
@@ -648,25 +658,25 @@ class Run:
         while True:
             task["attempts"] += 1
             out = await tasker.work(feedback)
-            problems = [f"Hai esaurito i {limits['maxSteps']} passi disponibili senza chiamare finish. Concentrati sui file richiesti e consegna."] if out.get("stepLimit") else await self.machine_check(task)
+            problems = [self.t("step_limit", n=limits["maxSteps"])] if out.get("stepLimit") else await self.machine_check(task)
 
             if not problems:
                 task["summary"] = out["summary"]
                 task["files"] = out["files"] if out.get("files") else task["outputs"]
                 task["status"] = "review"
                 self.emit_task(task)
-                self.team.set(agent["id"], {"state": "waiting", "tool": None, "text": "In attesa di revisione"})
+                self.team.set(agent["id"], {"state": "waiting", "tool": None, "text": self.t("awaiting_review")})
                 verdict = await self.review(task, agent, out)
                 if verdict["verdict"] == "pass":
                     task["status"] = "done"
                     task["finishedAt"] = _iso_now()
                     self.emit_task(task)
-                    self.team.set(agent["id"], {"state": "delivering", "text": "Consegnato!"})
+                    self.team.set(agent["id"], {"state": "delivering", "text": self.t("delivered")})
                     if lead and lead["id"] != agent["id"]:
-                        self.message(agent["id"], lead["id"], "deliver", f"{task['id']} consegnato: {task['summary']}")
+                        self.message(agent["id"], lead["id"], "deliver", self.t("task_delivered", id=task["id"], summary=task["summary"]))
                     await self.sleep(pacing["deliverMs"])
                     return
-                feedback = verdict["feedback"] or "Il revisore chiede di migliorare il lavoro rispetto ai criteri di accettazione."
+                feedback = verdict["feedback"] or self.t("default_feedback")
             else:
                 feedback = "\n".join(problems)
                 self.note(task, agent, "check", feedback)
@@ -676,19 +686,19 @@ class Run:
                 tasker.use = router_cfg["escalationCombo"]
                 task["escalated"] = True
                 self.data["usage"]["escalations"] += 1
-                self.note(task, agent, "escalate", f"Escalation al modello \"{router_cfg['escalationCombo']}\"")
-                self.message((lead or self.ceo)["id"], agent["id"], "escalate", f"Dopo {task['revisions']} revisioni passo {task['id']} al modello più forte ({router_cfg['escalationCombo']}).")
+                self.note(task, agent, "escalate", self.t("escalation_note", combo=router_cfg["escalationCombo"]))
+                self.message((lead or self.ceo)["id"], agent["id"], "escalate", self.t("escalation_msg", n=task["revisions"], id=task["id"], combo=router_cfg["escalationCombo"]))
             if task["revisions"] > limits["maxRevisions"]:
                 if rescued:
-                    raise Exception(f"Ancora non approvato dopo l'aiuto del lead. Ultimo feedback: {feedback[:300]}")
+                    raise Exception(self.t("still_failing", feedback=feedback[:300]))
                 decision = await self.rescue(task, agent, feedback)
                 if decision["action"] == "skip":
-                    raise Exception(f"Il lead ha deciso di saltarlo: {decision['guidance']}")
+                    raise Exception(self.t("lead_skipped", guidance=decision["guidance"]))
                 rescued = True
-                feedback = f"Indicazioni del lead: {decision['guidance']}\n\nUltimo feedback del revisore:\n{feedback}"
+                feedback = self.t("lead_guidance", guidance=decision["guidance"], feedback=feedback)
             task["status"] = "revise"
             self.emit_task(task)
-            self.team.set(agent["id"], {"state": "thinking", "tool": None, "text": "Riprovo con un modello più forte…" if task["escalated"] else "Correggo seguendo il feedback…", "escalated": task["escalated"]})
+            self.team.set(agent["id"], {"state": "thinking", "tool": None, "text": self.t("retry_stronger") if task["escalated"] else self.t("fixing"), "escalated": task["escalated"]})
 
     async def missing_outputs(self, task: dict) -> list[str]:
         missing = []
@@ -699,7 +709,7 @@ class Run:
 
     async def machine_check(self, task: dict) -> list[str]:
         missing = await self.missing_outputs(task)
-        return [f"File mancanti o vuoti: {', '.join(missing)}"] if missing else []
+        return [self.t("missing_files", files=", ".join(missing))] if missing else []
 
     async def file_dump(self, task: dict) -> str:
         paths = list(dict.fromkeys(p for p in (safe_rel_path(x) for x in [*task["outputs"], *(task.get("files") or [])]) if p))
@@ -747,11 +757,11 @@ class Run:
             judge = self.ceo
         security = task["team"] == "dev" or any(__import__("re").search(r"\.(js|mjs|ts|tsx|jsx|py|html?|php|sh|sql)$", p, __import__("re").IGNORECASE) for p in task["outputs"])
         try:
-            self.team.set(judge["id"], {"state": "reviewing", "target": agent["id"], "taskId": task["id"], "runId": self.data["id"], "text": f"{'Qualità e sicurezza' if security else 'Controllo'}: \"{task['title']}\"", "verdict": None})
-            self.message(agent["id"], judge["id"], "review", f"Pronto per la revisione: {task['title']}")
+            self.team.set(judge["id"], {"state": "reviewing", "target": agent["id"], "taskId": task["id"], "runId": self.data["id"], "text": self.t("review_security" if security else "review_check", title=task["title"]), "verdict": None})
+            self.message(agent["id"], judge["id"], "review", self.t("ready_for_review", title=task["title"]))
             await self.sleep(pacing["reviewWalkMs"])
             raw = await self.chat_json(
-                {"role": "qa", "messages": judge_prompt(judge=judge, goal=self.data["goal"], task=task, attempt=task["attempts"], summary=out["summary"], file_dump=await self.file_dump(task), checks="", security=security), "max_tokens": 2000, "agent": judge, "task": task},
+                {"role": "qa", "messages": judge_prompt(judge=judge, goal=self.data["goal"], task=task, attempt=task["attempts"], summary=out["summary"], file_dump=await self.file_dump(task), checks="", security=security, language=self.lang), "max_tokens": 2000, "agent": judge, "task": task},
                 lambda o: o.get("verdict") in ("pass", "revise"),
             )
             raw = raw or {"verdict": "pass", "score": None, "feedback": ""}
@@ -761,10 +771,10 @@ class Run:
             task["verdicts"].append(v)
             lesson = raw.get("lesson")
             if isinstance(lesson, str) and lesson.strip():
-                self.ctx.brain.add(title=f"Lezione · {task['title']}", text=lesson.strip(), team=task["team"], agent_id=judge["id"], run_id=self.data["id"], kind="lesson", tags=[task["team"], "qa"])
-            self.note(task, judge, "verdict", f"Approvato ({v['score'] if v['score'] is not None else '–'}/10)" if v["verdict"] == "pass" else feedback)
-            self.team.set(judge["id"], {"state": "verdict", "verdict": v["verdict"], "target": agent["id"], "text": f"Approvato! {v['score'] or ''}/10" if v["verdict"] == "pass" else "Da rivedere"})
-            self.message(judge["id"], agent["id"], "pass" if v["verdict"] == "pass" else "revise", f"Approvato ({v['score'] if v['score'] is not None else '–'}/10)" if v["verdict"] == "pass" else feedback)
+                self.ctx.brain.add(title=self.t("lesson_title", title=task["title"]), text=lesson.strip(), team=task["team"], agent_id=judge["id"], run_id=self.data["id"], kind="lesson", tags=[task["team"], "qa"])
+            self.note(task, judge, "verdict", self.t("approved_score", score=v["score"] if v["score"] is not None else "–") if v["verdict"] == "pass" else feedback)
+            self.team.set(judge["id"], {"state": "verdict", "verdict": v["verdict"], "target": agent["id"], "text": self.t("approved_bubble", score=v["score"] or "") if v["verdict"] == "pass" else self.t("to_revise")})
+            self.message(judge["id"], agent["id"], "pass" if v["verdict"] == "pass" else "revise", self.t("approved_score", score=v["score"] if v["score"] is not None else "–") if v["verdict"] == "pass" else feedback)
             await self.sleep(pacing["verdictMs"])
             return v
         finally:
@@ -783,7 +793,7 @@ class Run:
         self.message(agent["id"], responder["id"], "question", question)
         res = await self.chat(
             role="ceo" if responder["kind"] == "ceo" else task["team"],
-            messages=advisor_prompt(lead=responder, team=(self.cfg["teams"].get(task["team"]) or {}).get("label") or task["team"], goal=self.data["goal"], ws=self.ws_by_id(task["wsId"]), task=task, from_=agent["name"], question=question, progress=self.progress_text(task["team"])),
+            messages=advisor_prompt(lead=responder, team=(self.cfg["teams"].get(task["team"]) or {}).get("label") or task["team"], goal=self.data["goal"], ws=self.ws_by_id(task["wsId"]), task=task, from_=agent["name"], question=question, progress=self.progress_text(task["team"]), language=self.lang),
             max_tokens=800,
             agent=responder,
             task=task,
@@ -799,20 +809,20 @@ class Run:
         answer = await self.wait_answer(item, self.cfg["limits"]["askUserTimeoutMs"])
         if self._abort.is_set():
             raise RunStopped("Stopped by the user")
-        self.team.set(agent["id"], {"state": "thinking", "text": "Ho la risposta, continuo" if answer else "Nessuna risposta, decido io"})
+        self.team.set(agent["id"], {"state": "thinking", "text": self.t("got_answer") if answer else self.t("no_answer")})
         if answer and answer.get("text"):
             return f"The owner answers: {answer['text']}"
         return "No answer from the owner in time: make the most reasonable decision yourself and state it in your summary."
 
     async def rescue(self, task: dict, agent: dict, feedback: str) -> dict:
         lead = self.team.lead(task["team"]) or self.ceo
-        self.message(agent["id"], lead["id"], "stuck", f"Bloccato su \"{task['title']}\" dopo {task['revisions']} revisioni.")
+        self.message(agent["id"], lead["id"], "stuck", self.t("stuck", title=task["title"], n=task["revisions"]))
         d = await self.chat_json(
-            {"role": "ceo" if lead["kind"] == "ceo" else task["team"], "messages": rescue_prompt(lead=lead, goal=self.data["goal"], task=task, feedback=feedback), "max_tokens": 1000, "agent": lead, "task": task},
+            {"role": "ceo" if lead["kind"] == "ceo" else task["team"], "messages": rescue_prompt(lead=lead, goal=self.data["goal"], task=task, feedback=feedback, language=self.lang), "max_tokens": 1000, "agent": lead, "task": task},
             lambda o: o.get("action") in ("retry", "skip"),
         )
-        d = d or {"action": "retry", "guidance": "Riparti dai criteri di accettazione uno per uno."}
-        self.message(lead["id"], agent["id"], "guidance", f"{'Saltiamo questo task' if d['action'] == 'skip' else 'Riprova'}: {d['guidance']}")
+        d = d or {"action": "retry", "guidance": self.t("rescue_default")}
+        self.message(lead["id"], agent["id"], "guidance", self.t("guidance_skip" if d["action"] == "skip" else "guidance_retry", guidance=d["guidance"]))
         return {"action": d["action"], "guidance": str(d.get("guidance") or "")}
 
     async def write_media(self, task: dict, agent: dict, kind: str, args: dict) -> str:
@@ -884,22 +894,22 @@ class Run:
 
     async def synthesize(self) -> None:
         ceo = self.ceo
-        self.team.set(ceo["id"], {"state": "thinking", "runId": self.data["id"], "text": "Scrivo il report finale…"})
+        self.team.set(ceo["id"], {"state": "thinking", "runId": self.data["id"], "text": self.t("writing_report")})
         files = await self.ws.list_text()
         res = await self.chat(
             role="ceo",
-            messages=synth_prompt(ceo=ceo, goal=self.data["goal"], plan_summary=self.data["planSummary"], workstreams=self.data["workstreams"], tasks=self.data["tasks"], files=files or "(none)"),
+            messages=synth_prompt(ceo=ceo, goal=self.data["goal"], plan_summary=self.data["planSummary"], workstreams=self.data["workstreams"], tasks=self.data["tasks"], files=files or "(none)", language=self.lang),
             max_tokens=3000,
             agent=ceo,
         )
         self.data["report"] = clip(res["text"].strip(), 20000)
         await self.ws.write("REPORT.md", self.data["report"])
         self.ctx.brain.add(
-            title=f"Missione · {self.data['goal'][:90]}",
+            title=self.t("mission_title", goal=self.data["goal"][:90]),
             text=f"{self.data['planSummary']}\n" + "\n".join(f"{w['id']} {w['title']} ({w['team']}): {w['status']}" for w in self.data["workstreams"]),
             kind="run",
             tags=["missione", *dict.fromkeys(w["team"] for w in self.data["workstreams"])],
             agent_id=ceo["id"],
             run_id=self.data["id"],
         )
-        self.message(ceo["id"], "*", "report", "Report finale pronto: REPORT.md")
+        self.message(ceo["id"], "*", "report", self.t("report_ready"))

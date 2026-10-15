@@ -4,12 +4,17 @@ matching handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend.i18n import LANGUAGES
 from backend.router.providers import ProviderError
 from backend.state import build_state, public_config
 
 
 def _bad_combo_message(name: str) -> str:
     return f'Combo "{name}": "models" deve essere una lista di "provider/modello"'
+
+
+def _bad_language_message(value) -> str:
+    return f"Lingua non supportata: {value!r}. Scegli fra {', '.join(LANGUAGES)}."
 
 
 def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None, team=None, media=None, live=None) -> None:
@@ -32,6 +37,9 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None,
                 models = c.get("models") if isinstance(c, dict) else None
                 if not isinstance(models, list) or any(not isinstance(m, str) or "/" not in m for m in models):
                     return JSONResponse({"error": _bad_combo_message(name)}, status_code=400)
+        ui = body.get("ui")
+        if ui is not None and (not isinstance(ui, dict) or ("language" in ui and ui["language"] not in LANGUAGES)):
+            return JSONResponse({"error": _bad_language_message(ui.get("language") if isinstance(ui, dict) else ui)}, status_code=400)
         config.update(body)
         public = public_config(config)
         if bus is not None:

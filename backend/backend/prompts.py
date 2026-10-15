@@ -4,7 +4,23 @@
 messages -- so the exact wording of GOAL:, TASK ID:, OUTPUTS: etc. is a
 hard contract, not prose."""
 
-LANGUAGE = "Write thoughts, summaries and deliverables in the language the GOAL is written in."
+from backend.i18n import LANGUAGES, check
+
+# D2: with no language chosen, agents follow the GOAL (the pre-spec-06 rule).
+LEGACY_LANGUAGE = "Write thoughts, summaries and deliverables in the language the GOAL is written in."
+
+
+def language_rule(language: str | None) -> str:
+    """Spec 06: the run's language, imposed on every agent. The machine
+    contract (JSON keys, fixed values, tool names) stays in English, or
+    run.py's validators and the demo provider stop reading the replies."""
+    if check(language) is None:
+        return LEGACY_LANGUAGE
+    return (
+        f"Write every thought, log line, message, summary, report and deliverable text in {LANGUAGES[language]}, "
+        "whatever language the GOAL, the inputs or your teammates use. "
+        'JSON keys, fixed values such as "pass", "revise", "retry" and "skip", and tool names stay exactly as written here.'
+    )
 
 
 def bullet_list(items) -> str:
@@ -57,7 +73,7 @@ def tools_for(cfg: dict, team: str) -> list[str]:
 # ---------- CEO ----------
 
 
-def ceo_plan_prompt(*, cfg: dict, ceo: dict, goal: str, memory: str) -> list[dict]:
+def ceo_plan_prompt(*, cfg: dict, ceo: dict, goal: str, memory: str, language: str | None = None) -> list[dict]:
     teams = work_teams(cfg)
     return [
         {
@@ -72,7 +88,7 @@ You are {ceo['name']}, the CEO of an autonomous AI company. Each team has a lead
 - Images, illustrations and voice-overs go to the "genai" team when it exists.
 - "acceptance" are 2 to 4 criteria checkable by reading the files.
 - "team" must be one of: {', '.join(teams)}.
-{LANGUAGE}
+{language_rule(language)}
 
 Answer with ONLY this JSON object:
 {{"complexity": "simple" | "complex", "summary": "one sentence: the approach", "workstreams": [{{"id": "w1", "team": "{teams[0]}", "title": "max 6 words", "objective": "what this team must achieve, concretely", "deliverables": ["path/file.ext"], "acceptance": ["..."], "dependsOn": []}}]}}""",
@@ -87,7 +103,7 @@ Answer with ONLY this JSON object:
 # ---------- team lead ----------
 
 
-def lead_plan_prompt(*, cfg: dict, lead: dict, team: str, goal: str, ws: dict, upstream: list[str]) -> list[dict]:
+def lead_plan_prompt(*, cfg: dict, lead: dict, team: str, goal: str, ws: dict, upstream: list[str], language: str | None = None) -> list[dict]:
     t = cfg["teams"][team]
     return [
         {
@@ -98,7 +114,7 @@ You are {lead['name']}, lead of the {t['label']} team ({t['brief']}). The CEO ga
 - Together the subtasks' "outputs" must cover every deliverable of the workstream.
 - Each subtask has 2 to 4 acceptance criteria checkable by reading files.
 - "dependsOn" lists subtask ids of this workstream only.
-{LANGUAGE}
+{language_rule(language)}
 
 Answer with ONLY this JSON object:
 {{"subtasks": [{{"id": "a", "title": "max 6 words", "description": "...", "acceptance": ["..."], "outputs": ["path"], "dependsOn": []}}]}}""",
@@ -120,12 +136,12 @@ UPSTREAM WORK ALREADY DONE:
     ]
 
 
-def advisor_prompt(*, lead: dict, team: str, goal: str, ws: dict | None, task: dict, from_: str, question: str, progress: str) -> list[dict]:
+def advisor_prompt(*, lead: dict, team: str, goal: str, ws: dict | None, task: dict, from_: str, question: str, progress: str, language: str | None = None) -> list[dict]:
     return [
         {
             "role": "system",
             "content": f"""[[role:advisor]]
-You are {lead['name']}, lead of the {team} team. One of your people asks you a question while working. Answer in at most 5 sentences: decide, don't hedge. {LANGUAGE} Plain text, no JSON.""",
+You are {lead['name']}, lead of the {team} team. One of your people asks you a question while working. Answer in at most 5 sentences: decide, don't hedge. {language_rule(language)} Plain text, no JSON.""",
         },
         {
             "role": "user",
@@ -134,12 +150,12 @@ You are {lead['name']}, lead of the {team} team. One of your people asks you a q
     ]
 
 
-def rescue_prompt(*, lead: dict, goal: str, task: dict, feedback: str) -> list[dict]:
+def rescue_prompt(*, lead: dict, goal: str, task: dict, feedback: str, language: str | None = None) -> list[dict]:
     return [
         {
             "role": "system",
             "content": f"""[[role:rescue]]
-You are {lead['name']}, the team lead. A subtask keeps failing review. Decide: "retry" with guidance that unblocks the worker, or "skip" if it cannot be done and the team should continue without it. {LANGUAGE}
+You are {lead['name']}, the team lead. A subtask keeps failing review. Decide: "retry" with guidance that unblocks the worker, or "skip" if it cannot be done and the team should continue without it. {language_rule(language)}
 Answer with ONLY this JSON object: {{"action": "retry" | "skip", "guidance": "..."}}""",
         },
         {
@@ -152,12 +168,12 @@ Answer with ONLY this JSON object: {{"action": "retry" | "skip", "guidance": "..
 # ---------- service teams ----------
 
 
-def librarian_prompt(*, librarian: dict, goal: str, task: dict, candidates: list[dict], per_task: int) -> list[dict]:
+def librarian_prompt(*, librarian: dict, goal: str, task: dict, candidates: list[dict], per_task: int, language: str | None = None) -> list[dict]:
     return [
         {
             "role": "system",
             "content": f"""[[role:librarian]]
-You are {librarian['name']}, the skill librarian. From the candidate skills pick at most {per_task} that will concretely help with this task. Pick none if none fits: a wrong skill is worse than no skill.
+You are {librarian['name']}, the skill librarian. From the candidate skills pick at most {per_task} that will concretely help with this task. Pick none if none fits: a wrong skill is worse than no skill. {language_rule(language)}
 Answer with ONLY this JSON object: {{"picks": [{{"id": "...", "why": "one short sentence"}}]}}""",
         },
         {
@@ -167,12 +183,12 @@ Answer with ONLY this JSON object: {{"picks": [{{"id": "...", "why": "one short 
     ]
 
 
-def prompt_eng_prompt(*, pe: dict, goal: str, task: dict, team: str, skills: list[str]) -> list[dict]:
+def prompt_eng_prompt(*, pe: dict, goal: str, task: dict, team: str, skills: list[str], language: str | None = None) -> list[dict]:
     return [
         {
             "role": "system",
             "content": f"""[[role:prompteng]]
-You are {pe['name']}, prompt engineer. Rewrite the subtask into a precise brief for the {team} agent that will execute it: the concrete result, structure and quality bar, constraints, the inputs to use, and how to self-check before finishing. For generative media also give the exact prompts to use. Add up to 2 sharper acceptance criteria and the pitfalls to avoid. {LANGUAGE}
+You are {pe['name']}, prompt engineer. Rewrite the subtask into a precise brief for the {team} agent that will execute it: the concrete result, structure and quality bar, constraints, the inputs to use, and how to self-check before finishing. For generative media also give the exact prompts to use. Add up to 2 sharper acceptance criteria and the pitfalls to avoid. {language_rule(language)}
 Answer with ONLY this JSON object: {{"brief": "...", "acceptance": ["..."], "pitfalls": ["..."]}}""",
         },
         {
@@ -185,7 +201,7 @@ Answer with ONLY this JSON object: {{"brief": "...", "acceptance": ["..."], "pit
 # ---------- worker ----------
 
 
-def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str) -> str:
+def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str, language: str | None = None) -> str:
     role = f"a sub-agent spawned by {(lead or {}).get('name', 'the lead')}" if agent["kind"] == "sub" else f"a {team_cfg['title']}"
     skills_block = f"\n\nASSIGNED SKILLS (follow them):\n{skills_text}" if skills_text else ""
     return f"""[[role:tasker:{agent['team']}]]
@@ -198,7 +214,7 @@ Answer with ONLY one JSON object, no prose, no code fences:
 Tools:
 {chr(10).join(f'- {TOOL_DOCS[t]}' for t in tools)}
 
-Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {LANGUAGE}{skills_block}"""
+Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{skills_block}"""
 
 
 def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str) -> str:
@@ -230,14 +246,14 @@ PROJECT FILES:
 SECURITY = 'Security review (code only): look for injection (SQL, shell, HTML/XSS), secrets or keys in code, unsafe eval/Function/innerHTML with untrusted data, missing input validation, insecure links (target=_blank without rel), unsafe dependencies from unknown CDNs. A real vulnerability means "revise".'
 
 
-def judge_prompt(*, judge: dict, goal: str, task: dict, attempt: int, summary: str, file_dump: str, checks: str, security: bool) -> list[dict]:
+def judge_prompt(*, judge: dict, goal: str, task: dict, attempt: int, summary: str, file_dump: str, checks: str, security: bool, language: str | None = None) -> list[dict]:
     security_block = f"\n{SECURITY}" if security else ""
     return [
         {
             "role": "system",
             "content": f"""[[role:judge]]
 You are {judge['name']}, QA & security reviewer of an AI company. Review the delivered files against the task's acceptance criteria. Be strict on substance (missing parts, broken code, placeholders, wrong language, criteria not met) and lenient on taste.{security_block}
-"feedback" must be a concrete, numbered list of what to fix; leave it empty when the verdict is "pass". If you notice a lesson worth keeping for future work, put it in "lesson". {LANGUAGE}
+"feedback" must be a concrete, numbered list of what to fix; leave it empty when the verdict is "pass". If you notice a lesson worth keeping for future work, put it in "lesson". {language_rule(language)}
 
 Answer with ONLY this JSON object:
 {{"verdict": "pass" | "revise", "score": 0-10, "feedback": "...", "lesson": ""}}""",
@@ -265,7 +281,7 @@ FILES:
 # ---------- CEO wrap-up and chat ----------
 
 
-def synth_prompt(*, ceo: dict, goal: str, plan_summary: str, workstreams: list[dict], tasks: list[dict], files: str) -> list[dict]:
+def synth_prompt(*, ceo: dict, goal: str, plan_summary: str, workstreams: list[dict], tasks: list[dict], files: str, language: str | None = None) -> list[dict]:
     lines = []
     for w in workstreams:
         sub = "\n".join(f"  - {t['id']} [{t['status']}] {t['title']}{' (escalated)' if t.get('escalated') else ''}" for t in tasks if t["wsId"] == w["id"])
@@ -274,7 +290,7 @@ def synth_prompt(*, ceo: dict, goal: str, plan_summary: str, workstreams: list[d
         {
             "role": "system",
             "content": f"""[[role:synth]]
-You are {ceo['name']}, the CEO. The company has finished. Write the final report in Markdown: what was delivered, the files and what each is for, how to use or open the result, and any open issue. Be concise and concrete. {LANGUAGE}""",
+You are {ceo['name']}, the CEO. The company has finished. Write the final report in Markdown: what was delivered, the files and what each is for, how to use or open the result, and any open issue. Be concise and concrete. {language_rule(language)}""",
         },
         {
             "role": "user",
@@ -283,12 +299,12 @@ You are {ceo['name']}, the CEO. The company has finished. Write the final report
     ]
 
 
-def chat_prompt(*, agent: dict, who: str, context: str, history: list[dict], text: str) -> list[dict]:
+def chat_prompt(*, agent: dict, who: str, context: str, history: list[dict], text: str, language: str | None = None) -> list[dict]:
     return [
         {
             "role": "system",
             "content": f"""[[role:chat]]
-You are {agent['name']}, {who}. The human who owns the company is talking to you. Answer briefly and concretely, in the language they use. If they ask for a change to running work, confirm what you will tell your team to do. Plain text.
+You are {agent['name']}, {who}. The human who owns the company is talking to you. Answer briefly and concretely, {'in the language they use.' if check(language) is None else language_rule(language)} If they ask for a change to running work, confirm what you will tell your team to do. Plain text.
 
 CURRENT CONTEXT:
 {context}""",
