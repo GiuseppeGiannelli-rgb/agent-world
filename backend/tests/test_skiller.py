@@ -220,7 +220,7 @@ async def test_routes_report_and_run(tmp_path):
     requests = []
     sk, _ = make(tmp_path, requests)
     app = create_app(skiller=sk)
-    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as c:
         assert (await c.get("/api/skills/skiller")).json()["approved"] == []
         body = (await c.post("/api/skills/skiller/run")).json()
         assert body["approved"] == ["good/skills"] and body["installed"] == []
@@ -361,7 +361,7 @@ async def test_approve_route(tmp_path):
     sk, _, dl = make_installer(tmp_path, requests)
     await sk.run_once()
     app = create_app(skiller=sk)
-    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as c:
         ok = (await c.post("/api/skills/skiller/approve", json={"slug": "stranger/skills"})).json()
         assert ok["install"]["status"] == "installed"
         bad = await c.post("/api/skills/skiller/approve", json={"slug": "nobody/unknown"})

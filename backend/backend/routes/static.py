@@ -37,7 +37,18 @@ def _resolve(root: Path, rel: str) -> Path | None:
     return full
 
 
-def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache"):
+# Spec 07: what the agents build is untrusted (a page they read can steer what
+# they write), yet this server serves it. The sandbox gives its scripts an
+# opaque origin: they run, but they are not the app, and LocalGuard refuses
+# what they send to /api. No allow-same-origin, by design: the price is that a
+# generated site cannot use localStorage here (open it from the folder for that).
+# frame-ancestors / X-Frame-Options on every page: 127.0.0.1 passes the Host
+# check, so without them another site could frame the app (clickjacking).
+NO_FRAMES = "frame-ancestors 'none'"
+PREVIEW_CSP = f"sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock; {NO_FRAMES}"
+
+
+def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache", sandbox: bool = False):
     full = _resolve(root, rel)
     if full is None:
         return PlainTextResponse("Forbidden", status_code=403)
@@ -45,7 +56,8 @@ def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache"):
     if not target.is_file():
         return PlainTextResponse("Not found", status_code=404)
     media_type = MIME.get(target.suffix.lower(), "application/octet-stream")
-    return FileResponse(target, media_type=media_type, headers={"cache-control": cache_control})
+    headers = {"cache-control": cache_control, "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": PREVIEW_CSP if sandbox else NO_FRAMES}
+    return FileResponse(target, media_type=media_type, headers=headers)
 
 
 def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None, live=None) -> None:
@@ -71,7 +83,7 @@ def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, stor
             run = active.data if active is not None else None
         if run is None:
             return PlainTextResponse("Run non trovato", status_code=404)
-        return serve_from(Path(run["workspace"]), rest)
+        return serve_from(Path(run["workspace"]), rest, sandbox=True)
 
     @app.get("/{path:path}")
     async def static_files(path: str):

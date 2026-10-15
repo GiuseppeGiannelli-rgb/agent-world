@@ -21,7 +21,7 @@ def app_and_store(tmp_path):
 def client(app_and_store):
     app, _, _ = app_and_store
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1")
 
 
 async def test_api_state_has_stub_and_real_fields(client):

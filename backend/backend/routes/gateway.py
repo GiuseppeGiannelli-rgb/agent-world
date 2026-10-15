@@ -1,6 +1,7 @@
 """OpenAI-compatible gateway (/v1): mirrors the `gateway()` handler in
 server/index.js. Streaming replies in a single chunk (D7)."""
 
+import hmac
 import os
 import time
 
@@ -15,7 +16,8 @@ def _authorized(request: Request) -> bool:
     key = os.environ.get("AGENT_WORLD_API_KEY")
     if not key:
         return True
-    return request.headers.get("authorization", "") == f"Bearer {key}"
+    # spec 07: a constant-time comparison, so the answer time says nothing about the key
+    return hmac.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {key}".encode())
 
 
 def mount(app, *, config, router) -> None:

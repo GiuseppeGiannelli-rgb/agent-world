@@ -6,12 +6,27 @@ import httpx
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def public_dns(monkeypatch):
+    """Spec 07: web_fetch resolves a name before it connects (no SSRF). The
+    names of these tests are public: they resolve to a public address
+    without asking any DNS server."""
+    import backend.web as web
+
+    async def resolve(host, port):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(web, "_resolve", resolve)
+
+
 def client_returning(routes: dict):
-    """routes: url substring -> httpx.Response (or list of them, consumed in order)."""
+    """routes: url substring -> httpx.Response (or list of them, consumed in order).
+    A plain page is fetched at its checked address, so the name is in Host."""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        target = f"{request.headers.get('host', '')}{request.url.raw_path.decode()} {request.url}"
         for key, value in routes.items():
-            if key in str(request.url):
+            if key in target:
                 if isinstance(value, list):
                     return value.pop(0)
                 return value

@@ -551,7 +551,19 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_API_KEY` | protegge il gateway `/v1` con un Bearer token |
 | `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli) |
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
+| `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
+
+### Sicurezza del server locale (spec 07)
+
+Il server non ha login: ascolta su `127.0.0.1`, e per questo si difende dalle pagine web che apri nel browser.
+- Rifiuta i nomi host sconosciuti (DNS rebinding).
+- Rifiuta le richieste di modifica che arrivano da un'altra origine (CSRF) e le letture di `/api` e `/v1` fatte da altri siti.
+- Non si lascia incorniciare.
+- I siti generati dagli agenti si aprono in una sandbox con un'origine opaca: i loro script girano, ma non possono usare le API dell'app. Per questo, nell'anteprima, non hanno `localStorage`; aprili dalla cartella del run se serve.
+- `web_fetch` non legge indirizzi locali o privati.
+
+I dettagli e i rischi accettati sono in [`docs/specs/07-security.md`](docs/specs/07-security.md).
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 

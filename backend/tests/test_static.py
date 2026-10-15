@@ -12,7 +12,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_WORLD_HOME", str(tmp_path))
     app = create_app(store=Store(tmp_path))
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://test")
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1")
 
 
 async def test_index_html(client):

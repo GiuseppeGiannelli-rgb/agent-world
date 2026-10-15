@@ -15,6 +15,7 @@ from backend.config import Config
 from backend.downloads import DownloadError, resolve_download_root
 from backend.media import Media
 from backend.router.index import Router
+from backend.security import LocalGuard, allowed_hosts
 from backend.routes import api_state, events, gateway, runs, skills_brain, static
 from backend.skiller import Skiller
 from backend.skills import SkillLibrary
@@ -89,6 +90,8 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     chats: dict = {}  # agentId -> chat history (capped at 60 by talk())
     shutdown = asyncio.Event()
     app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media, skiller))
+    # Spec 07: DNS rebinding and CSRF are refused before any route runs
+    app.add_middleware(LocalGuard, hosts=allowed_hosts(config.get()["server"].get("host")))
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
     api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)

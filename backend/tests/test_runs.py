@@ -88,7 +88,7 @@ def app_and_store(tmp_path, monkeypatch):
 @pytest.fixture
 def client(app_and_store):
     app, _, _ = app_and_store
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1")
 
 
 # ---------- POST /api/runs ----------
