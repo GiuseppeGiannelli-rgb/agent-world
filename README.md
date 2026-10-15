@@ -524,9 +524,9 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 
 ### Lingue parlate dagli agenti
 
-- **Una lingua per tutta l'app: italiano o inglese** (spec 06). Si sceglie dal selettore IT/EN nella barra in alto o dalle Impostazioni, e si salva in `config/local.json` come `ui.language`.
+- **Una lingua per tutta l'app, a scelta fra cinque: inglese (il default), italiano, spagnolo, francese e tedesco** (spec 06). Si sceglie dal selettore nella barra in alto (EN, IT, ES, FR, DE) o dalle Impostazioni, e si salva in `config/local.json` come `ui.language`. Un'installazione nuova parte in inglese (`config/default.json`).
   - Cambia subito l'interfaccia, senza ricaricare la pagina.
-  - Cambia la voce: la dettatura (🎙) e la lettura ad alta voce (🔊) usano `it-IT` o `en-US`.
+  - Cambia la voce: la dettatura (🎙) e la lettura ad alta voce (🔊) usano `en-US`, `it-IT`, `es-ES`, `fr-FR` o `de-DE`.
   - Cambia la lingua degli agenti: ogni prompt (CEO, lead, worker, sub-agenti, QA, Skill Hub, Prompt Lab, chat) impone di ragionare, scrivere i log e rispondere nella lingua scelta.
   - Cambia i messaggi del backend: quelli del run nel pannello Messaggi e i fumetti.
 

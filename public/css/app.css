@@ -231,8 +231,9 @@ body:not(.night) .primary { background: var(--ink); }
 .run-item .m { font-size: 11.5px; color: var(--ink-3); }
 
 /* tabs */
-.tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
-.tabs button { flex: 1 0 auto; padding: 7px 9px; border: none; border-radius: 9px; background: transparent; font-weight: 650; color: var(--ink-2); font-size: 12.5px; }
+/* spec 06: wrap instead of scrolling, so a longer language never hides a tab behind the hidden scrollbar */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.tabs button { flex: 1 0 auto; padding: 7px 5px; border: none; border-radius: 9px; background: transparent; font-weight: 650; color: var(--ink-2); font-size: 12.5px; }
 .tabs button.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 4px rgba(0, 0, 0, .15); }
 .tab-body { flex: 1; overflow-y: auto; padding: 12px; }
 .empty { color: var(--ink-3); text-align: center; padding: 32px 12px; line-height: 1.5; }

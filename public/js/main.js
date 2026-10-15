@@ -1,4 +1,4 @@
-import { LANGS, applyStatic, getLang, label, locale, setLang, t, teamName } from './i18n.js';
+import { DEFAULT_LANG, LANGS, applyStatic, getLang, label, locale, setLang, t, teamName } from './i18n.js';
 import { esc, markdown } from './md.js';
 
 // where a local "t" (a task, a team) hides the translator
@@ -623,7 +623,7 @@ async function sendChat() {
 // The language lives in the config (ui.language, D1): applied at boot and on every
 // config change, so a choice made in another tab reaches this one too.
 function applyLanguage() {
-  const lang = setLang(S.config?.ui?.language ?? 'it');
+  const lang = setLang(S.config?.ui?.language ?? DEFAULT_LANG);
   $('#lang').value = lang;
   applyStatic();
   renderExamples();
@@ -878,6 +878,8 @@ $('#goal').addEventListener('keydown', (e) => {
 });
 $('#goal-mic').addEventListener('click', (e) => listen(e.currentTarget, (text) => ($('#goal').value = text)));
 $('#btn-settings').addEventListener('click', openSettings);
+// the topbar selector lists LANGS: short codes, each language's own name as the tooltip
+$('#lang').innerHTML = Object.entries(LANGS).map(([k, name]) => `<option value="${k}" title="${esc(name)}">${k.toUpperCase()}</option>`).join('');
 $('#lang').addEventListener('change', (e) => chooseLanguage(e.target.value));
 $('#btn-home').addEventListener('click', () => world.resetView({ animate: true }));
 $('#btn-theme').addEventListener('click', () => setTheme(!document.body.classList.contains('night')));

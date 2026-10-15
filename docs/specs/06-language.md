@@ -1,6 +1,6 @@
-# Spec 06 — Lingua globale (Italiano / Inglese)
+# Spec 06 — Lingua globale (cinque lingue, inglese di default)
 
-**In breve.** Si sceglie la lingua dell'app (Italiano o Inglese) una volta sola. La scelta cambia:
+**In breve.** Si sceglie la lingua dell'app una volta sola: inglese (il default), italiano, spagnolo, francese o tedesco. All'inizio erano solo italiano e inglese, con l'italiano di default; l'estensione è nel §8. La scelta cambia:
 - l'interfaccia, subito e senza ricaricare la pagina;
 - la voce, cioè la sintesi vocale e la dettatura;
 - la lingua in cui gli agenti ragionano, scrivono i log e rispondono;
@@ -135,3 +135,39 @@ Fatte su Linux (container cloud), quindi non sulla macchina Windows di riferimen
 - A10 (ticket N12).
 
 Con `--only views,input,labels`, su `main` sono rossi gli stessi 7 controlli (tutti tranne A10, che sta nella fase `run`), con valori vicini. Quindi dipendono dall'ambiente (Chromium headless con SwiftShader a circa 3 fps, font di Linux) e non da questa spec. Il riferimento resta `npm run test:browser` su Windows.
+
+## 8. Estensione: cinque lingue, inglese di default (15/10/2026)
+
+Richiesta dall'utente dopo il merge in `main`: spagnolo, francese e tedesco, e il sito in inglese di default.
+
+**Backend**
+- `i18n.py`: `LANGUAGES = {"en", "it", "es", "fr", "de"}`, con l'inglese primo; `DEFAULT = "en"`. Le tabelle `MESSAGES` es/fr/de hanno le chiavi e i segnaposto dell'inglese, che è il riferimento. `TEAM_LABELS` ha en/es/fr/de; l'italiano non ce l'ha, perché le etichette di `default.json` sono già in italiano (D3).
+- `config/default.json` passa a `"ui": {"language": "en"}`, e `config.py` prende il default da `i18n.DEFAULT`.
+- Un run senza lingua (`None`) scrive i suoi messaggi in inglese. I prompt, invece, tengono la regola di prima (la lingua del GOAL, D2).
+- `language_rule()` non è cambiata: legge il nome da `LANGUAGES` ("Spanish", "French", "German").
+
+**Frontend**
+- `i18n.js`: `LANGS` (en, it, es, fr, de, ognuna nel suo nome), `DEFAULT_LANG = 'en'`, voci `es-ES`, `fr-FR`, `de-DE`. Il fallback di `t()` e `label()` è l'inglese.
+- Il selettore della topbar si costruisce da `LANGS` (EN, IT, ES, FR, DE, con il nome come tooltip); quello delle Impostazioni lo faceva già.
+- `index.html` ha `lang="en"` e i testi statici in inglese: prima che `main.js` parta non si vede l'italiano.
+- La barra delle tab ora va a capo (`flex-wrap`), e il padding orizzontale delle tab scende da 9 a 5 px. Con lo scroll orizzontale e la scrollbar nascosta, una lingua più lunga nascondeva l'ultima tab: con i font di Linux succedeva già in italiano (18 px) e in inglese (42 px). Adesso en, it, es e fr stanno su una riga; il tedesco va su due, con "Output" da solo.
+
+**`config/local.json`.** Non si tocca: contiene solo le scelte dell'utente. Chi aveva già salvato `"ui": {"language": "it"}` resta in italiano finché non cambia lingua.
+
+**Test**
+- `test_i18n.py`: le cinque lingue, l'inglese come default; chiavi e segnaposto uguali in ogni tabella; ogni tabella tradotta davvero (al massimo 3 testi uguali all'inglese); `TEAM_LABELS` completo; e il controllo incrociato: i codici di `LANGS` in `i18n.js` sono quelli di `LANGUAGES`, nello stesso ordine.
+- Aggiornati per il default inglese e per `fr`, che ora è valido (al suo posto `xx`): `test_config.py`, `test_run.py`, `test_prompts.py` (la regola in tutte e cinque le lingue), `test_runs.py`, `test_state.py`.
+- `flows-test.js`: il run rifiutato ora passa `language: 'en'` e si aspetta "Plan rejected". Prima ereditava la lingua di config, quindi l'esito dipendeva dal `local.json` di chi lancia i test.
+- Nuovo `scripts/i18n-test.js`, dentro `npm test`. Controlla le chiavi e i segnaposto di ogni dizionario contro l'inglese, una traduzione vera (al massimo il 15% dei testi uguali all'inglese), una voce `xx-XX` per lingua, il fallback all'inglese, e che `index.html` porti le parole inglesi del dizionario. Ho provato tre mutazioni (una chiave tedesca tolta, un segnaposto francese cambiato, il pulsante di `index.html` rimesso in italiano): ognuna fa diventare rosso solo il suo controllo.
+- Fase browser `language`, riscritta per le cinque lingue. I valori attesi li legge dai dizionari della pagina.
+  - L1: il default è l'inglese (o la lingua di `config/local.json`) e il selettore elenca le cinque lingue.
+  - L2: ogni lingua riscrive la UI, le etichette 3D e la lavagna senza reload.
+  - L3: la scelta resta dopo un reload.
+  - L4: il payload del run porta la lingua.
+  - L5: la voce usa `de-DE`.
+  - L6: l'italiano riporta le etichette di config.
+  - L7: il selettore delle Impostazioni elenca le cinque lingue.
+  - L8 (nuovo): in ogni lingua ogni tab è tutta visibile e la topbar non va in overflow, a 1920×1080 e 1440×900. Senza la correzione del CSS L8 è rosso (1–2 tab tagliate in ogni lingua).
+
+**Restano aperti:** N13 (errori HTTP in italiano) e N14 (simulatore demo in italiano). Con l'inglese di default si notano di più: la demo, in inglese, mostra comunque piani e consegne in italiano.
+
