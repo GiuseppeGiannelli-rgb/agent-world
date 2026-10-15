@@ -10,6 +10,8 @@ Si salva in `config/local.json` come `ui.language` e vale fra una sessione e l'a
 
 Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 
+**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13–N16.
+
 ## 1. Decisioni
 
 | # | Decisione |
@@ -42,7 +44,7 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 **Route.**
 - `POST /api/runs`: `language` è opzionale. Un valore assente o `null` prende `ui.language` di config. Un valore fuori da `LANGUAGES` dà 400 (`"Lingua non supportata: …"`, in italiano, vedi N13).
 - `POST /api/chat/:id`: usa la lingua del run attivo, se c'è, altrimenti `ui.language`.
-- `POST /api/config`: `ui` è fra le chiavi modificabili (`EDITABLE`), e `/api/state` e `/api/config` la espongono.
+- `POST /api/config`: `ui` è fra le chiavi modificabili (`EDITABLE`), e `/api/state` e `/api/config` la espongono. Dà 400 (`"Lingua non supportata: …"`) e non scrive niente se `ui` non è un oggetto o se `ui.language` non è una stringa di `LANGUAGES`.
 
 **Run.** `Run(options={"language": …})` salva la lingua in `data["language"]` e la passa a ogni builder e a ogni `tr()`.
 
@@ -77,7 +79,11 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 
 - **N13**: errori HTTP del backend ancora in italiano.
 - **N14**: testi del provider demo solo in italiano.
-- **N15**: `test_state.py::test_api_config_post_updates_and_emits` scrive nel vero `config/local.json` (per questo lì c'è `limits.maxParallel = 3`). Va isolato su una cartella temporanea. È un problema preesistente, fuori da questa spec.
+- **N15**: `test_state.py::test_api_config_post_updates_and_emits` scrive nel vero `config/local.json` (per questo lì c'è `limits.maxParallel = 3`). Va isolato su una cartella temporanea. È un problema preesistente, fuori da questa spec. Lo fanno anche i due test di `test_events.py` che chiamano `POST /api/config` (`maxParallel` 1…5): `live_server` crea l'app con il `Config` del repo.
+- **N16**: test che passano solo su Windows. Su Linux sono rossi anche su `main`, quindi non c'entrano con questa spec.
+  - `test_static.py::test_traversal_forbidden[/..\..\server\index.js]` e `test_tools.py::TestWorkspace::test_resolve_keeps_paths_inside_the_root` (`..\..\x`, `C:/Windows/x`). Su Linux `\` non separa i percorsi e `C:` non è un drive: `..\..\x` è il nome di un file dentro la cartella del progetto, quindi niente esce dalla radice. Il contenimento regge, ma i test si aspettano il rifiuto che fa Windows. Strade possibili: rifiutare `\` e `X:` su ogni sistema, così la regola è una sola e i workspace restano portabili; oppure separare le attese per piattaforma.
+  - `temp-test.js` C3, "a killed smoke leaves its folder": uccide lo smoke con `taskkill /PID … /F`, che su Linux non esiste. Lo smoke non viene ucciso, finisce da solo e pulisce la sua cartella (`leftByTheKill: false`). Fuori da Windows serve un kill forzato equivalente (`SIGKILL`).
+  - Altre ipotesi di Windows trovate qui: `scripts/lib/backend-launcher.js` cerca solo `backend/.venv/Scripts/python.exe` (su Linux e macOS è `.venv/bin/python`), e `scripts/browser/headless.js` trova solo Edge o Chrome installati. Per le verifiche del §7 ho usato un symlink dentro `.venv` (ignorato da git) e `BROWSER` puntato a Chromium con `--no-sandbox`.
 
 ## 6. Scostamenti
 
@@ -102,3 +108,30 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
   - la richiesta del run e la voce sono simulate dentro la pagina: non parte nessuna missione e nessun audio;
   - ho provato che i controlli possono fallire con tre mutazioni: senza `language` nel payload diventa rosso L4, con `u.lang = 'it-IT'` diventa rosso L5, senza `relabel()` diventa rosso L2. In ogni caso è diventato rosso solo il controllo atteso.
 - `brief` e `title` dei team sono già in inglese in `default.json` e restano come sono. Il titolo del CEO (`ceo.title`, "CEO · Regia") si traduce come le etichette dei team (D3): la chiave `team.ceo.title` c'è solo in inglese, e in italiano si usa il valore di config.
+
+**Chiusura (15/10/2026).** Tre difetti trovati dalle verifiche, nessuno della lingua. Ognuno ha il suo commit con il test visto rosso prima della correzione.
+- `df7ef3c` — `test_events.py::test_config_post_produces_sse_frame` voleva il frame `config` subito dopo `retry`, con `seq` 1. La reindicizzazione dello Skill Hub all'avvio però emette `skills` sullo stesso bus, e su una macchina veloce arriva prima. Era rosso anche su `main`. Ora il test salta gli altri frame, come già faceva `test_ping_on_idle`, e controlla che `seq` cresca. Con l'evento `config` rinominato diventa rosso in circa 6 s, invece di restare appeso ad aspettare i ping da 15 s.
+- `ca94b53` — due difetti del controllo della porta occupata (`809e0cb`), visti su Linux, dove `flows-test.js` falliva con "fetch failed" subito dopo `backend-boot-test.js` (stessa porta, 4398):
+  - il bind di prova non usava `SO_REUSEADDR`, quindi le connessioni in TIME_WAIT di un server appena chiuso risultavano "occupate", mentre uvicorn avrebbe fatto il bind senza problemi. Ora il bind di prova fa come uvicorn. Su Windows `SO_REUSEADDR` resta spento, perché lì permetterebbe di fare il bind sopra un listener vivo;
+  - il messaggio cominciava con `Agent World  →`, cioè la riga di avvio che gli script aspettano su stdout, e così i test andavano avanti contro un server mai partito. Ora va su stderr e senza quel prefisso.
+- `402896d` — `POST /api/config` con `ui.language` lista o oggetto: `x in LANGUAGES` sollevava `TypeError` e la risposta era 500. Ora si controlla prima il tipo, come faceva già `POST /api/runs`, e la risposta è 400.
+
+## 7. Verifiche finali (15/10/2026)
+
+Fatte su Linux (container cloud), quindi non sulla macchina Windows di riferimento. Per ogni rosso ho rifatto lo stesso controllo su `main`, nello stesso ambiente.
+
+| Suite | Risultato | I rossi |
+|---|---|---|
+| `pytest` | 355 passati, 3 saltati, 2 rossi | i 2 test di percorsi Windows (N16), rossi anche su `main`. I saltati: `aw_core` non compilato (×2) e il clash di maiuscole, che esiste solo su volumi case-insensitive |
+| `world-test`, `backend-boot-test`, `smoke`, `flows-test`, `secret-scan-test` | tutti `ALL OK` / `OK` | — |
+| `temp-test` | 1 rosso | C3 (N16), rosso anche su `main` |
+| `browser-test`, completo | 234 ok, 8 rossi | vedi sotto |
+| `browser-test --only language`, dopo le correzioni della chiusura | `ALL OK` (L1–L7) | — |
+
+**Gli 8 rossi della suite browser:**
+- `views` ×4 ("floor under the UI", a 2560×1440 e 1440×900, con i pannelli LR e -R);
+- `input` ×2 ("a real drag…", "a real click on an agent…");
+- D8 ("painted bay text covered at most 27%": 30,9%);
+- A10 (ticket N12).
+
+Con `--only views,input,labels`, su `main` sono rossi gli stessi 7 controlli (tutti tranne A10, che sta nella fase `run`), con valori vicini. Quindi dipendono dall'ambiente (Chromium headless con SwiftShader a circa 3 fps, font di Linux) e non da questa spec. Il riferimento resta `npm run test:browser` su Windows.
