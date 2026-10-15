@@ -10,7 +10,7 @@ Si salva in `config/local.json` come `ui.language` e vale fra una sessione e l'a
 
 Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 
-**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13–N16.
+**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13, N14 e N16; N15 è chiuso (§5).
 
 ## 1. Decisioni
 
@@ -80,6 +80,26 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 - **N13**: errori HTTP del backend ancora in italiano.
 - **N14**: testi del provider demo solo in italiano.
 - **N15**: `test_state.py::test_api_config_post_updates_and_emits` scrive nel vero `config/local.json` (per questo lì c'è `limits.maxParallel = 3`). Va isolato su una cartella temporanea. È un problema preesistente, fuori da questa spec. Lo fanno anche i due test di `test_events.py` che chiamano `POST /api/config` (`maxParallel` 1…5): `live_server` crea l'app con il `Config` del repo.
+  - **Chiuso il 16/10/2026** (branch `fix/n15-test-isolation`, decisioni D1–D3 dell'utente).
+    - **Le fonti misurate erano quattro:**
+      1. `test_state.py` (fixture con `Config(ROOT / "config")` e `POST /api/config`);
+      2. `test_events.py` (`create_app()` senza `config=`);
+      3. `test_runs.py` (6 log del router in `data/calls/` del repo, perché `AGENT_WORLD_HOME` non era impostato);
+      4. il lifespan, che su un clone nuovo faceva `git clone` delle `skills.repos` in `skills/vendor/`.
+
+      Al contrario, i test leggevano anche le preferenze dell'utente.
+    - **Soluzione: i default distribuiti restano nel repo, le preferenze si spostano.**
+      - `Config(dir, local_file=None)` cerca il file in quest'ordine: `local_file`, poi `AGENT_WORLD_LOCAL_CONFIG`, poi `dir/local.json`. In produzione non cambia niente.
+      - `AGENT_WORLD_SKILL_REPOS=0` salta il clone all'avvio.
+      - `conftest.py` imposta per ogni test (fixture autouse) un file di preferenze vuoto e una `AGENT_WORLD_HOME` sua, e per tutta la sessione `AGENT_WORLD_SKILL_REPOS=0`.
+      - `demoEnv()` fa lo stesso per i server degli script Node e rifiuta di partire senza `AGENT_WORLD_HOME`.
+    - **Test, visti rossi prima della correzione:**
+      - la guardia di sessione in `conftest.py` fotografa `config/local.json`, `data/` e `skills/vendor/` e fa fallire la suite se un test li tocca. Prima della correzione elencava `local.json` e i 6 log;
+      - `test_isolation.py` ha 9 test: 7 rossi, uno per fonte, più la precedenza;
+      - `scripts/launcher-test.js`, in `npm test`: un server avviato con `demoEnv()` aveva scritto `maxParallel: 7` nel file dell'utente;
+      - fase browser `language`, L9: il file dell'utente non viene mai scritto. La fase non salva più né ripristina `config/local.json`, e L1 verifica sempre il default inglese.
+    - **Mutazioni:** con ognuna delle quattro difese tolta, i test diventano rossi. Per le tre sull'isolamento si accende anche la guardia; per l'interruttore del clone basta il suo test, che usa un `vendor/` temporaneo.
+    - **Limite noto:** la guardia vede anche le scritture dell'app, se l'app gira dalla stessa cartella mentre passano i test.
 - **N16**: test che passano solo su Windows. Su Linux sono rossi anche su `main`, quindi non c'entrano con questa spec.
   - `test_static.py::test_traversal_forbidden[/..\..\server\index.js]` e `test_tools.py::TestWorkspace::test_resolve_keeps_paths_inside_the_root` (`..\..\x`, `C:/Windows/x`). Su Linux `\` non separa i percorsi e `C:` non è un drive: `..\..\x` è il nome di un file dentro la cartella del progetto, quindi niente esce dalla radice. Il contenimento regge, ma i test si aspettano il rifiuto che fa Windows. Strade possibili: rifiutare `\` e `X:` su ogni sistema, così la regola è una sola e i workspace restano portabili; oppure separare le attese per piattaforma.
   - `temp-test.js` C3, "a killed smoke leaves its folder": uccide lo smoke con `taskkill /PID … /F`, che su Linux non esiste. Lo smoke non viene ucciso, finisce da solo e pulisce la sua cartella (`leftByTheKill: false`). Fuori da Windows serve un kill forzato equivalente (`SIGKILL`).

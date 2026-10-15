@@ -51,9 +51,15 @@ function keyEnvNames(root) {
 // that exist only in .env (load_env fills keys ABSENT from the environment,
 // so merely deleting them from process.env lets .env resurrect them and the
 // "demo" run silently goes live -- measured in P7 QA).
+// N15: the server gets the caller's temp home (AGENT_WORLD_HOME, required), a
+// preferences file inside it instead of the user's config/local.json, and no
+// clone of skills.repos at startup: a test server neither reads nor writes the
+// user's state.
 export function demoEnv(root, overrides = {}) {
+  const home = overrides.AGENT_WORLD_HOME;
+  if (!home) throw new Error('demoEnv needs AGENT_WORLD_HOME (a temp folder): without it the server would use the user files');
   // AGENT_WORLD_SKILLER=0: no background scouting of GitHub during tests (Spec 05)
-  const env = { ...process.env, AGENT_WORLD_SKILLER: '0', ...overrides };
+  const env = { ...process.env, AGENT_WORLD_SKILLER: '0', AGENT_WORLD_SKILL_REPOS: '0', AGENT_WORLD_LOCAL_CONFIG: join(home, 'local.json'), ...overrides };
   for (const k of Object.keys(env)) if (k.endsWith('_KEY')) env[k] = '';
   for (const k of keyEnvNames(root)) env[k] = '';
   return env;

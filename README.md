@@ -553,6 +553,8 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
+| `AGENT_WORLD_LOCAL_CONFIG` | sposta il file delle preferenze (di default `config/local.json`): lo usano i test, per non leggere né scrivere le tue |
+| `AGENT_WORLD_SKILL_REPOS=0` | all'avvio non clona le repo di `skills.repos` che mancano (lo usano i test) |
 
 ### Sicurezza del server locale (spec 07)
 
