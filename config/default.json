@@ -110,7 +110,7 @@
       "fal":          { "kind": "fal", "keyEnv": "FAL_KEY" },
       "elevenlabs":   { "kind": "elevenlabs", "keyEnv": "ELEVENLABS_API_KEY", "voiceId": "21m00Tcm4TlvDq8ikWAM" },
       "pollinations": { "kind": "pollinations", "keyless": true, "enabled": false },
-      "edgetts":      { "kind": "edgetts", "keyless": true, "enabled": false },
+      "edgetts":      { "kind": "edgetts", "keyless": true },
       "system":       { "kind": "system", "keyless": true }
     },
     "image": ["openai/gpt-image-1", "fal/fal-ai/flux/schnell", "pollinations/flux"],

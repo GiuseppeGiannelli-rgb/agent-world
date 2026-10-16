@@ -134,7 +134,10 @@ SAPI_SCRIPT = (
     "try { $s.SelectVoiceByHints('NotSet', 'NotSet', 0, [System.Globalization.CultureInfo]$env:AW_TTS_CULTURE) } catch {}; "
     "$s.SetOutputToWaveFile($env:AW_TTS_OUT); $s.Speak($text); $s.Dispose()"
 )
-FALLBACK_KINDS = {"edgetts", "system"}  # used only in live runs, after every provider of the list
+# used only in live runs, after every provider of the list. edge-tts needs no
+# activation there (a live run already sends its prompts out): it speaks when
+# installed (uv add edge-tts), unless media.providers.edgetts.enabled is false.
+FALLBACK_KINDS = {"edgetts", "system"}
 AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".m4a")
 QUOTA_COOLDOWN_MS = 6 * 3600 * 1000
 
@@ -275,8 +278,8 @@ class Media:
 
     def chain(self, kind: str, live: bool) -> list[dict]:
         """Spec 08: a live run always ends with a real file. The ready providers
-        not benched, then the fallbacks (edge-tts, the system voice), then the
-        local generator."""
+        not benched, then the fallbacks (edge-tts's natural voice when installed,
+        the system voice), then the local generator."""
         if not live:
             return self.targets(kind)
         listed = [t for t in self._listed(kind) if not self.benched(t["provider"])]

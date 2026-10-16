@@ -5,8 +5,9 @@ plan, and the agent wrote a fake 133-byte .mp3 that QA rejected.
 
 - A provider out of credit (402, 429 insufficient_quota) or with a refused
   key (401) is benched for the session, like in the text router.
-- Speech, in a live run: the cloud providers, then edge-tts if installed and
-  enabled (opt-in: it sends the text to Microsoft), then the system's own
+- Speech, in a live run: the cloud providers, then edge-tts when installed (a
+  natural neural voice; a live run already sends its prompts out, so it needs
+  no activation; media.providers.edgetts.enabled: false turns it off), then the system's own
   speech engine (SAPI on Windows, say on macOS, espeak-ng on Linux: offline,
   free, a real voice whose length follows the text), then the demo chime.
 - Images, in a live run: the cloud providers, Pollinations only if enabled
@@ -37,7 +38,7 @@ CFG = {
             "fal": {"kind": "fal", "keyEnv": "M_KEY"},
             "elevenlabs": {"kind": "elevenlabs", "keyEnv": "M_KEY", "voiceId": "v"},
             "pollinations": {"kind": "pollinations", "keyless": True, "enabled": False},
-            "edgetts": {"kind": "edgetts", "keyless": True, "enabled": False},
+            "edgetts": {"kind": "edgetts", "keyless": True},
             "system": {"kind": "system", "keyless": True},
         },
         "image": ["openai/gpt-image-1", "fal/fal-ai/flux/schnell", "pollinations/flux"],
@@ -74,6 +75,8 @@ def media(calls, monkeypatch):
     from backend.media import Media
 
     monkeypatch.setenv("M_KEY", "k")
+    # edge-tts "not installed" unless a test installs a fake: no test reaches Microsoft
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
 
     def handler(request):
         calls.append(f"{request.url.host}{request.url.path}")
@@ -127,10 +130,7 @@ async def test_with_no_speech_engine_the_chime_is_the_last_resort(media, monkeyp
     assert out["target"] == "mock/demo" and out["demo"] is True
 
 
-@pytest.mark.asyncio
-async def test_edge_tts_only_when_installed_and_enabled(media, monkeypatch, system_engine):
-    saved = []
-
+def _fake_edge(monkeypatch, saved):
     class Communicate:
         def __init__(self, text, voice):
             saved.append(voice)
@@ -139,12 +139,30 @@ async def test_edge_tts_only_when_installed_and_enabled(media, monkeypatch, syst
             yield {"type": "audio", "data": b"ID3edge-mp3"}
 
     monkeypatch.setitem(sys.modules, "edge_tts", types.SimpleNamespace(Communicate=Communicate))
-    out = await media.speech({"text": "Ciao", "lang": "it"}, live=True)
-    assert out["target"] == "system/tts"  # installed but not enabled: the text stays on this machine
-    media.cfg["providers"]["edgetts"]["enabled"] = True
+
+
+@pytest.mark.asyncio
+async def test_in_a_live_run_edge_tts_speaks_by_default_when_installed(media, monkeypatch, system_engine, calls):
+    """No activation needed: a live run already sends its prompts to external
+    providers. The natural neural voice comes before the system's own."""
+    saved = []
+    _fake_edge(monkeypatch, saved)
     out = await media.speech({"text": "Ciao", "lang": "it"}, live=True)
     assert out["target"] == "edgetts/neural" and out["ext"] == "mp3" and out["bytes"] == b"ID3edge-mp3"
-    assert saved == ["it-IT-ElsaNeural"]
+    assert saved == ["it-IT-ElsaNeural"]  # the voice of the run's language
+    assert system_engine == []
+    assert media.benched("openai") == "quota_exhausted" and media.benched("elevenlabs") == "auth"  # it came after them
+    media.cfg["providers"]["edgetts"]["enabled"] = False  # turned off explicitly: the system voice
+    assert (await media.speech({"text": "Ciao", "lang": "it"}, live=True))["target"] == "system/tts"
+
+
+@pytest.mark.asyncio
+async def test_edge_tts_never_speaks_in_a_demo_run(media, monkeypatch, system_engine):
+    saved = []
+    _fake_edge(monkeypatch, saved)
+    media.cfg["speech"] = ["edgetts/neural", "system/tts"]  # even with no cloud provider before it
+    out = await media.speech({"text": "Ciao", "lang": "it"})  # live=False
+    assert out["target"] == "mock/demo" and saved == [] and system_engine == []
 
 
 @pytest.mark.asyncio
@@ -315,7 +333,8 @@ def test_the_embedding_order_follows_the_spec():
     assert cfg["rag"]["embeddings"] == ["openai/text-embedding-3-small", "gemini/gemini-embedding-001", "mistral/mistral-embed", "ollama/nomic-embed-text"]
     speech = cfg["media"]["speech"]
     assert speech[-2:] == ["edgetts/neural", "system/tts"]
-    assert cfg["media"]["providers"]["edgetts"]["enabled"] is False and cfg["media"]["providers"]["pollinations"]["enabled"] is False
+    assert cfg["media"]["providers"]["edgetts"].get("enabled", True) is not False  # live runs: on when installed
+    assert cfg["media"]["providers"]["pollinations"]["enabled"] is False  # images: still opt-in
 
 
 @pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="no ffmpeg on this machine")

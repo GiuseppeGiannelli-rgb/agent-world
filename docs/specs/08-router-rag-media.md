@@ -120,10 +120,10 @@ Il secondo tentativo senza `response_format` avviene solo su un 400 generico: no
 - Gli errori dei media si leggono come quelli del router: un provider senza credito o con la chiave rifiutata resta fuori per la sessione.
 - **Voce, in una run live** (`Media.chain`):
   1. i provider cloud;
-  2. edge-tts, se installato (`uv add edge-tts`) e attivato: è un opt-in perché manda il testo a Microsoft;
+  2. edge-tts, voce neurale naturale, se installato (`uv add edge-tts`). Non va attivato: in una run LIVE i prompt vanno già a provider esterni, quindi mandare il testo a Microsoft non aggiunge esposizione (decisione dell'utente, 16/10/2026). Si spegne con `media.providers.edgetts.enabled: false`, e non parla mai in una run demo;
   3. il sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux): offline, gratis, una voce vera lunga quanto il testo. Il testo passa su stdin, mai sulla riga di comando;
   4. il jingle demo, come ultima risorsa.
-- **Immagini, in una run live:** i provider cloud, Pollinations solo se attivato (opt-in come prima: manda il prompt fuori), poi il generatore locale.
+- **Immagini, in una run live:** i provider cloud, Pollinations solo se attivato (resta un opt-in, come prima), poi il generatore locale.
 - Le run demo e lo stato dei media restano invariati.
 - **Formato.** Il file ha il formato che ha davvero. Un WAV chiesto come `.mp3` viene convertito con ffmpeg, se c'è; altrimenti si salva come `.wav`, e il `.mp3` atteso dal task conta come consegnato.
 - `write_file` rifiuta i file media: arrivano solo da `generate_image` e `generate_speech`.
