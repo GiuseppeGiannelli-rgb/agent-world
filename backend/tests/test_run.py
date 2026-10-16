@@ -242,6 +242,47 @@ class TestChatHelpers:
         assert out == {"ok": True}
 
 
+class TestRolesOnTheirTier:
+    """Spec 08: each kind of call lands on the tier of its role. The team combos
+    come from config (CEO and QA frontier, development code...); on top of them a
+    lead plans and helps on router.roles.lead, a sub-agent works on
+    router.roles.sub, unless it was escalated."""
+
+    @pytest.mark.asyncio
+    async def test_leads_plan_on_smart_and_sub_agents_work_on_fast(self, demo_ctx):
+        from backend.run import Run
+
+        calls = []
+        real = demo_ctx.router.chat
+
+        async def spy(**kw):
+            system = next(m["content"] for m in kw["messages"] if m["role"] == "system")
+            calls.append({"marker": system.split("]]", 1)[0] + "]]", "role": kw.get("role"), "use": kw.get("use"), "agent": (kw.get("meta") or {}).get("agentId")})
+            return await real(**kw)
+
+        demo_ctx.router.chat = spy
+        run = Run(goal="The complete launch website for a bakery, with images and a voice-over", ctx=demo_ctx, options={"language": "en"})
+        await asyncio.wait_for(run.start(), timeout=120)
+        assert run.data["status"] in ("completed", "completed_with_failures"), run.data["error"]
+        roles = demo_ctx.config.get()["router"]["roles"]
+        kinds = {a["id"]: a["kind"] for a in demo_ctx.team.agents.values()}
+        import re
+
+        for c in calls:  # a sub-agent leaves the team when its task is done: its id says what it was
+            if c["agent"] and re.search(r"-sub\d+$", c["agent"]):
+                kinds[c["agent"]] = "sub"
+
+        leads = [c for c in calls if c["marker"] == "[[role:lead]]"]
+        assert leads and all(c["use"] == roles["lead"] for c in leads)
+        subs = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "sub"]
+        assert subs, "a complex mission spawns sub-agents"
+        assert all(c["use"] in (roles["sub"], "frontier") for c in subs)
+        workers = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "worker"]
+        assert workers and all(c["use"] in (None, "frontier") for c in workers)  # their team combo, or escalated
+        assert all(c["role"] == "qa" for c in calls if c["marker"] == "[[role:judge]]")
+        assert all(c["role"] == "ceo" for c in calls if c["marker"] in ("[[role:planner]]", "[[role:synth]]"))
+
+
 class TestEmergencyAnswers:
     """Spec 08: when no provider answers in a live run, the router lets the demo
     simulator answer (emergency). The run says so once, in its language, where

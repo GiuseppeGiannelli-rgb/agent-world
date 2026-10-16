@@ -117,7 +117,9 @@ class Tasker:
             for note in run.take_steering(task, agent):
                 self.messages.append({"role": "user", "content": f"MESSAGE FROM THE USER (the owner): {note}\nTake it into account from now on."})
             run.team.set(agent["id"], {"state": "thinking", "tool": None, "toolTarget": None})
-            res = await run.chat(role=task["team"], use=self.use, messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task)
+            # spec 08: a sub-agent works on router.roles.sub, unless escalated
+            use = self.use or (run.role_combo("sub") if agent.get("kind") == "sub" else None)
+            res = await run.chat(role=task["team"], use=use, messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task)
             action = parse_action(res["text"], self.tools)
             if not action:
                 self.messages.append({"role": "assistant", "content": res["text"][:2000]})

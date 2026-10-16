@@ -63,6 +63,13 @@ def _classify(status: int, body) -> ProviderError:
     return ProviderError(message, status=status, kind="bad_request")
 
 
+def base_url(provider: dict) -> str:
+    """baseUrl, or the URL in the environment variable baseUrlEnv (spec 08: a
+    local OpenAI-compatible server, vLLM, llama.cpp or Jan, at LOCAL_OPENAI_URL)."""
+    url = provider.get("baseUrl") or (os.environ.get(provider["baseUrlEnv"], "") if provider.get("baseUrlEnv") else "")
+    return url.strip().rstrip("/")
+
+
 def strip_thinking(text) -> str:
     return THINK_RE.sub("", text or "").strip()
 
@@ -101,7 +108,7 @@ async def openai_chat(provider: dict, provider_id: str, model: str, req: dict, c
     if want_json:
         body["response_format"] = {"type": "json_object"}
 
-    url = provider["baseUrl"].rstrip("/") + "/chat/completions"
+    url = base_url(provider) + "/chat/completions"
     timeout_s = provider.get("timeoutMs", DEFAULT_TIMEOUT_S * 1000) / 1000
     try:
         data = await _post(client, url, headers, body, timeout_s)
@@ -148,7 +155,7 @@ async def anthropic_chat(provider: dict, model: str, req: dict, client) -> dict:
     if req.get("temperature") is not None:
         body["temperature"] = req["temperature"]
     timeout_s = provider.get("timeoutMs", DEFAULT_TIMEOUT_S * 1000) / 1000
-    data = await _post(client, provider["baseUrl"].rstrip("/") + "/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}, body, timeout_s)
+    data = await _post(client, base_url(provider) + "/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}, body, timeout_s)
     text = strip_thinking("".join(b.get("text", "") for b in (data.get("content") or []) if b.get("type") == "text"))
     if not text:
         raise ProviderError("Empty answer from provider", retryable=True, kind="empty")

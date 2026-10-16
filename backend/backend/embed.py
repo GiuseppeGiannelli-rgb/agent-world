@@ -21,6 +21,7 @@ import re
 import zlib
 from pathlib import Path
 
+from backend.router.providers import base_url
 from backend.search import tokenize
 
 LOCAL = "local/ngram"
@@ -213,7 +214,7 @@ class Embedder:
         body = {"model": model, "input": [t[:8000] or " " for t in inputs]}
         if self.rag.get("dimensions") and provider_id == "openai":
             body["dimensions"] = int(self.rag["dimensions"])
-        res = await self.client.post(p["baseUrl"].rstrip("/") + "/embeddings", headers=headers, json=body, timeout=TIMEOUT_S)
+        res = await self.client.post(base_url(p) + "/embeddings", headers=headers, json=body, timeout=TIMEOUT_S)
         if res.status_code >= 400:
             raise RuntimeError(f"{target}: HTTP {res.status_code}")
         data = sorted(res.json()["data"], key=lambda d: d.get("index", 0))

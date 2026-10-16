@@ -49,7 +49,8 @@ function keyEnvNames(root) {
   const walk = (o) => {
     if (!o || typeof o !== 'object') return;
     for (const [k, v] of Object.entries(o)) {
-      if (k === 'keyEnv' && typeof v === 'string') names.add(v);
+      // spec 08: also the URL of a local server (LOCAL_OPENAI_URL), or a test server would go live
+      if ((k === 'keyEnv' || k === 'baseUrlEnv') && typeof v === 'string') names.add(v);
       else walk(v);
     }
   };

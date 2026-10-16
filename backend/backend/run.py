@@ -312,6 +312,13 @@ class Run:
             self.team.get(agent["id"])["model"] = res["target"]
         return res
 
+    def role_combo(self, kind: str) -> str | None:
+        """Spec 08: the combo of a kind of work on top of the team combos
+        (router.roles: a lead plans and helps on "smart", a sub-agent works on
+        "fast"), or None to keep the team's own combo."""
+        combo = (self.cfg["router"].get("roles") or {}).get(kind)
+        return combo if combo and combo in self.cfg["combos"] else None
+
     async def chat_json(self, opts: dict, validate=None, tries: int = 2):
         messages = list(opts["messages"])
         for _ in range(tries):
@@ -542,7 +549,7 @@ class Run:
         if complex_:
             upstream = [f"{w['id']} {w['title']}: {w['summary'] or 'done'} (files: {', '.join(w['deliverables'])})" for w in (self.ws_by_id(d) for d in ws["dependsOn"])]
             raw = await self.chat_json(
-                {"role": ws["team"], "messages": lead_plan_prompt(cfg=self.cfg, lead=lead, team=ws["team"], goal=self.data["goal"], ws=ws, upstream=upstream, language=self.lang), "max_tokens": 4000, "agent": lead},
+                {"role": ws["team"], "use": self.role_combo("lead"), "messages": lead_plan_prompt(cfg=self.cfg, lead=lead, team=ws["team"], goal=self.data["goal"], ws=ws, upstream=upstream, language=self.lang), "max_tokens": 4000, "agent": lead},
                 lambda o: isinstance(o.get("subtasks"), list),
             )
             if raw:
@@ -798,6 +805,7 @@ class Run:
         self.message(agent["id"], responder["id"], "question", question)
         res = await self.chat(
             role="ceo" if responder["kind"] == "ceo" else task["team"],
+            use=None if responder["kind"] == "ceo" else self.role_combo("lead"),
             messages=advisor_prompt(lead=responder, team=(self.cfg["teams"].get(task["team"]) or {}).get("label") or task["team"], goal=self.data["goal"], ws=self.ws_by_id(task["wsId"]), task=task, from_=agent["name"], question=question, progress=self.progress_text(task["team"]), language=self.lang),
             max_tokens=800,
             agent=responder,
@@ -823,7 +831,7 @@ class Run:
         lead = self.team.lead(task["team"]) or self.ceo
         self.message(agent["id"], lead["id"], "stuck", self.t("stuck", title=task["title"], n=task["revisions"]))
         d = await self.chat_json(
-            {"role": "ceo" if lead["kind"] == "ceo" else task["team"], "messages": rescue_prompt(lead=lead, goal=self.data["goal"], task=task, feedback=feedback, language=self.lang), "max_tokens": 1000, "agent": lead, "task": task},
+            {"role": "ceo" if lead["kind"] == "ceo" else task["team"], "use": None if lead["kind"] == "ceo" else self.role_combo("lead"), "messages": rescue_prompt(lead=lead, goal=self.data["goal"], task=task, feedback=feedback, language=self.lang), "max_tokens": 1000, "agent": lead, "task": task},
             lambda o: o.get("action") in ("retry", "skip"),
         )
         d = d or {"action": "retry", "guidance": self.t("rescue_default")}

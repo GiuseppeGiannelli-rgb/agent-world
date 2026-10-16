@@ -26,42 +26,78 @@
     "defaultCombo": "fast",
     "escalationCombo": "frontier",
     "demoFallback": true,
+    "emergencyMock": true,
     "cooldownBaseMs": 15000,
     "cooldownMaxMs": 300000,
     "authCooldownMs": 600000,
-    "logCalls": true
+    "quotaCooldownMs": 21600000,
+    "deadModelTtlMs": 86400000,
+    "logCalls": true,
+    "cascade": ["frontier", "smart", "fast", "free", "local"],
+    "roles": { "lead": "smart", "sub": "fast" },
+    "aliases": {
+      "gemini/gemini-2.5-pro": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-2.5-flash"],
+      "gemini/gemini-2.5-pro-preview": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-2.5-flash"],
+      "gemini/gemini-3.1-pro-preview": ["gemini/gemini-2.5-flash"],
+      "gemini/gemini-2.5-flash-preview": ["gemini/gemini-2.5-flash"],
+      "groq/llama-3.3-70b-versatile": ["groq/openai/gpt-oss-120b"],
+      "groq/qwen-qwq-32b": ["groq/openai/gpt-oss-120b"],
+      "groq/deepseek-r1-distill-llama-70b": ["groq/openai/gpt-oss-120b"],
+      "groq/qwen/qwen3-32b": ["groq/openai/gpt-oss-120b"],
+      "cerebras/llama-3.3-70b": ["cerebras/gpt-oss-120b"],
+      "cerebras/qwen-3-32b": ["cerebras/qwen-3.8-27b", "cerebras/gpt-oss-120b"],
+      "openrouter/google/gemini-2.5-flash-preview:free": ["openrouter/openrouter/free"],
+      "openrouter/deepseek/deepseek-r1:free": ["openrouter/openrouter/free"],
+      "openrouter/meta-llama/llama-3.3-70b-instruct:free": ["openrouter/openrouter/free"],
+      "openrouter/qwen/qwen-2.5-coder-32b-instruct:free": ["openrouter/openrouter/free"]
+    }
   },
 
   "providers": {
-    "mock":       { "kind": "mock", "latencyMs": [600, 1600] },
-    "anthropic":  { "kind": "anthropic", "baseUrl": "https://api.anthropic.com/v1", "keyEnv": "ANTHROPIC_API_KEY" },
-    "openai":     { "kind": "openai", "baseUrl": "https://api.openai.com/v1", "keyEnv": "OPENAI_API_KEY" },
-    "openrouter": { "kind": "openai", "baseUrl": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY" },
-    "groq":       { "kind": "openai", "baseUrl": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY" },
-    "cerebras":   { "kind": "openai", "baseUrl": "https://api.cerebras.ai/v1", "keyEnv": "CEREBRAS_API_KEY" },
-    "gemini":     { "kind": "openai", "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY" },
-    "deepseek":   { "kind": "openai", "baseUrl": "https://api.deepseek.com/v1", "keyEnv": "DEEPSEEK_API_KEY" },
-    "mistral":    { "kind": "openai", "baseUrl": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY" },
-    "ollama":     { "kind": "openai", "baseUrl": "http://127.0.0.1:11434/v1", "keyless": true, "enabled": false },
-    "lmstudio":   { "kind": "openai", "baseUrl": "http://127.0.0.1:1234/v1", "keyless": true, "enabled": false }
+    "mock":        { "kind": "mock", "latencyMs": [600, 1600] },
+    "anthropic":   { "kind": "anthropic", "baseUrl": "https://api.anthropic.com/v1", "keyEnv": "ANTHROPIC_API_KEY" },
+    "openai":      { "kind": "openai", "baseUrl": "https://api.openai.com/v1", "keyEnv": "OPENAI_API_KEY" },
+    "openrouter":  { "kind": "openai", "baseUrl": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY" },
+    "groq":        { "kind": "openai", "baseUrl": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY" },
+    "cerebras":    { "kind": "openai", "baseUrl": "https://api.cerebras.ai/v1", "keyEnv": "CEREBRAS_API_KEY" },
+    "gemini":      { "kind": "openai", "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY" },
+    "deepseek":    { "kind": "openai", "baseUrl": "https://api.deepseek.com/v1", "keyEnv": "DEEPSEEK_API_KEY" },
+    "mistral":     { "kind": "openai", "baseUrl": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY" },
+    "together":    { "kind": "openai", "baseUrl": "https://api.together.xyz/v1", "keyEnv": "TOGETHER_API_KEY" },
+    "fireworks":   { "kind": "openai", "baseUrl": "https://api.fireworks.ai/inference/v1", "keyEnv": "FIREWORKS_API_KEY" },
+    "sambanova":   { "kind": "openai", "baseUrl": "https://api.sambanova.ai/v1", "keyEnv": "SAMBANOVA_API_KEY" },
+    "cohere":      { "kind": "openai", "baseUrl": "https://api.cohere.ai/compatibility/v1", "keyEnv": "COHERE_API_KEY" },
+    "huggingface": { "kind": "openai", "baseUrl": "https://router.huggingface.co/v1", "keyEnv": "HF_TOKEN" },
+    "ollama":      { "kind": "openai", "baseUrl": "http://127.0.0.1:11434/v1", "keyless": true, "enabled": false, "local": true },
+    "lmstudio":    { "kind": "openai", "baseUrl": "http://127.0.0.1:1234/v1", "keyless": true, "enabled": false, "local": true },
+    "localopenai": { "kind": "openai", "baseUrlEnv": "LOCAL_OPENAI_URL", "keyEnv": "LOCAL_OPENAI_KEY", "keyless": true, "local": true }
   },
 
   "combos": {
     "frontier": {
       "strategy": "fallback",
-      "models": ["anthropic/claude-opus-5-5", "openai/gpt-5", "gemini/gemini-2.5-pro", "anthropic/claude-sonnet-5-5"]
+      "models": ["anthropic/claude-opus-5-5", "openai/gpt-5", "gemini/gemini-3.1-pro-preview", "anthropic/claude-sonnet-5-5", "deepseek/deepseek-reasoner", "together/deepseek-ai/DeepSeek-R1", "openrouter/deepseek/deepseek-r1:free", "groq/openai/gpt-oss-120b", "cerebras/gpt-oss-120b", "gemini/gemini-2.5-flash"]
     },
     "smart": {
       "strategy": "fallback",
-      "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5", "gemini/gemini-2.5-pro", "deepseek/deepseek-chat", "openrouter/openrouter/free"]
+      "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5", "gemini/gemini-3.1-pro-preview", "deepseek/deepseek-chat", "mistral/mistral-large-latest", "fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct", "openrouter/meta-llama/llama-3.3-70b-instruct:free", "gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b", "cerebras/gpt-oss-120b"]
+    },
+    "code": {
+      "strategy": "fallback",
+      "joins": "smart",
+      "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5", "deepseek/deepseek-chat", "mistral/codestral-latest", "together/Qwen/Qwen2.5-Coder-32B-Instruct", "fireworks/accounts/fireworks/models/qwen2p5-coder-32b-instruct", "openrouter/qwen/qwen-2.5-coder-32b-instruct:free", "cerebras/qwen-3.8-27b", "groq/openai/gpt-oss-120b", "gemini/gemini-2.5-flash"]
     },
     "fast": {
       "strategy": "fallback",
-      "models": ["groq/llama-3.3-70b-versatile", "cerebras/llama-3.3-70b", "gemini/gemini-2.5-flash", "anthropic/claude-haiku-5-5", "openai/gpt-5-mini", "openrouter/openrouter/free"]
+      "models": ["groq/openai/gpt-oss-120b", "cerebras/gpt-oss-120b", "gemini/gemini-2.5-flash", "anthropic/claude-haiku-5-5", "openai/gpt-5-mini", "sambanova/Meta-Llama-3.3-70B-Instruct", "gemini/gemini-2.5-flash-lite", "openrouter/google/gemini-2.5-flash-preview:free", "openrouter/openrouter/free", "cerebras/qwen-3.8-27b"]
+    },
+    "free": {
+      "strategy": "fallback",
+      "models": ["openrouter/openrouter/free", "openrouter/meta-llama/llama-3.3-70b-instruct:free", "openrouter/qwen/qwen-2.5-coder-32b-instruct:free", "openrouter/deepseek/deepseek-r1:free", "gemini/gemini-2.5-flash-lite", "groq/openai/gpt-oss-20b", "cerebras/gpt-oss-120b", "together/meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "huggingface/meta-llama/Llama-3.3-70B-Instruct", "cohere/command-a-03-2025"]
     },
     "local": {
       "strategy": "fallback",
-      "models": ["ollama/qwen3:8b", "lmstudio/local-model"]
+      "models": ["ollama/qwen3:8b", "lmstudio/local-model", "localopenai/local-model"]
     }
   },
 
@@ -107,7 +143,7 @@
     "fusion": { "k": 60, "bm25": 1.0, "vector": 1.0 }
   },
 
-  "ceo": { "id": "ada", "name": "Ada", "title": "CEO · Regia", "color": "#f5c451", "combo": "smart" },
+  "ceo": { "id": "ada", "name": "Ada", "title": "CEO · Regia", "color": "#f5c451", "combo": "frontier" },
 
   "teams": {
     "research": {
@@ -118,7 +154,7 @@
       "workers": [{ "id": "sara", "name": "Sara" }]
     },
     "dev": {
-      "label": "Sviluppo", "title": "Engineer", "color": "#3fbf6f", "kind": "work", "combo": "smart", "prop": "rack", "maxSubAgents": 3,
+      "label": "Sviluppo", "title": "Engineer", "color": "#3fbf6f", "kind": "work", "combo": "code", "prop": "rack", "maxSubAgents": 3,
       "brief": "Writes complete, working code and files. Never leaves TODOs or placeholders, reads teammates' files before integrating them.",
       "tools": ["run_command", "web_fetch"],
       "lead": { "id": "leo", "name": "Leo" },
@@ -160,7 +196,7 @@
       "workers": []
     },
     "qa": {
-      "label": "Qualità e Sicurezza", "title": "QA & security reviewer", "color": "#f28a3a", "kind": "service", "combo": "smart", "prop": "checklist", "maxSubAgents": 0,
+      "label": "Qualità e Sicurezza", "title": "QA & security reviewer", "color": "#f28a3a", "kind": "service", "combo": "frontier", "prop": "checklist", "maxSubAgents": 0,
       "brief": "Checks every deliverable against its acceptance criteria and reviews code for security problems; sends work back until it passes.",
       "tools": [],
       "lead": { "id": "bruno", "name": "Bruno" },

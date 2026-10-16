@@ -56,13 +56,15 @@ class Router:
         return time.time() * 1000
 
     def provider_ready(self, id: str) -> bool:
+        import os
+
         p = self.cfg["providers"].get(id)
         if not p or p.get("enabled") is False:
             return False
+        if p.get("baseUrlEnv") and not os.environ.get(p["baseUrlEnv"], "").strip():
+            return False  # a server named only by its environment variable, which is not set
         if p.get("kind") == "mock" or p.get("keyless"):
             return True
-        import os
-
         return bool(p.get("keyEnv") and os.environ.get(p["keyEnv"]))
 
     def provider_cooldown(self, id: str) -> dict | None:
