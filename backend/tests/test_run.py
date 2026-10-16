@@ -242,6 +242,32 @@ class TestChatHelpers:
         assert out == {"ok": True}
 
 
+class TestEmergencyAnswers:
+    """Spec 08: when no provider answers in a live run, the router lets the demo
+    simulator answer (emergency). The run says so once, in its language, where
+    the user reads it, and counts those answers: they are not real work."""
+
+    @pytest.mark.asyncio
+    async def test_the_first_emergency_answer_is_announced_once(self, make_run):
+        from backend.i18n import tr
+
+        run = make_run()
+        run.data["language"] = "fr"
+
+        class EmergencyRouter:
+            async def chat(self, **kwargs):
+                return {"text": "{}", "usage": {"in": 1, "out": 1}, "target": "mock/mock-dev", "demo": True, "emergency": True, "requested": "frontier", "cascade": ["frontier", "smart"]}
+
+        run.ctx.router = EmergencyRouter()
+        run.ctx.team = types.SimpleNamespace(get=lambda id: None, set=lambda *a: None, ceo=lambda: {"id": "ada"})
+        for _ in range(3):
+            await run.chat(role="dev", messages=[], json=True)
+        text = tr("fr", "emergency_answer", cascade="frontier → smart")
+        warned = [m for m in run.data["messages"] if m["text"] == text]
+        assert len(warned) == 1 and warned[0]["kind"] == "system"  # a kind the panel already labels
+        assert run.data["usage"]["emergencies"] == 3
+
+
 class TestFiles:
     @pytest.mark.asyncio
     async def test_missing_outputs_and_machine_check(self, make_run):

@@ -49,6 +49,7 @@ def mount(app, *, config, router) -> None:
                 max_tokens=nz(body.get("max_tokens"), body.get("max_completion_tokens")),
                 temperature=body.get("temperature"),
                 meta={"agentId": "gateway"},
+                emergency=False,  # spec 08: a client gets an error, never an invented answer
             )
         except ProviderError as err:
             return JSONResponse({"error": {"message": str(err), "type": "upstream_error"}}, status_code=502)

@@ -303,6 +303,11 @@ class Run:
         usage["calls"] += 1
         usage["tokensIn"] += (res.get("usage") or {}).get("in", 0)
         usage["tokensOut"] += (res.get("usage") or {}).get("out", 0)
+        if res.get("emergency"):
+            # spec 08: no provider answered, the simulator did: say it once, count every one
+            usage["emergencies"] = usage.get("emergencies", 0) + 1
+            if usage["emergencies"] == 1:
+                self.message(self.ceo["id"], "*", "system", self.t("emergency_answer", cascade=" → ".join(res.get("cascade") or [res.get("requested") or "?"])))
         if agent and self.team.get(agent["id"]):
             self.team.get(agent["id"])["model"] = res["target"]
         return res
