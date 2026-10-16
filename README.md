@@ -586,8 +586,8 @@ npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, d
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
 - **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input e una missione completa. I rossi attesi stanno in `scripts/browser/known-red.json`.
-- **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione). Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno.
-- **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
+- **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
+- **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
 
