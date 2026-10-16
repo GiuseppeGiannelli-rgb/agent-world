@@ -14,11 +14,13 @@
 // terminal is unaffected by any of this: Windows delivers a genuine
 // CTRL_C_EVENT to the whole console process group, which Python's signal
 // handling receives normally.
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BACKEND_DIR = (root) => join(root, 'backend');
-const VENV_PYTHON = (root) => join(BACKEND_DIR(root), '.venv', 'Scripts', 'python.exe');
+// N16: uv makes .venv/Scripts/python.exe on Windows and .venv/bin/python elsewhere
+const VENV_PYTHON = (root) => (process.platform === 'win32' ? join(BACKEND_DIR(root), '.venv', 'Scripts', 'python.exe') : join(BACKEND_DIR(root), '.venv', 'bin', 'python'));
 
 // { cmd, args, cwd } ready for child_process.spawn.
 export function launchCommand(root) {
@@ -27,6 +29,17 @@ export function launchCommand(root) {
     throw new Error(`${py} not found. Run "uv sync" in backend/ first.`);
   }
   return { cmd: py, args: ['-m', 'backend'], cwd: BACKEND_DIR(root) };
+}
+
+// N16: how every test script starts its server. A script killed from outside (a shell
+// time limit, taskkill /F, SIGKILL) runs no handler, and a child does not die with its
+// parent on any system: its server kept its port and wrote into a folder the next test
+// removes. The server gets a stdin pipe and AGENT_WORLD_EXIT_WITH_PARENT=1 together,
+// and stops when the pipe closes: the OS closes it when the script dies. stdout is a
+// pipe, for the ready line; stderr is the caller's choice.
+export function spawnBackend(root, env, { stderr = 'inherit' } = {}) {
+  const { cmd, args, cwd } = launchCommand(root);
+  return spawn(cmd, args, { cwd, env: { ...env, AGENT_WORLD_EXIT_WITH_PARENT: '1' }, stdio: ['pipe', 'pipe', stderr] });
 }
 
 // Every env var a config file can name as a provider key (keyEnv), whether or

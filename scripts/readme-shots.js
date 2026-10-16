@@ -4,12 +4,11 @@
 // only the app's own skills, not the plugins installed on this machine.
 // Usage: npm run screenshots   (about 3 minutes: a whole demo mission at normal pace)
 //        node scripts/readme-shots.js [output dir]   default docs/assets
-import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { close, launch } from './browser/headless.js';
-import { demoEnv, launchCommand } from './lib/backend-launcher.js';
+import { demoEnv, spawnBackend } from './lib/backend-launcher.js';
 import { ownedDir, removeDir } from './lib/temp.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,8 +23,7 @@ const user = join(home, 'user');
 mkdirSync(user);
 const env = demoEnv(root, { PORT: String(PORT), AGENT_WORLD_HOME: home, USERPROFILE: user, HOME: user });
 delete env.AGENT_WORLD_FAST; // normal pace, as a user sees it
-const { cmd, args, cwd } = launchCommand(root);
-const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawnBackend(root, env);
 const exited = new Promise((ok) => server.once('exit', ok));
 await new Promise((ok, fail) => {
   server.once('exit', (c) => fail(new Error(`server exited (${c})`)));

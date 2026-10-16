@@ -30,8 +30,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { close, launch, profileProcesses, sweep } from './browser/headless.js';
-import { demoEnv, launchCommand } from './lib/backend-launcher.js';
-import { alive, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
+import { demoEnv, spawnBackend } from './lib/backend-launcher.js';
+import { alive, hardKill, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
 
 // Node's WebSocket is global from Node 22 (package.json allows 20.10 for the app). Without
 // it the runner would start the server and the browser, fail to reach DevTools, and could
@@ -100,8 +100,7 @@ async function startServer(home) {
   // demo: every provider key blanked, also the ones of local.json and .env
   const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_HOME: home });
   delete env.AGENT_WORLD_FAST; // the mission at its normal pace, as in T0
-  const { cmd, args, cwd } = launchCommand(ROOT);
-  const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  const server = spawnBackend(ROOT, env);
   server.exited = new Promise((ok) => server.once('exit', ok));
   await new Promise((ok, fail) => {
     server.once('exit', (code) => fail(new Error(`server exited (${code})`)));
@@ -790,11 +789,6 @@ function startProbe(args = []) {
   return { child, ready, exited };
 }
 const within = (promise, ms, otherwise) => Promise.race([promise, sleep(ms).then(() => otherwise)]);
-// the way a shell time limit or taskkill ends a process: no handler runs (spec 03, §1.2)
-function hardKill(pid) {
-  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore' });
-  else process.kill(pid, 'SIGKILL');
-}
 const processesOf = (profile) => profileProcesses().filter((p) => p.profile === basename(profile));
 const deadOwner = (profile) => {
   const owner = ownerOf(profile);

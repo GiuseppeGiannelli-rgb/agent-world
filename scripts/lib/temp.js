@@ -8,6 +8,7 @@
 //
 // The exit handlers (Ctrl+C, Ctrl+Break, the console closed, an error nobody caught) run
 // the clean-ups registered with onExit(), then remove the folders made here, then exit.
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +34,25 @@ export function alive(pid) {
     return true;
   } catch (e) {
     return e.code === 'EPERM'; // there, but not ours to signal
+  }
+}
+
+// The way a shell time limit or taskkill ends a process: at once, no handler runs
+// (spec 03, §1.2). N16: one helper for every script, on every system. taskkill /F on
+// Windows (with /T, the whole tree); SIGKILL elsewhere, where a child does not die with
+// its parent either: a test server watches its stdin instead (spawnBackend).
+export function hardKill(pids, { tree = false } = {}) {
+  const list = [].concat(pids);
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', [...list.flatMap((pid) => ['/PID', String(pid)]), ...(tree ? ['/T'] : []), '/F'], { stdio: 'ignore' });
+    return;
+  }
+  for (const pid of list) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // gone already
+    }
   }
 }
 

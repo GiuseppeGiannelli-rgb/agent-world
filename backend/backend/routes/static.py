@@ -1,11 +1,12 @@
 """Static files: public/, /vendor/three*, /preview/:run — mirrors serveFile
 in server/index.js (MIME map, traversal guard, directory -> index.html)."""
 
-import os
 from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+
+from backend.paths import PathRefused, inside
 
 router = APIRouter()
 
@@ -30,11 +31,12 @@ MIME = {
 
 
 def _resolve(root: Path, rel: str) -> Path | None:
-    """None means the path escaped root (F2): a 403, not a 404."""
-    full = (root / rel.lstrip("/\\")).resolve()
-    if full != root and not str(full).startswith(str(root) + os.sep):
+    """None means the path escaped root (F2) or is refused on every system
+    (N16, paths.py): a 403, not a 404."""
+    try:
+        return inside(root, rel)
+    except PathRefused:
         return None
-    return full
 
 
 # Spec 07: what the agents build is untrusted (a page they read can steer what

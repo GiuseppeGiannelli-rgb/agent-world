@@ -289,7 +289,7 @@ Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `rea
 | **Tasker** | `backend/backend/tasker.py` | Il loop di un worker su un sotto-task: il modello risponde con un'azione JSON (`thought`, `tool`, `args`), il tool restituisce il risultato, si ripete fino a `finish`. Compatta il contesto: resta il brief, i passi vecchi diventano un registro di una riga. |
 | **Team** | `backend/backend/team.py` | Chi esiste, chi è libero, cosa fa ognuno. Assegna le persone con una coda d'attesa, crea e ritira i sub-agenti. Ogni cambio di stato diventa un evento `agent`, ed è questo che muove i personaggi in 3D. |
 | **Bus** | `backend/backend/bus.py` | Numera ogni evento (`seq`) e lo distribuisce alle code dei client SSE. |
-| **Tools** | `backend/backend/tools.py` | Una cartella per run: ogni percorso dato da un agente viene risolto lì dentro. I comandi shell sono spenti di default; quando li accendi hanno un timeout e chiudono l'intero albero di processi. |
+| **Tools** | `backend/backend/tools.py` | Una cartella per run: ogni percorso dato da un agente viene risolto lì dentro, con la stessa regola su ogni sistema (`backend/backend/paths.py`): `\` separa come `/`, e i `:` (drive o stream nascosti di Windows) sono rifiutati, così un progetto si copia da un sistema all'altro. I comandi shell sono spenti di default; quando li accendi hanno un timeout e chiudono l'intero albero di processi. |
 | **Router** | `backend/backend/router/` | OmniRoute (sotto): combo, fallback, cooldown, adapter dei provider e il simulatore demo. |
 | **Brain** | `backend/backend/brain.py` | Memoria condivisa che sopravvive ai run (fino a 5000 note), con ricerca BM25. |
 | **Skill Hub** | `backend/backend/skills.py` | Indice di ogni `SKILL.md` delle fonti configurate, più le repo GitHub predefinite. |
@@ -557,6 +557,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
 | `AGENT_WORLD_LOCAL_CONFIG` | sposta il file delle preferenze (di default `config/local.json`): lo usano i test, per non leggere né scrivere le tue |
 | `AGENT_WORLD_SKILL_REPOS=0` | all'avvio non clona le repo di `skills.repos` che mancano (lo usano i test) |
+| `AGENT_WORLD_EXIT_WITH_PARENT=1` | il server si chiude quando si chiude il suo stdin, cioè quando muore chi l'ha avviato; senza uno stdin collegato a una pipe non parte. Lo imposta `spawnBackend()` per i server dei test |
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 
@@ -615,6 +616,7 @@ npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, d
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
 - **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
+- **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
 
