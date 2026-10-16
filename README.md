@@ -314,6 +314,15 @@ L'app recupera il contesto con una **ricerca ibrida**: **BM25**, un ranking less
 - **Skill per ogni sotto-task:** i 10 candidati migliori, cercati con titolo, descrizione, team e output del sotto-task. Lo Skill Hub ne sceglie da 1 a 3, che entrano nel brief del worker.
 - **Durante il lavoro:** con `recall` (5 note) e `search_skills` / `read_skill` (8 skill) l'agente cerca da solo; con `remember` aggiunge una nota.
 - **Dopo il QA:** ogni lezione e il riassunto della missione diventano note, e la missione successiva le ritrova.
+- **Contesto su misura per il modello** (spec 08): il prompt di ogni worker si dimensiona sul profilo del modello che lo riceverà.
+  - Un modello grande (oltre 128k di contesto, né gratuito né locale) riceve fino a 5 note del Brain, le skill assegnate intere e il contesto dettagliato della run.
+  - Un modello veloce, gratuito o locale riceve la *modalità compatta*: i 2 passaggi più pertinenti delle sue skill (RRF di BM25 e coseno, con un `minCosine` più severo), note in punti essenziali e un **contratto JSON esplicito** in fondo al system prompt.
+  - Le risposte tipiche dei modelli piccoli (apici singoli, chiavi senza virgolette, `Write_File()`, args come stringa, parentesi tagliate) vengono riparate invece di finire in "Risposta non valida, riprovo".
+- **Memoria della run** (spec 08): ogni file scritto, bocciatura del QA, lezione, errore e consegna viene indicizzato subito (BM25 + vettori n-gram locali, senza rete), con i tag di workstream, task e team.
+  - Un worker, compreso un sub-agente appena generato, ritrova i percorsi reali consegnati dagli altri team e gli eventi più vicini al suo task.
+  - Una revisione porta con sé le lezioni che valgono.
+  - Un cambio di modello in corsa (fallback o escalation) riceve il contesto ridimensionato per il nuovo modello.
+- **Embedding:** se il primo provider della lista ha finito il credito, resta fuori e risponde il successivo (OpenAI, Gemini, Mistral, Ollama, poi `local/ngram`).
 
 ```mermaid
 flowchart LR
@@ -391,11 +400,19 @@ Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta 
 
 Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 
-- **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Ollama, LM Studio e qualsiasi server compatibile OpenAI.
-- **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `fast`, `smart`, `frontier` (per l'escalation) e `local`. Ogni ruolo usa la sua combo.
-- **Cooldown:** dopo un 429 o un 5xx il bersaglio si raffredda, con un backoff da 15 s a 5 min. Una chiave rifiutata ferma l'intero provider per 10 min. I bersagli in cooldown passano in fondo alla lista, invece di sparire.
-- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
-- **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs.
+- **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Together, Fireworks, SambaNova, Cohere (endpoint compatibile OpenAI), Hugging Face, Ollama, LM Studio e qualsiasi server locale compatibile OpenAI (vLLM, llama.cpp, Jan) all'indirizzo `LOCAL_OPENAI_URL`. GitHub Models non c'è: GitHub l'ha ritirato il 30/07/2026.
+- **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `frontier`, `smart`, `code`, `fast`, `free` e `local`; `frontier`, `smart` e `fast` finiscono con modelli gratuiti (OpenRouter `:free`, Gemini Flash, Groq, Cerebras).
+- **Ruoli e tier** (spec 08): CEO e QA su `frontier`, Sviluppo su `code`, Prompt Lab e AI Generativa su `smart`, Ricerca, Contenuti, Design e Skill Hub su `fast`. Un lead pianifica e aiuta su `smart`, un sub-agente lavora su `fast`; dopo le bocciature il worker sale su `frontier`.
+- **Perché una chiamata fallisce** (spec 08):
+  - **credito finito** (402, oppure 400/403/429 con `insufficient_quota`, `credit balance`, `billing`…): l'intero provider resta fuori per 6 ore e non si provano i suoi altri modelli;
+  - **un limite al minuto** (il 429 di Gemini con `retryDelay`) è solo una pausa, lunga quanto chiede il provider;
+  - **modello sparito** (404, `model_not_found`): quel `provider/modello` va in blacklist per 24 ore e si provano subito i suoi alias aggiornati (`router.aliases`, per esempio `gemini-2.5-pro` → `gemini-3.1-pro-preview` → `gemini-2.5-flash`);
+  - **chiave rifiutata**: il provider resta fuori 10 minuti;
+  - **429 o 5xx**: il bersaglio si raffredda, con un backoff da 15 s a 5 min, e passa in fondo alla lista.
+- **Cascata:** se nessun bersaglio di una combo risponde, si scende lungo `router.cascade`: `frontier` → `smart` → `fast` → `free` → `local`. Se non risponde nessuno, in una run live risponde il simulatore demo come **emergenza**: la run lo dice una volta nel pannello Messaggi e lo conta in `usage.emergencies` (si spegne con `router.emergencyMock: false`). Il pulsante di test e il gateway `/v1` non ricevono mai risposte simulate.
+- **Profiler** (`router/profiler.py`): da nome e metadati di ogni modello ricava parametri, famiglia (reasoning, coder, vision, piccolo), finestra di contesto, gratuità, esecuzione locale e tier. I modelli dei server locali avviati (e i `:free` di OpenRouter) vengono scoperti da `/models` all'avvio e ogni 10 minuti, ed entrano in coda alla combo del loro tier.
+- **Demo:** se nessun provider ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
+- **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs. In una run live un file media è sempre reale: se i provider cloud non hanno credito o chiave, la voce passa a edge-tts (se installato e attivato: manda il testo a Microsoft) e poi al sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux: offline e gratis), le immagini al generatore locale. Un WAV chiesto come `.mp3` viene convertito con ffmpeg, se c'è; altrimenti si salva come `.wav`.
 - **Log:** ogni chiamata viene salvata in `data/calls/`.
 - **Gateway compatibile OpenAI** (protetto da `AGENT_WORLD_API_KEY` se la imposti):
 
@@ -557,6 +574,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
 | `AGENT_WORLD_LOCAL_CONFIG` | sposta il file delle preferenze (di default `config/local.json`): lo usano i test, per non leggere né scrivere le tue |
 | `AGENT_WORLD_SKILL_REPOS=0` | all'avvio non clona le repo di `skills.repos` che mancano (lo usano i test) |
+| `AGENT_WORLD_DISCOVER=0` | non chiede ai provider e ai server locali quali modelli hanno (lo usano i test) |
 | `AGENT_WORLD_EXIT_WITH_PARENT=1` | il server si chiude quando si chiude il suo stdin, cioè quando muore chi l'ha avviato; senza uno stdin collegato a una pipe non parte. Lo imposta `spawnBackend()` per i server dei test |
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
