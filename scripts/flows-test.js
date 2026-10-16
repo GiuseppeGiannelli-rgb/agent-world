@@ -5,10 +5,9 @@
 // AW_TEST_FAIL=start|server (only for scripts/temp-test.js): fail on purpose right after
 // the server starts, or kill the server then, as a crash would.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { demoEnv, launchCommand } from './lib/backend-launcher.js';
+import { demoEnv, spawnBackend } from './lib/backend-launcher.js';
 import { onExit, ownedDir, removeDir, sweepDirs } from './lib/temp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -17,8 +16,7 @@ const base = `http://127.0.0.1:${PORT}`;
 await sweepDirs();
 const home = ownedDir('flows');
 const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_FAST: '1', AGENT_WORLD_HOME: home });
-const { cmd, args, cwd } = launchCommand(ROOT);
-const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawnBackend(ROOT, env);
 const serverExited = new Promise((resolve) => server.once('exit', resolve));
 // the server is stopped and gone before its home is removed
 const cleanUp = async () => {

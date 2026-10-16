@@ -10,7 +10,7 @@ Si salva in `config/local.json` come `ui.language` e vale fra una sessione e l'a
 
 Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 
-**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13 e N16; N14 e N15 sono chiusi (§5).
+**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Resta aperto il ticket N13; N14, N15 e N16 sono chiusi (§5).
 
 ## 1. Decisioni
 
@@ -121,6 +121,39 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
   - `test_static.py::test_traversal_forbidden[/..\..\server\index.js]` e `test_tools.py::TestWorkspace::test_resolve_keeps_paths_inside_the_root` (`..\..\x`, `C:/Windows/x`). Su Linux `\` non separa i percorsi e `C:` non è un drive: `..\..\x` è il nome di un file dentro la cartella del progetto, quindi niente esce dalla radice. Il contenimento regge, ma i test si aspettano il rifiuto che fa Windows. Strade possibili: rifiutare `\` e `X:` su ogni sistema, così la regola è una sola e i workspace restano portabili; oppure separare le attese per piattaforma.
   - `temp-test.js` C3, "a killed smoke leaves its folder": uccide lo smoke con `taskkill /PID … /F`, che su Linux non esiste. Lo smoke non viene ucciso, finisce da solo e pulisce la sua cartella (`leftByTheKill: false`). Fuori da Windows serve un kill forzato equivalente (`SIGKILL`).
   - Altre ipotesi di Windows trovate qui: `scripts/lib/backend-launcher.js` cerca solo `backend/.venv/Scripts/python.exe` (su Linux e macOS è `.venv/bin/python`), e `scripts/browser/headless.js` trova solo Edge o Chrome installati. Per le verifiche del §7 ho usato un symlink dentro `.venv` (ignorato da git) e `BROWSER` puntato a Chromium con `--no-sandbox`.
+  - **Chiuso il 16/10/2026** (branch `fix/n16-cross-platform`, decisioni D1–D4 dell'utente). Erano test e codice che davano Windows per scontato: passavano su Windows e fallivano su Linux e macOS.
+    - **Percorsi (D1, D2 opzione b): una regola sola su ogni sistema**, in `backend/backend/paths.py`, usata da `Workspace.resolve()` e dalle route statiche.
+      - `\` separa come `/`;
+      - le `/` iniziali si tolgono, quindi `/etc/passwd` resta dentro (il contratto di Node);
+      - un drive (`C:/x`, `c:x`) è "fuori dalla cartella del progetto";
+      - ogni altro `:` è rifiutato con un messaggio che dice all'agente cosa cambiare. Su Windows era uno stream NTFS nascosto, e un nome con `:` non si copia su Windows;
+      - un byte NUL è rifiutato. Prima `pathlib` sollevava un `ValueError` qualunque, e le route statiche rispondevano 500 (succedeva già prima di N16);
+      - il contenimento si controlla per parti del percorso (`is_relative_to`), non con il prefisso della stringa.
+
+      Prima la regola la decideva `pathlib`, cioè il sistema: lo stesso output dell'agente faceva cartelle diverse (`a\b.md` annidato su Windows, un nome strano altrove). È la stessa regola di `downloads.safe_relpath()`, che c'era già.
+    - **Kill forzato.** `hardKill()` in `scripts/lib/temp.js` fa `taskkill /F` su Windows (con `/T` per l'albero) e `SIGKILL` altrove. Lo usano `temp-test`, `browser-test` e `headless.js`, che avevano ognuno la sua versione; `temp-test` chiamava `taskkill` ovunque, anche nel limite di tempo di `runScript`.
+    - **Server orfano (D3).** Trovato correggendo C3. Il server di test era legato al suo script solo dalla pipe di stdout: moriva alla prima scrittura dopo la morte dello script.
+      - Ucciso durante l'avvio, moriva sulla riga di pronto, ma su Linux rispondeva ancora una volta a +1,7 s. C3 guardava a +0,5 s: passava per tempismo.
+      - Ucciso a server pronto, non moriva più: dopo 15 s teneva ancora la porta 4399 e scriveva nella cartella che il test successivo cancella.
+
+      Ora `spawnBackend()` (`scripts/lib/backend-launcher.js`) avvia il server per tutti e sei gli script, con uno stdin a pipe e `AGENT_WORLD_EXIT_WITH_PARENT=1`. Il server si chiude in modo pulito quando la pipe si chiude, cosa che il sistema fa alla morte dello script, comunque venga ucciso. Con il flag ma senza pipe il server non parte, invece di riportare gli orfani in silenzio. `npm start` non lo imposta.
+    - **Launcher (D4).** `.venv/Scripts/python.exe` su Windows, `.venv/bin/python` altrove. Il symlink del §7 non serve più ed è stato tolto. `headless.js` resta com'è: cerca già i percorsi standard di macOS e Linux, e accetta `BROWSER`.
+    - **Test, visti rossi su Linux prima della correzione:**
+      - `test_paths.py`: una tabella di casi con le stesse attese su ogni sistema, contro tutti e due i chiamanti;
+      - `test_static.py`: un URL con `\` serve il file, un `:` o un NUL dà 403. I due test N16 di `test_static.py` e `test_tools.py` diventano verdi senza modifiche;
+      - `test_main.py`: un server con il flag si chiude quando si chiude il suo stdin; senza il flag non cambia niente; il flag senza pipe è rifiutato;
+      - `launcher-test.js`: il Python del venv di questo sistema, e `spawnBackend()` che lega il server allo script;
+      - `temp-test.js`: un test oltre il suo limite di tempo viene davvero terminato; C3 guarda il server per una finestra di 5 s invece che in un istante; il nuovo C4 uccide uno smoke a server pronto e non deve restare nessun server.
+    - **Mutazioni.** I test diventano rossi in ognuno di questi casi:
+      - il separatore `\`, il controllo del drive, quello dei `:` o il contenimento tolti;
+      - `hardKill` senza `SIGKILL`;
+      - il server che non guarda lo stdin;
+      - `spawnBackend` senza pipe;
+      - il percorso del venv solo Windows;
+      - il controllo della pipe sempre vero.
+
+      Con il server che non guarda lo stdin diventa rosso solo C4: un server ucciso all'avvio muore comunque sulla riga di pronto.
+    - **Verifica su Windows:** non l'ho fatta, va fatta sulla macchina di riferimento.
 
 ## 6. Scostamenti
 

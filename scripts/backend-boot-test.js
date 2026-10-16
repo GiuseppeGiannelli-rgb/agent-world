@@ -2,10 +2,9 @@
 // HTTP, and exits cleanly on SIGINT, with no orphaned process left behind
 // (measured risk R1: `uv run` as a wrapper orphans its grandchild on
 // Windows -- see scripts/lib/backend-launcher.js). No application routes yet.
-import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchCommand, READY_MARKER } from './lib/backend-launcher.js';
+import { READY_MARKER, spawnBackend } from './lib/backend-launcher.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4398;
@@ -17,9 +16,8 @@ const fail = (msg) => {
   failed = true;
 };
 
-const { cmd, args, cwd } = launchCommand(ROOT);
 const env = { ...process.env, PORT: String(PORT) };
-const server = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawnBackend(ROOT, env, { stderr: 'pipe' });
 let out = '';
 server.stdout.on('data', (d) => (out += d.toString()));
 server.stderr.on('data', (d) => (out += d.toString()));

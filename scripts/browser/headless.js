@@ -18,7 +18,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { alive, onExit, ownedDir, ownerOf, removeDir, sizeMb, sweepDirs } from '../lib/temp.js';
+import { alive, hardKill, onExit, ownedDir, ownerOf, removeDir, sizeMb, sweepDirs } from '../lib/temp.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -99,19 +99,7 @@ export function profileProcesses() {
 }
 
 // One process or several, each with its tree: one taskkill call on Windows.
-export function kill(pids) {
-  const list = [].concat(pids);
-  if (process.platform === 'win32') spawnSync('taskkill', [...list.flatMap((pid) => ['/PID', String(pid)]), '/T', '/F'], { stdio: 'ignore' });
-  else {
-    for (const pid of list) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // gone already
-      }
-    }
-  }
-}
+export const kill = (pids) => hardKill(pids, { tree: true });
 
 // After the close: this run's processes get a few seconds to exit. Those of another run
 // (an earlier one, or one in parallel on another --port) are only reported: failing on
