@@ -7,12 +7,20 @@ Python's zlib.compress pick different zlib streams for identical pixels)."""
 
 import base64
 import math
+import os
+import shutil
 import struct
+import subprocess
+import sys
+import tempfile
+import time
+import wave
 import zlib
+from pathlib import Path
 
 import httpx
 
-from backend.router.providers import ProviderError
+from backend.router.providers import ProviderError, _classify
 
 TIMEOUT_S = 180
 
@@ -104,12 +112,8 @@ async def _fetch_bytes(client: httpx.AsyncClient, url: str, *, method: str = "GE
     except httpx.HTTPError as err:
         raise ProviderError(f"Network error: {err}", retryable=True) from err
     if res.status_code >= 400:
-        raise ProviderError(
-            f"HTTP {res.status_code}: {res.text[:300]}",
-            status=res.status_code,
-            retryable=res.status_code in (408, 409, 429) or res.status_code >= 500,
-            auth=res.status_code in (401, 403),
-        )
+        # spec 08: the same reading of the error as the text router (quota, auth, model...)
+        raise _classify(res.status_code, res.text)
     return {"bytes": res.content, "type": res.headers.get("content-type", "")}
 
 
@@ -118,11 +122,112 @@ async def _fetch_json(client: httpx.AsyncClient, url: str, **kwargs):
     return __import__("json").loads(out["bytes"].decode("utf-8"))
 
 
+# ---------- spec 08: the system's own speech engine, and audio formats ----------
+
+CULTURES = {"en": "en-US", "it": "it-IT", "es": "es-ES", "fr": "fr-FR", "de": "de-DE"}
+EDGE_VOICES = {"en": "en-US-AriaNeural", "it": "it-IT-ElsaNeural", "es": "es-ES-ElviraNeural", "fr": "fr-FR-DeniseNeural", "de": "de-DE-KatjaNeural"}
+SAPI_SCRIPT = (
+    "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; "
+    "Add-Type -AssemblyName System.Speech; "
+    "$text = [Console]::In.ReadToEnd(); "
+    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+    "try { $s.SelectVoiceByHints('NotSet', 'NotSet', 0, [System.Globalization.CultureInfo]$env:AW_TTS_CULTURE) } catch {}; "
+    "$s.SetOutputToWaveFile($env:AW_TTS_OUT); $s.Speak($text); $s.Dispose()"
+)
+# used only in live runs, after every provider of the list. edge-tts needs no
+# activation there (a live run already sends its prompts out): it ships with the
+# backend (pyproject.toml) and speaks unless media.providers.edgetts.enabled is false.
+FALLBACK_KINDS = {"edgetts", "system"}
+AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".m4a")
+QUOTA_COOLDOWN_MS = 6 * 3600 * 1000
+
+
+def system_tts_engine() -> str | None:
+    """The speech engine of this system: SAPI (Windows), say (macOS), espeak-ng or espeak (Linux)."""
+    if sys.platform == "win32":
+        return "sapi" if (shutil.which("powershell") or shutil.which("pwsh")) else None
+    if sys.platform == "darwin":
+        return "say" if shutil.which("say") else None
+    return next((exe for exe in ("espeak-ng", "espeak") if shutil.which(exe)), None)
+
+
+def system_tts(text: str, lang: str | None = None) -> bytes:
+    """A real voice, offline and free: WAV bytes, as long as the text. The text
+    goes on stdin, never on the command line."""
+    engine = system_tts_engine()
+    if engine is None:
+        raise RuntimeError("no speech engine on this system")
+    data = str(text)[:4000].encode("utf-8")
+    with tempfile.TemporaryDirectory(prefix="aw-tts-") as d:
+        out = os.path.join(d, "speech.wav")
+        env = dict(os.environ)
+        if engine == "sapi":
+            cmd = [shutil.which("powershell") or shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", SAPI_SCRIPT]
+            env.update(AW_TTS_OUT=out, AW_TTS_CULTURE=CULTURES.get(lang or "", "en-US"))
+        elif engine == "say":
+            cmd = [shutil.which("say"), "--file-format=WAVE", "--data-format=LEI16@22050", "-o", out, "-f", "-"]
+        else:
+            cmd = [shutil.which(engine), "-v", (lang or "en"), "-w", out, "--stdin"]
+        r = subprocess.run(cmd, input=data, capture_output=True, timeout=120, env=env)
+        if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) <= 44:
+            raise RuntimeError(f"{engine} failed: {(r.stderr or b'').decode('utf-8', 'replace')[:200]}")
+        with open(out, "rb") as f:
+            return f.read()
+
+
+def to_audio(data: bytes, ext: str) -> bytes | None:
+    """The same sound in another format (WAV -> MP3 or OGG) with ffmpeg, or None
+    when there is no ffmpeg or it fails: the caller then keeps the real format."""
+    ffmpeg = shutil.which("ffmpeg")
+    fmt = {"mp3": ["-f", "mp3"], "ogg": ["-f", "ogg"], "m4a": ["-f", "ipod"], "wav": ["-f", "wav"]}.get(ext.lower().lstrip("."))
+    if not ffmpeg or not fmt:
+        return None
+    try:
+        r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-i", "pipe:0", *fmt, "pipe:1"], input=data, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 and r.stdout else None
+
+
+# Layer III bitrates (kbps) by MPEG version: MPEG-1, then MPEG-2 and 2.5 (22 kHz and below)
+MP3_BITRATES = {
+    1: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0],
+    2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
+}
+
+
+def media_info(path) -> str:
+    """What QA can know of a generated file without hearing or seeing it: the
+    length of an audio file, the size of an image."""
+    try:
+        head = Path(path).read_bytes()[:4096]
+        size = Path(path).stat().st_size
+        if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+            with wave.open(str(path)) as w:
+                return f"audio WAV, {w.getnframes() / w.getframerate():.1f} s"
+        start = 0
+        if head[:3] == b"ID3":
+            start = 10 + ((head[6] & 0x7F) << 21 | (head[7] & 0x7F) << 14 | (head[8] & 0x7F) << 7 | (head[9] & 0x7F))
+            head = Path(path).read_bytes()[start : start + 4]
+        if len(head) >= 4 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0:
+            version = 1 if (head[1] >> 3) & 0b11 == 0b11 else 2
+            kbps = MP3_BITRATES[version][head[2] >> 4]
+            if kbps:
+                return f"audio MP3, about {(size - start) * 8 / (kbps * 1000):.1f} s"
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            w, h = struct.unpack(">II", head[16:24])
+            return f"image PNG {w}x{h}"
+    except (OSError, wave.Error, struct.error, IndexError, EOFError):
+        pass
+    return ""
+
+
 class Media:
     def __init__(self, *, config, bus=None, client: httpx.AsyncClient | None = None):
         self.config = config
         self.bus = bus
         self.client = client or httpx.AsyncClient(timeout=TIMEOUT_S, headers={"user-agent": "AgentWorld/0.2"})
+        self.bench: dict[str, dict] = {}  # spec 08: provider id -> {until, reason}: credit gone, key refused
 
     @property
     def cfg(self) -> dict:
@@ -132,20 +237,55 @@ class Media:
         p = self.cfg["providers"].get(id)
         if not p or p.get("enabled") is False:
             return False
+        if p.get("kind") == "edgetts":
+            try:
+                import edge_tts  # noqa: F401 -- a dependency; missing only in an environment built without it
+            except ImportError:
+                return False
+            return True
+        if p.get("kind") == "system":
+            return system_tts_engine() is not None
         if p.get("kind") == "mock" or p.get("keyless"):
             return True
-        import os
-
         return bool(p.get("keyEnv") and os.environ.get(p["keyEnv"]))
 
-    def targets(self, kind: str) -> list[dict]:
+    def benched(self, id: str) -> str | None:
+        b = self.bench.get(id)
+        return b["reason"] if b and b["until"] > time.time() * 1000 else None
+
+    def _bench(self, id: str, err: Exception) -> None:
+        kind = getattr(err, "kind", None)
+        if kind not in ("quota", "auth"):
+            return
+        router = (self.config.get() or {}).get("router") or {}
+        wait = router.get("quotaCooldownMs", QUOTA_COOLDOWN_MS) if kind == "quota" else router.get("authCooldownMs", 600000)
+        self.bench[id] = {"until": time.time() * 1000 + wait, "reason": "quota_exhausted" if kind == "quota" else "auth"}
+
+    def _listed(self, kind: str) -> list[dict]:
         out = []
         for t in self.cfg.get(kind) or []:
             slash = t.find("/")
             provider, model = t[:slash], t[slash + 1 :]
             if self.ready(provider):
                 out.append({"provider": provider, "model": model})
+        return out
+
+    def targets(self, kind: str) -> list[dict]:
+        """The providers of a demo run (and of the status): the ready ones of the
+        list, or the demo generator. The fallbacks of a live run are in chain()."""
+        out = [t for t in self._listed(kind) if self.cfg["providers"][t["provider"]].get("kind") not in FALLBACK_KINDS]
         return out or [{"provider": "mock", "model": "demo", "demo": True}]
+
+    def chain(self, kind: str, live: bool) -> list[dict]:
+        """Spec 08: a live run always ends with a real file. The ready providers
+        not benched, then the fallbacks (edge-tts's natural voice,
+        the system voice), then the local generator."""
+        if not live:
+            return self.targets(kind)
+        listed = [t for t in self._listed(kind) if not self.benched(t["provider"])]
+        first = [t for t in listed if self.cfg["providers"][t["provider"]].get("kind") not in FALLBACK_KINDS]
+        last = [t for t in listed if self.cfg["providers"][t["provider"]].get("kind") in FALLBACK_KINDS]
+        return [*first, *last, {"provider": "mock", "model": "demo", "demo": True}]
 
     def status(self) -> dict:
         return {
@@ -158,22 +298,23 @@ class Media:
             ],
         }
 
-    async def run(self, kind: str, fn) -> dict:
-        import os
-
+    async def run(self, kind: str, fn, *, live: bool = False) -> dict:
         errors = []
-        for t in self.targets(kind):
+        for t in self.chain(kind, live):
+            if self.benched(t["provider"]):
+                continue
             p = self.cfg["providers"][t["provider"]]
             key = os.environ.get(p["keyEnv"], "") if p.get("keyEnv") else ""
             try:
                 out = await fn(t, p, key)
                 return {**out, "target": f"{t['provider']}/{t['model']}", "demo": bool(t.get("demo"))}
             except Exception as err:
+                self._bench(t["provider"], err)
                 errors.append(f"{t['provider']}/{t['model']}: {err}")
         raise Exception("Generation failed:\n" + "\n".join(errors))
 
     # Returns { bytes, ext, target, demo } -- the caller decides the file name.
-    async def image(self, args: dict, client=None) -> dict:
+    async def image(self, args: dict, client=None, *, live: bool = False) -> dict:
         prompt = str(args.get("prompt") or "")
         size = str(args.get("size") or "1024x1024")
         ext = str(args.get("ext") or "png")
@@ -222,11 +363,14 @@ class Media:
                 return {"bytes": img["bytes"], "ext": "png" if "png" in img["type"] else "jpg"}
             raise Exception(f"Unknown image provider kind {p['kind']}")
 
-        return await self.run("image", go)
+        return await self.run("image", go, live=live)
 
-    async def speech(self, args: dict, client=None) -> dict:
+    async def speech(self, args: dict, client=None, *, live: bool = False) -> dict:
+        import asyncio
+
         text = str(args.get("text") or "")
         voice = args.get("voice")
+        lang = args.get("lang")
 
         async def go(t, p, key):
             import json
@@ -252,6 +396,18 @@ class Media:
                     body=json.dumps({"text": text[:4000], "model_id": t["model"]}).encode(),
                 )
                 return {"bytes": out["bytes"], "ext": "mp3"}
+            if p["kind"] == "edgetts":
+                import edge_tts
+
+                audio = bytearray()
+                async for chunk in edge_tts.Communicate(text[:4000], EDGE_VOICES.get(lang or "", EDGE_VOICES["en"])).stream():
+                    if chunk.get("type") == "audio":
+                        audio += chunk["data"]
+                if not audio:
+                    raise Exception("edge-tts returned no audio")
+                return {"bytes": bytes(audio), "ext": "mp3"}
+            if p["kind"] == "system":
+                return {"bytes": await asyncio.to_thread(system_tts, text, lang), "ext": "wav"}
             raise Exception(f"Unknown speech provider kind {p['kind']}")
 
-        return await self.run("speech", go)
+        return await self.run("speech", go, live=live)

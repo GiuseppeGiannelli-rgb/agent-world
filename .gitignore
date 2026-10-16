@@ -22,8 +22,7 @@ workspace/
 *.log
 logs/
 
-# --- Local-only notes and tool state
-HANDOFF.md
+# --- Local tool state (HANDOFF.md is tracked: the progress notes on main)
 .claude/
 .vscode/
 .idea/

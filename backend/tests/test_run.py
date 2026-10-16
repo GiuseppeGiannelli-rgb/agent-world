@@ -242,6 +242,104 @@ class TestChatHelpers:
         assert out == {"ok": True}
 
 
+class TestRolesOnTheirTier:
+    """Spec 08: each kind of call lands on the tier of its role. The team combos
+    come from config (CEO and QA frontier, development code...); on top of them a
+    lead plans and helps on router.roles.lead, a sub-agent works on
+    router.roles.sub, unless it was escalated."""
+
+    @pytest.mark.asyncio
+    async def test_leads_plan_on_smart_and_sub_agents_work_on_fast(self, demo_ctx):
+        from backend.run import Run
+
+        calls = []
+        real = demo_ctx.router.chat
+
+        async def spy(**kw):
+            system = next(m["content"] for m in kw["messages"] if m["role"] == "system")
+            calls.append({"marker": system.split("]]", 1)[0] + "]]", "role": kw.get("role"), "use": kw.get("use"), "agent": (kw.get("meta") or {}).get("agentId")})
+            return await real(**kw)
+
+        demo_ctx.router.chat = spy
+        run = Run(goal="The complete launch website for a bakery, with images and a voice-over", ctx=demo_ctx, options={"language": "en"})
+        await asyncio.wait_for(run.start(), timeout=120)
+        assert run.data["status"] in ("completed", "completed_with_failures"), run.data["error"]
+        roles = demo_ctx.config.get()["router"]["roles"]
+        kinds = {a["id"]: a["kind"] for a in demo_ctx.team.agents.values()}
+        import re
+
+        for c in calls:  # a sub-agent leaves the team when its task is done: its id says what it was
+            if c["agent"] and re.search(r"-sub\d+$", c["agent"]):
+                kinds[c["agent"]] = "sub"
+
+        leads = [c for c in calls if c["marker"] == "[[role:lead]]"]
+        assert leads and all(c["use"] == roles["lead"] for c in leads)
+        subs = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "sub"]
+        assert subs, "a complex mission spawns sub-agents"
+        assert all(c["use"] in (roles["sub"], "frontier") for c in subs)
+        workers = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "worker"]
+        assert workers and all(c["use"] in (None, "frontier") for c in workers)  # their team combo, or escalated
+        assert all(c["role"] == "qa" for c in calls if c["marker"] == "[[role:judge]]")
+        assert all(c["role"] == "ceo" for c in calls if c["marker"] in ("[[role:planner]]", "[[role:synth]]"))
+
+
+class TestRunMemory:
+    """Spec 08: the run memory fills up as the mission goes, and the workers of
+    later workstreams (sub-agents included) read what the others delivered."""
+
+    @pytest.mark.asyncio
+    async def test_a_demo_mission_fills_the_run_memory_and_shares_it(self, demo_ctx):
+        """The worker of a later workstream (a spawned sub-agent included) reads in
+        its brief the files the upstream teams delivered, from the run memory."""
+        import asyncio
+
+        from backend.run import Run
+
+        briefs = {}
+        real = demo_ctx.router.chat
+
+        async def spy(**kw):
+            system = kw["messages"][0]["content"]
+            if system.startswith("[[role:tasker") and len(kw["messages"]) == 2:
+                briefs[(kw.get("meta") or {}).get("taskId")] = kw["messages"][1]["content"]
+            return await real(**kw)
+
+        demo_ctx.router.chat = spy
+        run = Run(goal="The complete launch website for a bakery, with images and a voice-over", ctx=demo_ctx, options={"language": "en"})
+        await asyncio.wait_for(run.start(), timeout=120)
+        kinds = {i["kind"] for i in run.memory.items}
+        assert {"file", "delivery"} <= kinds
+        assert any(i["path"] == "research/notes.md" for i in run.memory.items if i["kind"] == "file")
+        dev = [b for t, b in briefs.items() if t and t.startswith(next(w["id"] for w in run.data["workstreams"] if w["team"] == "dev"))]
+        assert dev and any("FROM THE TEAM (this run)" in b and "research/notes.md" in b for b in dev)
+
+
+class TestEmergencyAnswers:
+    """Spec 08: when no provider answers in a live run, the router lets the demo
+    simulator answer (emergency). The run says so once, in its language, where
+    the user reads it, and counts those answers: they are not real work."""
+
+    @pytest.mark.asyncio
+    async def test_the_first_emergency_answer_is_announced_once(self, make_run):
+        from backend.i18n import tr
+
+        run = make_run()
+        run.data["language"] = "fr"
+
+        class EmergencyRouter:
+            async def chat(self, **kwargs):
+                return {"text": "{}", "usage": {"in": 1, "out": 1}, "target": "mock/mock-dev", "demo": True, "emergency": True, "requested": "frontier", "cascade": ["frontier", "smart"]}
+
+        run.ctx.router = EmergencyRouter()
+        run.ctx.team = types.SimpleNamespace(get=lambda id: None, set=lambda *a: None, ceo=lambda: {"id": "ada"})
+        for _ in range(3):
+            await run.chat(role="dev", messages=[], json=True)
+        text = tr("fr", "emergency_answer", cascade="frontier → smart")
+        warned = [m for m in run.data["messages"] if m["text"] == text]
+        assert len(warned) == 1 and warned[0]["kind"] == "system"  # a kind the panel already labels
+        assert run.data["usage"]["emergencies"] == 3
+
+
 class TestFiles:
     @pytest.mark.asyncio
     async def test_missing_outputs_and_machine_check(self, make_run):
@@ -287,7 +385,10 @@ def demo_ctx(tmp_path, monkeypatch):
     never written), in AGENT_WORLD_FAST mode: the mock provider plays every
     role, all pacing is minimal."""
     monkeypatch.setenv("AGENT_WORLD_FAST", "1")
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "FAL_KEY", "ELEVENLABS_API_KEY"):
+    default = json.loads((REPO_ROOT / "config" / "default.json").read_text(encoding="utf-8"))
+    # every key and local server URL the config names (spec 08 added providers): a demo stays a demo
+    named = {p[k] for section in (default["providers"], default["media"]["providers"]) for p in section.values() for k in ("keyEnv", "baseUrlEnv") if p.get(k)}
+    for var in named:
         monkeypatch.delenv(var, raising=False)
     config_dir = tmp_path / "config"
     config_dir.mkdir()

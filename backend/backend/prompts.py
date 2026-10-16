@@ -201,9 +201,20 @@ Answer with ONLY this JSON object: {{"brief": "...", "acceptance": ["..."], "pit
 # ---------- worker ----------
 
 
-def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str, language: str | None = None) -> str:
+def output_contract(tools: list[str]) -> str:
+    """Spec 08: the explicit output contract for a small, free or local model,
+    last thing it reads in its system prompt."""
+    return (
+        "OUTPUT CONTRACT (strict): your whole answer is ONE JSON object, exactly this shape and nothing else:\n"
+        f'{{"thought": "one short sentence", "tool": "{" | ".join(tools)}", "args": {{...}}}}\n'
+        "No markdown, no code fences, no text before or after it. Double quotes only. \"args\" is an object."
+    )
+
+
+def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str, language: str | None = None, json_contract: bool = False) -> str:
     role = f"a sub-agent spawned by {(lead or {}).get('name', 'the lead')}" if agent["kind"] == "sub" else f"a {team_cfg['title']}"
     skills_block = f"\n\nASSIGNED SKILLS (follow them):\n{skills_text}" if skills_text else ""
+    contract = f"\n\n{output_contract(tools)}" if json_contract else ""
     return f"""[[role:tasker:{agent['team']}]]
 You are {agent['name']}, {role} in the {team_cfg['label']} team of an autonomous AI company. {team_cfg['brief']}
 You work in an engineering loop: each turn you choose ONE tool, you see its result, and you keep going until the task is complete and you have checked it yourself.
@@ -214,10 +225,10 @@ Answer with ONLY one JSON object, no prose, no code fences:
 Tools:
 {chr(10).join(f'- {TOOL_DOCS[t]}' for t in tools)}
 
-Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{skills_block}"""
+Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{skills_block}{contract}"""
 
 
-def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str) -> str:
+def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str, shared: str = "") -> str:
     input_lines = [f"{i['id']} \"{i['title']}\" by {i['agent']}: {i['summary'] or '(no summary)'}" + (f"\n  files: {', '.join(i['files'])}" if i["files"] else "") for i in inputs]
     brief = f"\nBRIEF FROM THE PROMPT LAB:\n{task['brief']}" if task.get("brief") else ""
     pitfalls = f"\nPITFALLS:\n{bullet_list(task['pitfalls'])}" if task.get("pitfalls") else ""
@@ -236,7 +247,7 @@ SKILLS: {skills}
 INPUTS FROM TEAMMATES:
 {bullet_list(input_lines)}
 FROM THE BRAIN:
-{memory or '- (nothing relevant)'}
+{memory or '- (nothing relevant)'}{f"{chr(10)}FROM THE TEAM (this run):{chr(10)}{shared}" if shared else ""}
 PROJECT FILES:
 {files or '(empty folder)'}"""
 

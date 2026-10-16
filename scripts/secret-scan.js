@@ -46,7 +46,8 @@ const FORBIDDEN_FILES = [
   [/\.(pem|key|p12|pfx|keystore)$/i, 'key file'],
   [/(^|\/)id_(rsa|ed25519)/, 'ssh key'],
   [/(^|\/)(data|workspace)\//, 'runtime data'],
-  [/(^|\/)HANDOFF\.md$/, 'local notes'],
+  // HANDOFF.md is no longer here: it is tracked on main as the progress notes. Its
+  // content is scanned like every other file (keys, user paths, personal words).
 ];
 
 const git = (args, opts = {}) => execFileSync('git', args, { maxBuffer: 256 * 1024 * 1024, ...opts });

@@ -65,7 +65,8 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None,
         body = await request.json()
         use = str(body.get("use") or "fast")
         try:
-            out = await router.chat(use=use, messages=[{"role": "user", "content": "Reply with the single word: pong"}], max_tokens=20, meta={"agentId": "test"})
+            # spec 08: the test checks this combo as it is, no cascade and no simulator
+            out = await router.chat(use=use, messages=[{"role": "user", "content": "Reply with the single word: pong"}], max_tokens=20, meta={"agentId": "test"}, cascade=False, emergency=False)
             return {"ok": True, "target": out["target"], "ms": out["ms"], "text": out["text"][:200], "demo": out["demo"]}
         except ProviderError as err:
             return {"ok": False, "error": str(err)}

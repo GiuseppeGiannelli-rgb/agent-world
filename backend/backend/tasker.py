@@ -5,9 +5,10 @@ brief stays, old steps become a one-line log, and the content of old file
 writes is replaced by its length."""
 
 import json
+import re
 
 from backend.json_repair import extract_json
-from backend.prompts import TOOL_DOCS, tasker_brief, tasker_system, tools_for
+from backend.prompts import TOOL_DOCS, output_contract, tasker_brief, tasker_system, tools_for
 
 KEEP_RECENT = 16
 ALL_TOOLS = list(TOOL_DOCS.keys())
@@ -58,30 +59,58 @@ def compact(messages: list[dict]) -> list[dict]:
     return [*head, *tail]
 
 
+ACTION_KEYS = {"thought", "reasoning", "tool", "name", "action", "args", "arguments", "parameters", "function"}
+
+
+def tool_name(raw) -> str | None:
+    """Spec 08: "Write_File()", "functions.write_file", "write file" -> write_file."""
+    if not isinstance(raw, str):
+        return None
+    name = re.sub(r"^(?:functions?|tools?)[.:/]", "", raw.strip().lower())
+    name = re.sub(r"\(.*\)$", "", name).strip()
+    return re.sub(r"[\s\-]+", "_", name)
+
+
+def _args(value):
+    """args as an object, or as a JSON string of an object (OpenAI's arguments)."""
+    if isinstance(value, str):
+        value = extract_json(value)
+    return value if isinstance(value, dict) else None
+
+
 def parse_action(text: str, allowed: list[str] | None = None) -> dict | None:
     allowed = allowed or ALL_TOOLS
     obj = extract_json(text)
     if not obj:
         return None
     action = obj.get("action")
+    function = obj.get("function") if isinstance(obj.get("function"), dict) else None  # OpenAI's tool-call shape
     tool = obj.get("tool")
     if tool is None and isinstance(action, dict):
         tool = action.get("tool")
+    if tool is None and function:
+        tool = function.get("name")
     if tool is None:
         tool = obj.get("name")
     if tool is None:
         tool = action
-    if not isinstance(tool, str) or tool not in allowed:
+    tool = tool_name(tool)
+    if not tool or tool not in allowed:
         return None
+    present = [k for k in ("args", "arguments", "parameters") if k in obj] or (["action"] if isinstance(action, dict) and "args" in action else []) or (["function"] if function and "arguments" in function else [])
     args = obj.get("args")
     if args is None:
         args = obj.get("arguments")
     if args is None and isinstance(action, dict):
         args = action.get("args")
+    if args is None and function:
+        args = function.get("arguments")
     if args is None:
         args = obj.get("parameters")
-    if not isinstance(args, dict):
-        args = {}
+    args = _args(args)
+    if args is None:
+        # no args key at all: the arguments sit next to the tool ({"tool": "read_file", "path": "a.md"})
+        args = {k: v for k, v in obj.items() if k not in ACTION_KEYS} if not present else {}
     return {"thought": str(obj.get("thought") if obj.get("thought") is not None else obj.get("reasoning") or "")[:400], "tool": tool, "args": args}
 
 
@@ -93,31 +122,72 @@ class Tasker:
         self.messages: list[dict] | None = None
         self.use: str | None = None  # combo override after an escalation
         self.tools = tools_for(run.cfg, task["team"])
+        self.profile: dict | None = None  # spec 08: the model the prompt is sized for
+        self.model_key: str | None = None
+        self.pending: dict | None = None  # a context refresh, sent before the next step
+
+    def _use(self) -> str | None:
+        """The combo of this worker's calls: the escalation, or router.roles.sub
+        for a sub-agent, or None for the team's own combo."""
+        return self.use or (self.run.role_combo("sub") if self.agent.get("kind") == "sub" else None)
 
     async def init(self) -> None:
         run, task, agent = self.run, self.task, self.agent
         cfg = run.cfg
         ws = run.ws_by_id(task["wsId"])
         inputs = run.inputs_for(task)
-        memory = "\n".join(f"- {n['title']}: {n['text'][:280]}" for n in await run.ctx.brain.search(f"{task['title']} {task['description']}", 3, agent_id=agent["id"]))
+        # spec 08: the context is sized for the model the call will most likely reach
+        self.profile = run.model_profile(task["team"], self._use())
+        self.model_key = self.profile["key"]
+        ctx = await run.rag_context(task, agent, self.profile)
         self.messages = [
-            {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=await run.skills_text(task), language=run.data.get("language"))},
-            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=memory)},
+            {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=ctx["skills"], language=run.data.get("language"), json_contract=ctx["jsonContract"])},
+            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=ctx["memory"], shared=ctx["shared"])},
         ]
+
+    async def _switched(self, res: dict) -> None:
+        """A fallback or an escalation moved this worker to another model: it gets
+        the run context again, sized for the new model, before its next step."""
+        key = res.get("target")
+        if not key:
+            return
+        if self.model_key and key != self.model_key:
+            self.profile = res.get("profile") or self.run.model_profile(self.task["team"], self._use())
+            ctx = await self.run.rag_context(self.task, self.agent, self.profile, reason="switch")
+            parts = [f"MODEL SWITCH: you now run on {key} ({self.profile.get('tier', '?')}). Keep working on the same task; what you need from this run:"]
+            if ctx["shared"]:
+                parts.append(f"FROM THE TEAM (this run):\n{ctx['shared']}")
+            if ctx["memory"]:
+                parts.append(f"FROM THE BRAIN:\n{ctx['memory']}")
+            if ctx["skills"]:
+                parts.append(f"SKILLS:\n{ctx['skills']}")
+            if ctx["jsonContract"]:
+                parts.append(output_contract(self.tools))
+            self.pending = {"role": "user", "content": "\n\n".join(parts)}
+        self.model_key = key
 
     async def work(self, feedback: str | None = None) -> dict:
         run, task, agent = self.run, self.task, self.agent
         if self.messages is None:
             await self.init()
         if feedback:
-            self.messages.append({"role": "user", "content": f"REVISION REQUESTED (attempt {task['attempts']}):\n{feedback}\n\nFix every point, check the files, then call finish again."})
+            # spec 08: the QA lessons and the run context for this kind of task and error
+            ctx = await run.rag_context(task, agent, self.profile, reason="revision", extra=feedback)
+            shared = f"\n\nFROM THE TEAM (this run):\n{ctx['shared']}" if ctx["shared"] else ""
+            lessons = f"\n\nLESSONS THAT APPLY:\n{ctx['memory']}" if ctx["memory"] else ""
+            self.messages.append({"role": "user", "content": f"REVISION REQUESTED (attempt {task['attempts']}):\n{feedback}{lessons}{shared}\n\nFix every point, check the files, then call finish again."})
         max_steps = run.cfg["limits"]["maxSteps"]
         for _step in range(max_steps):
             await run.gate(agent)
             for note in run.take_steering(task, agent):
                 self.messages.append({"role": "user", "content": f"MESSAGE FROM THE USER (the owner): {note}\nTake it into account from now on."})
+            if self.pending:
+                self.messages.append(self.pending)
+                self.pending = None
             run.team.set(agent["id"], {"state": "thinking", "tool": None, "toolTarget": None})
-            res = await run.chat(role=task["team"], use=self.use, messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task)
+            # spec 08: a sub-agent works on router.roles.sub, unless escalated
+            res = await run.chat(role=task["team"], use=self._use(), messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task)
+            await self._switched(res)
             action = parse_action(res["text"], self.tools)
             if not action:
                 self.messages.append({"role": "assistant", "content": res["text"][:2000]})

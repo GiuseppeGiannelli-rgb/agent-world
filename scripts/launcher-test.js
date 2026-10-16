@@ -36,6 +36,7 @@ await check('demoEnv puts the preferences in the temp home and turns the repo cl
   assert.equal(env.AGENT_WORLD_LOCAL_CONFIG, join(home, 'local.json'));
   assert.equal(env.AGENT_WORLD_SKILL_REPOS, '0');
   assert.equal(env.AGENT_WORLD_SKILLER, '0');
+  assert.equal(env.AGENT_WORLD_DISCOVER, '0'); // spec 08: no /models asked by a test server
 });
 
 await check('an explicit AGENT_WORLD_LOCAL_CONFIG wins', () => {
