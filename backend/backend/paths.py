@@ -8,6 +8,7 @@ be copied from one system to another.
 - ":" is refused everywhere. As a drive ("C:/x", "c:x") it leaves the root on
   Windows; anywhere else ("notes:secret.md") Windows writes it to a hidden NTFS
   data stream, and a name holding it cannot be copied to Windows.
+- A NUL byte is refused (pathlib raised a bare ValueError: a 500 on the static routes).
 - What leaves the root once resolved (".." or a link) is refused.
 
 Before, each caller left it to pathlib, that is to the OS: nothing escaped the
@@ -28,6 +29,8 @@ def inside(root: Path, rel) -> Path:
     """`rel` resolved inside `root` (already resolved), or PathRefused."""
     raw = str(rel) if rel is not None else ""
     clean = raw.strip().replace("\\", "/").lstrip("/")
+    if "\x00" in clean:
+        raise PathRefused(f"Path not allowed, it holds a NUL byte: {raw!r}")
     if DRIVE_RE.match(clean):
         raise PathRefused(f"Path outside the project folder: {raw}")
     if ":" in clean:

@@ -66,6 +66,14 @@ def test_a_colon_is_refused_on_every_system(root, given):
     assert _resolve(root, given) is None
 
 
+@pytest.mark.parametrize("given", ["a\x00b.md", "css/app\x00.css"])
+def test_a_nul_byte_is_refused_on_every_system(root, given):
+    """pathlib raised a bare ValueError deep in resolve(): a 500 on the static routes."""
+    with pytest.raises(ValueError, match="NUL"):
+        Workspace(root).resolve(given)
+    assert _resolve(root, given) is None
+
+
 @pytest.mark.asyncio
 async def test_a_file_written_with_backslashes_is_nested_and_listed_with_slashes(root):
     ws = Workspace(root)

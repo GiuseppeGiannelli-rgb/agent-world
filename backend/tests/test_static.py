@@ -68,8 +68,8 @@ async def test_a_backslash_separates_on_every_system(client):
         assert res.headers["content-type"].startswith("text/css")
 
 
-@pytest.mark.parametrize("path", ["/C:/Windows/win.ini", "/css/app.css:hidden"])
-async def test_a_colon_is_forbidden_on_every_system(client, path):
+@pytest.mark.parametrize("path", ["/C:/Windows/win.ini", "/css/app.css:hidden", "/css/app%00.css"])
+async def test_a_colon_or_a_nul_is_forbidden_on_every_system(client, path):
     async with client as c:
         res = await c.get(path)
         assert res.status_code == 403
