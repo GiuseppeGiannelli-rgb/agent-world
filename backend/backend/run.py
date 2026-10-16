@@ -25,6 +25,7 @@ from pathlib import Path
 from backend.i18n import check as check_language
 from backend.i18n import team_label, tr
 from backend.json_repair import extract_json
+from backend.media import AUDIO_EXTS, media_info, to_audio
 from backend.rag_budget import budget as rag_budget
 from backend.run_memory import RunMemory
 from backend.plan import normalize_plan, normalize_subtasks, safe_rel_path, single_subtask, slugify, strings
@@ -45,6 +46,9 @@ from backend.web import web_fetch, web_search
 
 TERMINAL = {"done", "failed", "skipped"}
 TERMINAL_RUN = {"completed", "completed_with_failures", "failed", "stopped"}
+# spec 08: media files come from generate_image / generate_speech, never from write_file
+# (a model with no credit for TTS wrote a fake 133-byte .mp3 that QA rejected)
+MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".ogg", ".m4a", ".mp4"}
 TEXT_EXT = {".md", ".txt", ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".json", ".svg", ".py", ".csv", ".yml", ".yaml", ".xml", ".sh", ".php", ".sql"}
 
 
@@ -770,10 +774,16 @@ class Run:
             self.team.set(agent["id"], {"state": "thinking", "tool": None, "text": self.t("retry_stronger") if task["escalated"] else self.t("fixing"), "escalated": task["escalated"]})
 
     async def missing_outputs(self, task: dict) -> list[str]:
+        from pathlib import PurePosixPath
+
         missing = []
         for p in task["outputs"]:
-            if await self.ws.size(p) <= 0:
-                missing.append(p)
+            if await self.ws.size(p) > 0:
+                continue
+            # spec 08: an expected .mp3 delivered as .wav (no MP3 encoder here) is delivered
+            if Path(p).suffix.lower() in AUDIO_EXTS and any([await self.ws.size(str(PurePosixPath(p).with_suffix(e))) > 0 for e in AUDIO_EXTS]):
+                continue
+            missing.append(p)
         return missing
 
     async def machine_check(self, task: dict) -> list[str]:
@@ -792,7 +802,8 @@ class Run:
                 parts.append(f"=== {p} ===\n(missing)")
                 continue
             if Path(p).suffix.lower() not in TEXT_EXT:
-                parts.append(f"=== {p} ===\n(binary file, {size} bytes — generated media; judge it by the task description and prompt used)")
+                info = await asyncio.to_thread(media_info, self.ws.resolve(p))  # spec 08: QA sees the length of an audio file
+                parts.append(f"=== {p} ===\n(binary file, {size} bytes{', ' + info if info else ''} — generated media; judge it by the task description and prompt used)")
                 continue
             text = await self.ws.read(p, min(9000, budget))
             budget -= len(text)
@@ -903,11 +914,22 @@ class Run:
         fallback = f"assets/{slugify(args.get('prompt') or task['title'], 30)}.png" if is_image else f"audio/{slugify(task['title'], 30)}.mp3"
         path = safe_rel_path(args.get("path")) or fallback
         ext = Path(path).suffix[1:].lower()
-        out = await (self.ctx.media.image({"prompt": str(args.get("prompt") or ""), "size": str(args.get("size") or "1024x1024"), "ext": ext}) if is_image else self.ctx.media.speech({"text": str(args.get("text") or ""), "voice": args.get("voice")}))
+        # spec 08: a live run always ends with a real file (Media.chain: the fallbacks, then the local generator)
+        live = self.data.get("mode") == "live"
+        out = await (self.ctx.media.image({"prompt": str(args.get("prompt") or ""), "size": str(args.get("size") or "1024x1024"), "ext": ext}, live=live) if is_image else self.ctx.media.speech({"text": str(args.get("text") or ""), "voice": args.get("voice"), "lang": self.lang}, live=live))
         if is_image and ext == "svg" and out["ext"] != "svg":
             import re
 
             path = re.sub(r"\.svg$", ".png", path, flags=re.IGNORECASE)
+        if not is_image and ext and out["ext"] != ext:
+            # the file gets the format it really has: converted with ffmpeg, or saved under its own extension
+            converted = await asyncio.to_thread(to_audio, out["bytes"], ext) if f".{ext}" in AUDIO_EXTS else None
+            if converted:
+                out = {**out, "bytes": converted, "ext": ext}
+            else:
+                from pathlib import PurePosixPath
+
+                path = str(PurePosixPath(path).with_suffix(f".{out['ext']}"))
         r = await self.ws.write_bytes(path, out["bytes"])
         self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"], "media": kind})
         self.remember_event("file", f"{r['path']}: {kind} for {task['title']}, generated with {out['target']}", task, agent, path=r["path"])
@@ -925,6 +947,8 @@ class Run:
             if tool == "write_file":
                 if not isinstance(args.get("content"), str):
                     return 'ERROR: "content" must be a string with the whole file.'
+                if Path(str(args.get("path") or "")).suffix.lower() in MEDIA_EXT:
+                    return f"ERROR: {args.get('path')} is a media file: create it with generate_image (images) or generate_speech (audio), never with write_file."
                 r = await self.ws.write(args.get("path"), args["content"])
                 self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"]})
                 self.remember_event("file", f"{r['path']}: {args['content'][:600]}", task, agent, path=r["path"])

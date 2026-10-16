@@ -21,7 +21,7 @@ import re
 import zlib
 from pathlib import Path
 
-from backend.router.providers import base_url
+from backend.router.providers import _classify, base_url
 from backend.search import tokenize
 
 LOCAL = "local/ngram"
@@ -172,7 +172,8 @@ class Embedder:
             p = providers.get(provider) or {}
             if not model or p.get("kind") != "openai" or self.router is None or self.client is None:
                 continue
-            if self.router.provider_ready(provider):
+            # spec 08: a provider benched by the router (credit gone, key refused) is skipped
+            if getattr(self.router, "available", self.router.provider_ready)(provider):
                 out.append(target)
         return [*out, LOCAL]
 
@@ -216,7 +217,11 @@ class Embedder:
             body["dimensions"] = int(self.rag["dimensions"])
         res = await self.client.post(base_url(p) + "/embeddings", headers=headers, json=body, timeout=TIMEOUT_S)
         if res.status_code >= 400:
-            raise RuntimeError(f"{target}: HTTP {res.status_code}")
+            err = _classify(res.status_code, res.text)
+            cool = getattr(self.router, "cool", None)
+            if cool is not None and err.kind in ("quota", "auth"):
+                cool({"provider": provider_id, "model": model, "key": target}, err)  # benched for the text calls too
+            raise RuntimeError(f"{target}: {err}")
         data = sorted(res.json()["data"], key=lambda d: d.get("index", 0))
         if len(data) != len(inputs):
             raise RuntimeError(f"{target}: {len(data)} vectors for {len(inputs)} inputs")

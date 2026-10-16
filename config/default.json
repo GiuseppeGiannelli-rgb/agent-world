@@ -109,10 +109,12 @@
       "openai":       { "kind": "openai", "baseUrl": "https://api.openai.com/v1", "keyEnv": "OPENAI_API_KEY" },
       "fal":          { "kind": "fal", "keyEnv": "FAL_KEY" },
       "elevenlabs":   { "kind": "elevenlabs", "keyEnv": "ELEVENLABS_API_KEY", "voiceId": "21m00Tcm4TlvDq8ikWAM" },
-      "pollinations": { "kind": "pollinations", "keyless": true, "enabled": false }
+      "pollinations": { "kind": "pollinations", "keyless": true, "enabled": false },
+      "edgetts":      { "kind": "edgetts", "keyless": true, "enabled": false },
+      "system":       { "kind": "system", "keyless": true }
     },
     "image": ["openai/gpt-image-1", "fal/fal-ai/flux/schnell", "pollinations/flux"],
-    "speech": ["openai/gpt-4o-mini-tts", "elevenlabs/eleven_multilingual_v2"]
+    "speech": ["openai/gpt-4o-mini-tts", "elevenlabs/eleven_multilingual_v2", "edgetts/neural", "system/tts"]
   },
 
   "skills": {
@@ -137,7 +139,7 @@
   },
 
   "rag": {
-    "embeddings": ["openai/text-embedding-3-small", "mistral/mistral-embed", "gemini/gemini-embedding-001", "ollama/nomic-embed-text"],
+    "embeddings": ["openai/text-embedding-3-small", "gemini/gemini-embedding-001", "mistral/mistral-embed", "ollama/nomic-embed-text"],
     "dimensions": 512,
     "localDim": 256,
     "minCosine": 0.25,
