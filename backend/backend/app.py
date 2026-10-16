@@ -52,12 +52,19 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
         scout = None
         if os.environ.get("AGENT_WORLD_SKILLER") != "0":
             scout = asyncio.ensure_future(skiller.loop(shutdown))
+        # Spec 08: the models of the local servers (and of the providers with
+        # "discover") join their combos. Off in the tests: AGENT_WORLD_DISCOVER=0.
+        finder = None
+        if os.environ.get("AGENT_WORLD_DISCOVER") != "0":
+            finder = asyncio.ensure_future(router.discovery_loop(shutdown))
         yield
         # Flips open SSE streams out of their wait loop so uvicorn doesn't
         # hang waiting for connections that would otherwise never close (S3).
         shutdown.set()
         if scout is not None:
             scout.cancel()
+        if finder is not None:
+            finder.cancel()
         await router.client.aclose()
         await media.client.aclose()
 

@@ -33,6 +33,8 @@
     "quotaCooldownMs": 21600000,
     "deadModelTtlMs": 86400000,
     "logCalls": true,
+    "discoverMax": 6,
+    "discoverIntervalMs": 600000,
     "cascade": ["frontier", "smart", "fast", "free", "local"],
     "roles": { "lead": "smart", "sub": "fast" },
     "aliases": {
@@ -57,7 +59,7 @@
     "mock":        { "kind": "mock", "latencyMs": [600, 1600] },
     "anthropic":   { "kind": "anthropic", "baseUrl": "https://api.anthropic.com/v1", "keyEnv": "ANTHROPIC_API_KEY" },
     "openai":      { "kind": "openai", "baseUrl": "https://api.openai.com/v1", "keyEnv": "OPENAI_API_KEY" },
-    "openrouter":  { "kind": "openai", "baseUrl": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY" },
+    "openrouter":  { "kind": "openai", "baseUrl": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "discover": "free" },
     "groq":        { "kind": "openai", "baseUrl": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY" },
     "cerebras":    { "kind": "openai", "baseUrl": "https://api.cerebras.ai/v1", "keyEnv": "CEREBRAS_API_KEY" },
     "gemini":      { "kind": "openai", "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY" },

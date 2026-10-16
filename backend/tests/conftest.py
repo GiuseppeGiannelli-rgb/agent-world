@@ -8,6 +8,8 @@ import pytest
 os.environ["AGENT_WORLD_SKILLER"] = "0"
 # N15: nor clone the missing skills.repos into skills/vendor/ (source 4).
 os.environ["AGENT_WORLD_SKILL_REPOS"] = "0"
+# Spec 08: nor ask the providers (or a local Ollama) which models they have.
+os.environ["AGENT_WORLD_DISCOVER"] = "0"
 
 
 @pytest.fixture(autouse=True)

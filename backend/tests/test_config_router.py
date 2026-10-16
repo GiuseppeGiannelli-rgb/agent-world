@@ -155,3 +155,11 @@ def test_the_new_keys_are_documented_and_blanked_for_tests():
         assert f"\n{name}=" in example, name
     launcher = (ROOT / "scripts" / "lib" / "backend-launcher.js").read_text(encoding="utf-8")
     assert "baseUrlEnv" in launcher  # demoEnv blanks LOCAL_OPENAI_URL too: a test server must stay in demo
+
+
+def test_discovery_lists_local_servers_and_free_openrouter_models():
+    providers = CFG["providers"]
+    assert providers["openrouter"]["discover"] == "free"
+    for local in ("ollama", "lmstudio", "localopenai"):
+        assert providers[local]["local"] is True  # a local server is listed when it runs
+    assert CFG["router"]["discoverMax"] == 6

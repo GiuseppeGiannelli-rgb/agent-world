@@ -26,12 +26,16 @@ from pathlib import Path
 import httpx
 
 from backend.plan import nz
-from backend.router.providers import ProviderError, call_provider
+from backend.router import profiler
+from backend.router.providers import ProviderError, base_url, call_provider
 
 log = logging.getLogger("agent_world.router")
 
 DEFAULT_QUOTA_COOLDOWN_MS = 6 * 3600 * 1000
 DEFAULT_DEAD_MODEL_TTL_MS = 24 * 3600 * 1000
+DEFAULT_DISCOVER_MAX = 6
+DEFAULT_DISCOVER_INTERVAL_MS = 10 * 60 * 1000
+DISCOVER_TIMEOUT_S = 4
 
 
 class Router:
@@ -46,6 +50,7 @@ class Router:
         self.stats: dict[str, dict] = {}
         self.rr_cursor: dict[str, int] = {}
         self.recent: list[dict] = []
+        self.discovered: dict[str, list[dict]] = {}  # provider id -> profiles of the models its /models listed
 
     @property
     def cfg(self) -> dict:
@@ -119,11 +124,81 @@ class Router:
         combo = self.cfg["combos"].get(name)
         if combo:
             targets = [t for t in (self.parse_target(m) for m in combo["models"]) if t]
-            return {"combo": name, "strategy": combo.get("strategy", "fallback"), "targets": self._live(targets)}
+            return {"combo": name, "strategy": combo.get("strategy", "fallback"), "targets": self._live(targets + self.assumed(name, {t["key"] for t in targets}))}
         single = self.parse_target(spec)
         if not single:
             raise ValueError(f'Unknown combo or model "{spec}"')
         return {"combo": None, "strategy": "fallback", "targets": self._live([single])}
+
+    # ---------- spec 08: profiles and discovery ----------
+
+    def profile(self, key: str) -> dict:
+        """The profile of a target, with the metadata /models gave, if any."""
+        provider_id = key.partition("/")[0]
+        meta = next((p.get("meta") for p in self.discovered.get(provider_id, []) if p["key"] == key), None)
+        return profiler.profile(key, meta, self.cfg["providers"].get(provider_id))
+
+    def assumed(self, combo: str, configured: set[str]) -> list[dict]:
+        """The models found at runtime that join `combo` (profiler.combos_for),
+        after the configured ones, at most router.discoverMax of them."""
+        limit = int(self.cfg["router"].get("discoverMax", DEFAULT_DISCOVER_MAX))
+        out = []
+        for provider_id, profiles in self.discovered.items():
+            if not self.provider_ready(provider_id):
+                continue
+            for p in profiles:
+                if combo in profiler.combos_for(p) and p["key"] not in configured and len(out) < limit:
+                    out.append({"provider": p["provider"], "model": p["model"], "key": p["key"]})
+        return out
+
+    async def discover(self) -> dict[str, list[dict]]:
+        """Asks /models of every ready provider that may be listed: the local
+        ones (Ollama, LM Studio, a local server) and those with "discover" in
+        their config ("free": only the :free models). A provider that does not
+        answer keeps what it listed last time."""
+        found: dict[str, list[dict]] = {}
+        for id_, p in self.cfg["providers"].items():
+            mode = p.get("discover", True if p.get("local") else False)
+            if not mode or p.get("kind") != "openai" or not self.available(id_):
+                continue
+            import os
+
+            key = os.environ.get(p["keyEnv"]) if p.get("keyEnv") else None
+            try:
+                res = await self.client.get(base_url(p) + "/models", headers={"authorization": f"Bearer {key}"} if key else {}, timeout=DISCOVER_TIMEOUT_S)
+                if res.status_code >= 400:
+                    continue
+                entries = res.json().get("data") or []
+            except Exception:  # noqa: BLE001 -- a provider that is not running is simply not listed
+                continue
+            profiles = []
+            for e in entries:
+                model = str((e or {}).get("id") or "")
+                if not model or (mode == "free" and not model.endswith(":free")):
+                    continue
+                prof = profiler.profile(f"{id_}/{model}", e, p)
+                prof["meta"] = {k: e[k] for k in ("context_length", "contextLength", "context_window") if k in e}
+                profiles.append(prof)
+            found[id_] = profiles
+        self.discovered.update(found)
+        return found
+
+    async def discovery_loop(self, shutdown) -> None:
+        """Lists the models at startup, then every router.discoverIntervalMs, so a
+        local server started later (or a provider enabled in the Settings) joins
+        its combos without a restart."""
+        import asyncio
+
+        while not shutdown.is_set():
+            try:
+                await self.discover()
+            except Exception as err:  # noqa: BLE001 -- discovery is a bonus, never a crash
+                log.warning("model discovery failed: %s", err)
+            interval = int(self.cfg["router"].get("discoverIntervalMs", DEFAULT_DISCOVER_INTERVAL_MS)) / 1000
+            try:
+                await asyncio.wait_for(shutdown.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
 
     def cascade_after(self, name: str | None) -> list[str]:
         """The combos to try after `name`, down router.cascade."""
@@ -209,7 +284,7 @@ class Router:
                 self.cooldowns.pop(target["key"], None)
                 self.record(target, ok=True, ms=ms, usage=res["usage"])
                 summary = self.log(target, step["combo"], role, meta, ms, True, usage=res["usage"])
-                return {"text": res["text"], "provider": target["provider"], "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": False, "emergency": False, "combo": step["combo"], "requested": spec, "cascade": visited}
+                return {"text": res["text"], "provider": target["provider"], "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": False, "emergency": False, "combo": step["combo"], "requested": spec, "cascade": visited, "profile": self.profile(target["key"])}
         if self._may_simulate(emergency):
             return await self._simulate(req, role, spec, visited, meta, errors)
         if not errors:
@@ -229,7 +304,7 @@ class Router:
         ms = (time.monotonic() - started) * 1000
         self.record(target, ok=True, ms=ms, usage=res["usage"])
         summary = self.log(target, None, role, meta, ms, True, usage=res["usage"], demo=True, emergency=emergency)
-        return {"text": res["text"], "provider": "mock", "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": True, "emergency": emergency, "combo": None, "requested": spec, "cascade": visited}
+        return {"text": res["text"], "provider": "mock", "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": True, "emergency": emergency, "combo": None, "requested": spec, "cascade": visited, "profile": self.profile(target["key"])}
 
     def cool(self, target: dict, err: ProviderError) -> None:
         r = self.cfg["router"]
@@ -319,7 +394,7 @@ class Router:
         now = time.time() * 1000
         cfg = self.cfg
         providers = [
-            {"id": id, "kind": p.get("kind"), "baseUrl": p.get("baseUrl"), "keyEnv": p.get("keyEnv"), "enabled": p.get("enabled") is not False, "ready": self.provider_ready(id), "benched": (self.provider_cooldown(id) or {}).get("reason")}
+            {"id": id, "kind": p.get("kind"), "baseUrl": p.get("baseUrl"), "keyEnv": p.get("keyEnv"), "enabled": p.get("enabled") is not False, "ready": self.provider_ready(id), "benched": (self.provider_cooldown(id) or {}).get("reason"), "discovered": len(self.discovered.get(id, []))}
             for id, p in cfg["providers"].items()
         ]
         combos = []
