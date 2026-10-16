@@ -12,7 +12,7 @@
 
 | Suite (Linux, container cloud) | Risultato |
 |---|---|
-| `pytest` | 626 passati, 3 saltati, 0 rossi |
+| `pytest` | 629 passati, 3 saltati, 0 rossi |
 | `npm test` (script Node) | tutti `ALL OK` / `OK` |
 
 ## 1. Router: perché una chiamata fallisce (`router/providers.py`, `router/index.py`)
@@ -120,7 +120,7 @@ Il secondo tentativo senza `response_format` avviene solo su un 400 generico: no
 - Gli errori dei media si leggono come quelli del router: un provider senza credito o con la chiave rifiutata resta fuori per la sessione.
 - **Voce, in una run live** (`Media.chain`):
   1. i provider cloud;
-  2. edge-tts, voce neurale naturale, se installato (`uv add edge-tts`). Non va attivato: in una run LIVE i prompt vanno già a provider esterni, quindi mandare il testo a Microsoft non aggiunge esposizione (decisione dell'utente, 16/10/2026). Si spegne con `media.providers.edgetts.enabled: false`, e non parla mai in una run demo;
+  2. edge-tts, voce neurale naturale. È una dipendenza del backend (`pyproject.toml`, `uv.lock`): `npm start` (`uv run`) lo installa da solo. Non va attivato: in una run LIVE i prompt vanno già a provider esterni, quindi mandare il testo a Microsoft non aggiunge esposizione (decisione dell'utente, 16/10/2026). Si spegne con `media.providers.edgetts.enabled: false`, non parla mai in una run demo, e senza rete si passa all'anello dopo. Nei test l'import è bloccato (`conftest.py`): nessun test manda testo a Microsoft;
   3. il sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux): offline, gratis, una voce vera lunga quanto il testo. Il testo passa su stdin, mai sulla riga di comando;
   4. il jingle demo, come ultima risorsa.
 - **Immagini, in una run live:** i provider cloud, Pollinations solo se attivato (resta un opt-in, come prima), poi il generatore locale.
@@ -134,4 +134,5 @@ Il secondo tentativo senza `response_format` avviene solo su un 400 generico: no
 
 - Non ho chiavi vere: i modelli nuovi (in particolare i `:free` di OpenRouter, che cambiano spesso) li ho verificati sulle fonti, non con chiamate reali. Un nome sbagliato costa un 404 alla prima chiamata, poi va in blacklist.
 - Con questo container (Linux, senza `espeak-ng`) il sintetizzatore del sistema non c'è: la catena della voce l'ho provata con un motore finto. La conversione ffmpeg, invece, è reale.
+- Il servizio di Microsoft dietro edge-tts non è raggiungibile da questo container (il proxy lo blocca): del pacchetto 7.3.1 ho verificato nel sorgente l'interfaccia (`Communicate(text, voice).stream()`) e il formato dei pezzi audio (`{"type": "audio", "data": ...}`), non una sintesi reale. Le voci (`it-IT-ElsaNeural` e le altre di `EDGE_VOICES`) sono quelle standard del catalogo.
 - Le soglie del profiler (70B, 24B, 128k) sono euristiche: un modello nuovo con un nome insolito finisce in `smart`.

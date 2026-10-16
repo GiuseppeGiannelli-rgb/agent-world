@@ -78,6 +78,15 @@ try {
   r = scan('--staged');
   check('local config and runtime data are blocked', r.code === 1 && /local config/.test(r.out) && /runtime data/.test(r.out), r);
 
+  // HANDOFF.md is tracked now (the progress notes on main): its name is no longer
+  // blocked, but its content is scanned like every other file
+  stageOnly({ 'HANDOFF.md': '# HANDOFF\nStatus: spec 08 done, PR open.\n' });
+  r = scan('--staged');
+  check('a clean HANDOFF.md passes', r.code === 0 && !/local notes/.test(r.out), r);
+  stageOnly({ 'HANDOFF.md': `# HANDOFF\nkey ${fakeKey}\nfrom ${winPath}\nthanks ${realName[1]}\n` });
+  r = scan('--staged');
+  check('a key, a user path or a name in HANDOFF.md is still blocked', r.code === 1 && /HANDOFF\.md:2: anthropic key/.test(r.out) && /HANDOFF\.md:3: absolute windows user path/.test(r.out) && /HANDOFF\.md:4: personal word/.test(r.out) && !/local notes/.test(r.out), r);
+
   write('MSG_OK', 'fix: a plain message\n');
   write('MSG_BAD', `fix: thanks ${realName[0]}\n# ${realName[1]} in a comment line is ignored\n`);
   check('a clean commit message passes', scan('--message', join(repo, 'MSG_OK')).code === 0);

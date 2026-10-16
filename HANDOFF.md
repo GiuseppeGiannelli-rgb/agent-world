@@ -116,8 +116,8 @@
   - **Prossimo passo:** via libera dell'utente, poi step 4 (Implement) a partire da T1. Nessun file di codice toccato finora su questo branch.
 - **Documenti della spec 02:** `docs/specs/02-ui-overlaps.md` (contesto misurato, requisiti P1–P6 ed E1–E7, matrici ingresso × stato, design, criteri V1–V13), `02-ui-overlaps.tickets.md` (T0–T5), `02-ui-overlaps.report.md` ("Prima" e "Dopo"), `02-ui-overlaps.review.md` e `02-ui-overlaps.retro.md`. La storia sta lì, non qui.
 - **Spec 01 chiusa e unita in `main`:** i documenti sono in `docs/specs/01-office-framing.*`, compresa la retro (`01-office-framing.retro.md`), le cui lezioni valgono per questo ciclo.
-- **Questo file è solo locale:** è in `.gitignore`, insieme a `.claude/`. Non si committa.
-  - **Attenzione:** il checkout di un commit precedente a `0914146`, dove il file è ancora tracciato, sovrascrive questo file e tornare avanti lo cancella. Prima va copiato altrove.
+- **Questo file è tracciato su `main`** (dal 16/10/2026, decisione dell'utente): non è più in `.gitignore`, e `scripts/secret-scan.js` non ne blocca più il nome, ma ne scansiona il contenuto come per ogni altro file (chiavi, percorsi assoluti, parole personali). *Prima era solo locale.*
+  - *Superato:* l'avviso sul checkout dei commit precedenti a `0914146` valeva finché il file era solo locale. Ora che è tracciato, git lo riporta tornando avanti; le modifiche non committate vanno committate o messe da parte prima del checkout, come per ogni file.
 - **Push su Windows:** `git push` apre la finestra "Select an account" di Git Credential Manager e aspetta che l'utente scelga l'account. Si lancia in background e si avvisa l'utente.
 
 ## 2. Spec 04 — Porting del backend: piano (step 1), spec (step 2) e ticket (step 3), tutti approvati o consegnati
@@ -316,3 +316,47 @@ npm run sweep -- --dry-run                   # cosa lascerebbero gli strumenti u
 1. Merge della PR #1.
 2. N15: config isolata in una cartella temporanea per quei test, più un test di guardia.
 3. N14: il mock segue la lingua del run.
+
+
+## Stato al 16/10/2026
+- main = `2e55864`: PR #1–#4 unite (spec 06 con il fix del README, N15, N14, N16).
+- Branch `claude/charming-thompson-mv8ucu`: spec 08, ripartito da `main`, PR #5 verso `main` aperta.
+- Questo file ora è tracciato (commit `891c264` dell'utente). Allineate le regole: fuori da `.gitignore`, nome non più bloccato da `secret-scan.js`, contenuto scansionato come gli altri file (test in `scripts/secret-scan-test.js`).
+
+### Completate
+- **N14:** il simulatore demo parla la lingua della run (`router/mock_texts.py`, cinque tabelle); senza lingua, l'inglese.
+- **N15:** i test non leggono né scrivono più `config/local.json`, `data/` e `skills/vendor/` dell'utente (`AGENT_WORLD_LOCAL_CONFIG`, `AGENT_WORLD_SKILL_REPOS=0`, guardia in `conftest.py`).
+- **N16:** una regola dei percorsi uguale su ogni sistema (`backend/paths.py`: `\` separa, `:` e NUL rifiutati); `hardKill()` per tutti gli script; il server di test muore con il suo script (`spawnBackend()`, `AGENT_WORLD_EXIT_WITH_PARENT`); launcher con `.venv/bin/python` fuori da Windows. `npm test` verde anche su Linux.
+- **Spec 08, router, RAG e media** (dettagli: `docs/specs/08-router-rag-media.md`):
+  - **Errori letti per causa.** Credito finito (402, `insufficient_quota`…) = provider fuori 6 h; un limite al minuto è solo una pausa; 404 = modello in blacklist e alias provati subito (`gemini-2.5-pro` → `gemini-3.1-pro-preview` → `gemini-2.5-flash`).
+  - **Cascata** `frontier → smart → fast → free → local`, poi il simulatore come emergenza visibile (messaggio nella run, `usage.emergencies`). Il pulsante di test e il gateway `/v1` non ricevono risposte simulate.
+  - **Provider nuovi:** Together, Fireworks, SambaNova, Cohere, Hugging Face, `localopenai` (`LOCAL_OPENAI_URL`).
+    - GitHub Models non c'è: ritirato da GitHub il 30/07/2026.
+    - I modelli ritirati sono alias, non combo.
+  - **Combo** `free` e `code`; ogni combo finisce con modelli gratuiti. **Ruoli:** CEO e QA su frontier, Sviluppo su code, lead su smart, sub-agenti su fast.
+  - **Profiler** (`router/profiler.py`): parametri, famiglia, contesto, gratuità e tier di ogni modello. Scoperta da `/models` dei server locali e dei `:free` di OpenRouter (`AGENT_WORLD_DISCOVER=0` nei test).
+  - **RAG su misura del modello:**
+    - completo per i modelli grandi;
+    - compatto per quelli veloci, gratuiti o locali: top-2 passaggi delle skill, note brevi, contratto JSON;
+    - memoria della run condivisa tra worker e sub-agenti, aggiornata a ogni revisione e a ogni cambio di modello;
+    - riparazione delle risposte JSON dei modelli piccoli.
+  - **Media sempre reali in LIVE.** Voce: cloud → edge-tts → voce del sistema (SAPI, `say`, `espeak-ng`) → jingle. Immagini: cloud → generatore locale (Pollinations resta opt-in).
+    - edge-tts è una dipendenza del backend (`pyproject.toml`, `uv.lock`): `npm start` lo installa da solo, e in LIVE non va attivato. Nei test l'import è bloccato (`conftest.py`).
+    - Conversione WAV→MP3 con ffmpeg.
+    - `write_file` rifiuta i file media.
+    - Il QA vede la durata degli audio.
+    - Gli embedding saltano il provider senza credito.
+  - **Verifiche (Linux):** pytest 629 passati, 3 saltati; `npm test` verde; browser `language` e missione completa (A10) `ALL OK`.
+
+### Ticket aperti
+- N13: errori HTTP ancora in italiano.
+
+### Da verificare su Windows
+- La voce in una run LIVE senza credito OpenAI ed ElevenLabs: deve parlare edge-tts, senza `uv add` (lo installa `npm start`). Qui il proxy blocca il servizio di Microsoft: ho verificato l'interfaccia nel sorgente, non una sintesi reale.
+- Senza rete, o con `media.providers.edgetts.enabled: false`, la voce di sistema (SAPI): qui l'ho provata solo con un motore finto.
+- La scoperta dei modelli con Ollama o LM Studio attivi.
+
+### Prossimi passi
+1. Review e merge della PR della spec 08.
+2. Le verifiche su Windows qui sopra.
+3. N13.

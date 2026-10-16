@@ -137,6 +137,29 @@ def test_the_switch_is_only_for_tests(tmp_path, monkeypatch):
     assert skill_repos_enabled() is False
 
 
+# ---------- spec 08: no test sends text to Microsoft's voice service ----------
+
+
+def test_edge_tts_is_installed_but_no_test_can_reach_it():
+    """edge-tts ships with the backend (pyproject.toml), so a live speech call
+    would reach Microsoft. conftest.py blocks the import in every test: Media
+    sees it as missing, and a test that wants the neural voice brings a fake."""
+    from backend.media import Media
+
+    with pytest.raises(ImportError):
+        import edge_tts  # noqa: F401
+    media = Media(config=Config(ROOT / "config"))
+    assert media.ready("edgetts") is False
+
+
+def test_edge_tts_is_a_dependency_of_the_backend():
+    """The natural voice works out of the box: no manual `uv add edge-tts`."""
+    import tomllib
+
+    deps = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    assert any(d.split(">")[0].split("=")[0].strip() == "edge-tts" for d in deps)
+
+
 # ---------- the session guard itself ----------
 
 

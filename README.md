@@ -412,7 +412,7 @@ Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 - **Cascata:** se nessun bersaglio di una combo risponde, si scende lungo `router.cascade`: `frontier` → `smart` → `fast` → `free` → `local`. Se non risponde nessuno, in una run live risponde il simulatore demo come **emergenza**: la run lo dice una volta nel pannello Messaggi e lo conta in `usage.emergencies` (si spegne con `router.emergencyMock: false`). Il pulsante di test e il gateway `/v1` non ricevono mai risposte simulate.
 - **Profiler** (`router/profiler.py`): da nome e metadati di ogni modello ricava parametri, famiglia (reasoning, coder, vision, piccolo), finestra di contesto, gratuità, esecuzione locale e tier. I modelli dei server locali avviati (e i `:free` di OpenRouter) vengono scoperti da `/models` all'avvio e ogni 10 minuti, ed entrano in coda alla combo del loro tier.
 - **Demo:** se nessun provider ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
-- **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs. In una run live un file media è sempre reale: se i provider cloud non hanno credito o chiave, la voce passa a edge-tts, una voce neurale naturale (se è installato, `uv add edge-tts`: in LIVE non va attivato, perché i prompt vanno già a provider esterni; si spegne con `media.providers.edgetts.enabled: false`), e poi al sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux: offline e gratis), le immagini al generatore locale. Un WAV chiesto come `.mp3` viene convertito con ffmpeg, se c'è; altrimenti si salva come `.wav`.
+- **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs. In una run live un file media è sempre reale: se i provider cloud non hanno credito o chiave, la voce passa a edge-tts, una voce neurale naturale (è una dipendenza del backend: `npm start` lo installa da solo, senza `uv add`; in LIVE non va attivato, perché i prompt vanno già a provider esterni; si spegne con `media.providers.edgetts.enabled: false`, e senza rete si passa oltre), e poi al sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux: offline e gratis), le immagini al generatore locale. Un WAV chiesto come `.mp3` viene convertito con ffmpeg, se c'è; altrimenti si salva come `.wav`.
 - **Log:** ogni chiamata viene salvata in `data/calls/`.
 - **Gateway compatibile OpenAI** (protetto da `AGENT_WORLD_API_KEY` se la imposti):
 
@@ -441,6 +441,14 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 | [uv](https://docs.astral.sh/uv/) | — | Python 3.13, ambiente virtuale, lockfile |
 | [hatchling](https://hatch.pypa.io/) | — | build del pacchetto `backend` |
 
+### Media
+
+| Libreria | Versione | Uso |
+|---|---|---|
+| [edge-tts](https://github.com/rany2/edge-tts) | 7.3 | voce neurale naturale di una run live quando le voci cloud non hanno credito o chiave. Dipendenza del backend (porta con sé aiohttp): nessuna installazione a mano |
+| Sintetizzatore del sistema | di sistema | SAPI su Windows, `say` su macOS, `espeak-ng` su Linux: la voce offline dopo edge-tts |
+| [ffmpeg](https://ffmpeg.org/) | di sistema, facoltativo | converte in `.mp3` un WAV chiesto come `.mp3` |
+
 ### Acceleratore nativo (Rust)
 
 | Libreria | Versione | Uso |
@@ -460,7 +468,7 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 
 | Strumento | Versione | Uso |
 |---|---|---|
-| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 205 test del backend |
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 629 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
 | Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (246 verifiche) |
 

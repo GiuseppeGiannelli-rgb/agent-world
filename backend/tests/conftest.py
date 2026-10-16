@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,14 @@ def isolated_user_state(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("AGENT_WORLD_LOCAL_CONFIG", str(root / "local.json"))
     monkeypatch.setenv("AGENT_WORLD_HOME", str(root / "home"))
     return root
+
+
+@pytest.fixture(autouse=True)
+def no_edge_tts(monkeypatch):
+    """Spec 08: edge-tts ships with the backend, and a live speech call would send
+    its text to Microsoft. Every test sees it as not installed; a test that wants
+    the neural voice puts its own fake in sys.modules["edge_tts"]."""
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
 
 
 # ---------- N15: the tests never touch the user's own files ----------
