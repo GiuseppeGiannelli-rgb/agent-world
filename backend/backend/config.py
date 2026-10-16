@@ -1,5 +1,10 @@
 """Mirrors server/config.js: default.json + local.json, deep merge, env
-overrides, derived staff list, EDITABLE whitelist for update()."""
+overrides, derived staff list, EDITABLE whitelist for update().
+
+N15: default.json holds the shipped defaults, local.json the user's own
+preferences. AGENT_WORLD_LOCAL_CONFIG moves the preferences file elsewhere
+(the tests and the test launchers do, so they never read or write the user's
+file); without it they stay next to default.json, as always."""
 
 import json
 import os
@@ -26,10 +31,17 @@ def merge(base, over):
     return out
 
 
+def local_config_path() -> Path | None:
+    v = os.environ.get("AGENT_WORLD_LOCAL_CONFIG")
+    return Path(v) if v else None
+
+
 class Config:
-    def __init__(self, dir: Path):
+    def __init__(self, dir: Path, local_file: Path | None = None):
+        dir = Path(dir)
         self.defaults_file = dir / "default.json"
-        self.local_file = dir / "local.json"
+        # an explicit file first, then AGENT_WORLD_LOCAL_CONFIG, then next to the defaults
+        self.local_file = Path(local_file) if local_file is not None else local_config_path() or dir / "local.json"
         self.reload()
 
     def reload(self) -> None:
@@ -60,5 +72,6 @@ class Config:
             if key not in patch:
                 continue
             self.local[key] = patch[key] if key == "combos" else merge(self.local.get(key, {}), patch[key])
+        self.local_file.parent.mkdir(parents=True, exist_ok=True)
         self.local_file.write_text(json.dumps(self.local, indent=2), encoding="utf-8")
         self.reload()

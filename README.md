@@ -393,7 +393,7 @@ Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 - **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Ollama, LM Studio e qualsiasi server compatibile OpenAI.
 - **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `fast`, `smart`, `frontier` (per l'escalation) e `local`. Ogni ruolo usa la sua combo.
 - **Cooldown:** dopo un 429 o un 5xx il bersaglio si raffredda, con un backoff da 15 s a 5 min. Una chiave rifiutata ferma l'intero provider per 10 min. I bersagli in cooldown passano in fondo alla lista, invece di sparire.
-- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`).
+- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
 - **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs.
 - **Log:** ogni chiamata viene salvata in `data/calls/`.
 - **Gateway compatibile OpenAI** (protetto da `AGENT_WORLD_API_KEY` se la imposti):
@@ -529,8 +529,9 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
   - Cambia la voce: la dettatura (🎙) e la lettura ad alta voce (🔊) usano `en-US`, `it-IT`, `es-ES`, `fr-FR` o `de-DE`.
   - Cambia la lingua degli agenti: ogni prompt (CEO, lead, worker, sub-agenti, QA, Skill Hub, Prompt Lab, chat) impone di ragionare, scrivere i log e rispondere nella lingua scelta.
   - Cambia i messaggi del backend: quelli del run nel pannello Messaggi e i fumetti.
+  - Cambia anche la demo: il simulatore legge la lingua dalla regola del system prompt e scrive piani, pensieri, file e report in quella lingua. Senza una lingua scelta risponde in inglese.
 
-  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano gli errori HTTP (ticket N13) e i testi del simulatore demo (ticket N14).
+  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano solo gli errori HTTP (ticket N13).
 - **La voce generata dagli agenti** (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
 - **La ricerca BM25** toglie le stopword italiane e inglesi e gli accenti (`più` → `piu`). Funziona bene con le lingue in alfabeto latino. Le scritture non latine (cirillico, greco, cinese…) oggi non producono token, perché il tokenizer tiene solo `a-z` e `0-9` dopo aver tolto gli accenti.
 
@@ -553,6 +554,8 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
+| `AGENT_WORLD_LOCAL_CONFIG` | sposta il file delle preferenze (di default `config/local.json`): lo usano i test, per non leggere né scrivere le tue |
+| `AGENT_WORLD_SKILL_REPOS=0` | all'avvio non clona le repo di `skills.repos` che mancano (lo usano i test) |
 
 ### Sicurezza del server locale (spec 07)
 

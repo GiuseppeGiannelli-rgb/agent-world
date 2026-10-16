@@ -31,6 +31,9 @@ def config_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("AGENT_WORLD_ALLOW_SHELL", raising=False)
     monkeypatch.delenv("AGENT_WORLD_FAST", raising=False)
+    # N15: these tests own a temporary folder and check the app's real layout,
+    # local.json next to default.json, so the test-wide relocation is lifted here
+    monkeypatch.delenv("AGENT_WORLD_LOCAL_CONFIG", raising=False)
     return d
 
 

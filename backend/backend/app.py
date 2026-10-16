@@ -25,6 +25,12 @@ from backend.team import Team
 ROOT = Path(__file__).resolve().parents[2]  # agent-world/
 
 
+def skill_repos_enabled() -> bool:
+    """N15: AGENT_WORLD_SKILL_REPOS=0 skips the clone of the missing skills.repos
+    at startup. The tests set it: no test reaches GitHub or writes skills/vendor/."""
+    return os.environ.get("AGENT_WORLD_SKILL_REPOS") != "0"
+
+
 def data_home() -> Path:
     home = Path(os.environ["AGENT_WORLD_HOME"]).resolve() if os.environ.get("AGENT_WORLD_HOME") else ROOT
     return home / "data"
@@ -36,7 +42,7 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
         async def boot_skills():
             count = await skills.reindex()
             print(f"Skill Hub    →  {count} skill indicizzate")
-            added = await skills.ensure_repos()
+            added = await skills.ensure_repos() if skill_repos_enabled() else []
             if added:
                 print(f"Skill Hub    →  scaricate le repo predefinite {', '.join(added)} ({len(skills.skills)} skill)")
 

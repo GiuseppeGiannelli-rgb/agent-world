@@ -320,7 +320,7 @@ class TestDemoRun:
         assert d["finishedAt"] is not None
         assert all(w["status"] == "done" for w in d["workstreams"])
         assert d["tasks"] and all(t["status"] == "done" for t in d["tasks"])
-        assert d["report"].startswith("# Report finale")
+        assert d["report"].startswith("# Final report")  # default.json: English (N14)
         # the workspace holds the deliverables and the report
         ws_root = Path(d["workspace"])
         assert (ws_root / "REPORT.md").exists()
@@ -386,77 +386,80 @@ class TestDemoRun:
         assert all(w["status"] == "skipped" for w in run.data["workstreams"])
 
 
-def _italian_fragments() -> list[str]:
-    """The fixed parts of every Italian backend text: in an English run none
-    of them may reach the UI. Short fragments are skipped, they could be
-    plain names or ids."""
+def _strings(v):
+    if isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _strings(x)
+    elif isinstance(v, str):
+        yield v
+
+
+def _foreign_fragments(lang: str) -> list[str]:
+    """The fixed parts of every text the backend (i18n.MESSAGES) and the demo
+    provider (mock_texts.MOCK_TEXTS) write in the OTHER languages: in a run in
+    `lang` none of them may reach the UI or the files. A piece that also
+    occurs in `lang`'s own texts is skipped (a shared word, a product name),
+    and so are short pieces."""
     import re
     import string
 
     from backend.i18n import MESSAGES
+    from backend.router.mock_texts import MOCK_TEXTS
 
-    english = " ".join(MESSAGES["en"].values())
-    out = []
-    for template in MESSAGES["it"].values():
-        for literal, *_ in string.Formatter().parse(template):
-            for piece in re.split(r"[\n:·()\"]", literal):
-                piece = piece.strip(" .,!?…→")
-                if len(piece) >= 8 and piece not in english:  # REPORT.md, workstream: same in both
-                    out.append(piece)
-    return out
-
-
-def _model_strings(replies: list[str]) -> list[str]:
-    from backend.json_repair import extract_json
-
-    out = []
-
-    def walk(v):
-        if isinstance(v, str):
-            out.append(v)
-        elif isinstance(v, dict):
-            for x in v.values():
-                walk(x)
-        elif isinstance(v, list):
-            for x in v:
-                walk(x)
-
-    for r in replies:
-        out.append(r.strip())
-        try:
-            walk(extract_json(r))
-        except Exception:
-            pass
-    return sorted({x for x in out if x}, key=len, reverse=True)
+    own = " ".join([*_strings(MESSAGES[lang]), *_strings(MOCK_TEXTS[lang])])
+    out = set()
+    for other in MOCK_TEXTS:
+        if other == lang:
+            continue
+        for template in [*_strings(MESSAGES[other]), *_strings(MOCK_TEXTS[other])]:
+            for literal, *_ in string.Formatter().parse(template):
+                for piece in re.split(r"[\n:·()\"«»„“*#|]", literal):
+                    piece = piece.strip(" .,;!?¡¿…→-_>")
+                    if len(piece) >= 12 and piece not in own:
+                        out.add(piece)
+    return sorted(out)
 
 
-def _without_model_text(text: str, replies: list[str], goal: str) -> str:
-    for piece in [goal, *_model_strings(replies)]:
-        text = text.replace(piece, "")
-    return text
+GOALS_BY_LANGUAGE = {
+    "en": "The complete launch website for a bakery, with images and a voice-over",
+    "it": "Il sito completo per il lancio di una panetteria, con immagini e una voce narrante",
+    "es": "El sitio web completo para el lanzamiento de una panadería, con imágenes y una voz en off",
+    "fr": "Le site web complet pour le lancement d'une boulangerie, avec des images et une voix off",
+    "de": "Die komplette Website zum Start einer Bäckerei, mit Bildern und einer Sprecherstimme",
+}
 
 
-class TestDemoRunInEnglish:
+class TestDemoRunInEveryLanguage:
+    """Spec 06 + N14: a whole demo mission in each language. Every model call
+    carries the run's rule, and nothing the backend or the demo provider
+    writes (messages, bubbles, timelines, Brain notes, files, report) holds a
+    fixed piece of another language. Before N14 the demo provider's words
+    had to be cut out first: they were always Italian."""
+
     @pytest.mark.asyncio
-    async def test_every_call_and_every_backend_text_follow_english(self, demo_ctx):
+    @pytest.mark.parametrize("lang", list(GOALS_BY_LANGUAGE))
+    async def test_the_whole_mission_speaks_the_run_language(self, demo_ctx, lang):
         from backend.prompts import language_rule
+        from backend.router.mock_texts import MOCK_TEXTS
         from backend.run import Run
 
-        calls, replies = [], []
+        calls = []
         real_chat = demo_ctx.router.chat
 
         async def spy(**kw):
             calls.append(kw["messages"])
-            out = await real_chat(**kw)
-            replies.append(out["text"])
-            return out
+            return await real_chat(**kw)
 
         demo_ctx.router.chat = spy
         bubbles = []
         real_set = demo_ctx.team.set
         demo_ctx.team.set = lambda id, patch: (bubbles.append(patch.get("text") or ""), real_set(id, patch))[1]
 
-        run = Run(goal="Una campagna social completa con video e podcast per il lancio", ctx=demo_ctx, options={"approvePlan": True, "language": "en"})
+        goal = GOALS_BY_LANGUAGE[lang]
+        run = Run(goal=goal, ctx=demo_ctx, options={"approvePlan": True, "language": lang})
         starter = asyncio.ensure_future(run.start())
         for _ in range(500):
             if run.data["status"] == "awaiting_approval":
@@ -467,28 +470,31 @@ class TestDemoRunInEnglish:
         await asyncio.wait_for(starter, timeout=120)
         d = run.data
         assert d["status"] in ("completed", "completed_with_failures"), d["error"]
-        assert d["language"] == "en"
+        assert d["language"] == lang
 
-        # every model call carries the English rule in its system prompt
-        rule = language_rule("en")
+        # every model call carries the run's rule in its system prompt
+        rule = language_rule(lang)
         assert calls
         for msgs in calls:
             system = next(m["content"] for m in msgs if m["role"] == "system")
             assert rule in system, system[:80]
 
-        # no Italian backend text reaches the UI (D4)
+        # what reaches the UI, and what lands in the project folder
         texts = [m["text"] for m in d["messages"]] + bubbles + [w["text"] for w in d["waiting"]]
         texts += [x.get("error") or "" for x in d["tasks"] + d["workstreams"]]
         texts += [h["text"] for t in d["tasks"] for h in t["history"]]
-        texts += [n["title"] for n in demo_ctx.brain.notes]
-        # The demo provider answers in Italian whatever the language (D5, N14):
-        # what the model wrote is cut out, only the backend's own words remain.
-        texts = [_without_model_text(t, replies, d["goal"]) for t in texts]
-        fragments = _italian_fragments()
-        assert fragments
+        texts += [f"{n['title']} {n['text']}" for n in demo_ctx.brain.notes]
+        texts += [d["report"], d["planSummary"]] + [f"{w['title']} {w['objective']}" for w in d["workstreams"]]
+        files = [p for p in Path(d["workspace"]).rglob("*") if p.suffix in (".md", ".html")]
+        texts += [p.read_text(encoding="utf-8") for p in files]
+        texts = [t.replace(goal, "") for t in texts]
+        fragments = _foreign_fragments(lang)
+        assert len(fragments) > 50
         leaks = sorted({f for f in fragments for t in texts if f in t})
-        assert not leaks
-        assert any(n["title"].startswith("Mission · ") for n in demo_ctx.brain.notes)
+        assert not leaks, leaks[:15]
+        # and the demo provider's own words are there, in this language
+        assert d["report"].startswith(f"# {MOCK_TEXTS[lang]['report']['title']}\n")
+        assert f'<html lang="{lang}">' in (Path(d["workspace"]) / "index.html").read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
     async def test_rejecting_the_plan_in_english(self, demo_ctx):

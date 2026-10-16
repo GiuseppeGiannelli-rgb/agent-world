@@ -25,7 +25,7 @@
 // so .env cannot fill it in), and a run that is not in demo mode is stopped at once.
 // At the end no browser process may be left with this run's profile, and no folder.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -613,9 +613,10 @@ async function run(cdp) {
 
 // ---------- spec 06: the language ----------
 
-// The demo server reads the repo's own config/ (no AGENT_WORLD_HOME for it): the
-// language is saved in config/local.json, so the file is put back exactly as it was.
+// N15: the demo server keeps its preferences in its temp home (demoEnv), so the
+// language chosen here never reaches the user's config/local.json: L9 checks it.
 const LOCAL_JSON = join(ROOT, 'config', 'local.json');
+const userPrefs = () => (existsSync(LOCAL_JSON) ? { mtime: statSync(LOCAL_JSON).mtimeMs, bytes: readFileSync(LOCAL_JSON, 'utf8') } : null);
 
 const waitFor = async (cdp, expression, ms = 5000) => {
   for (let i = 0; i < ms / 100; i++) {
@@ -639,7 +640,7 @@ const words = (cdp) => cdp.eval(`({
 })`);
 
 async function language(cdp) {
-  const saved = existsSync(LOCAL_JSON) ? readFileSync(LOCAL_JSON) : null;
+  const saved = userPrefs();
   const initial = (await api('/api/config')).ui?.language;
   try {
     await load(cdp, VIEWPORTS[0]);
@@ -650,15 +651,11 @@ async function language(cdp) {
     const teamWord = (lang, team, label) => (lang === 'it' ? label : d.dict[lang][`team.${team}`]);
     const cfg0 = await api('/api/config');
 
-    // L1: English unless config/local.json says otherwise; the selector lists LANGS
-    let localLang = null;
-    try {
-      localLang = saved ? JSON.parse(saved).ui?.language ?? null : null;
-    } catch {}
-    const expected = localLang ?? 'en';
+    // L1: a server with no saved preference (N15: never the user's) is in English;
+    // the selector lists LANGS
     const first = await words(cdp);
     const options = await cdp.eval(`[...document.querySelectorAll('#lang option')].map((o) => o.value)`);
-    report('L1', 'the default language is English (or the one in config/local.json), and the selector lists all five', initial === expected && first.lang === expected && first.select === expected && options.join() === d.langs.join() && d.langs.join() === 'en,it,es,fr,de' && (expected !== 'en' || first.start === 'Start the company'), { localLang, initial, first, options });
+    report('L1', 'the default language is English, and the selector lists all five', initial === 'en' && first.lang === 'en' && first.select === 'en' && first.start === 'Start the company' && options.join() === d.langs.join() && d.langs.join() === 'en,it,es,fr,de', { initial, first, options });
 
     // L2: every language rewrites the UI in place, no reload; L8: and it fits
     const seen = {};
@@ -759,10 +756,17 @@ async function language(cdp) {
       return out;
     })()`);
     report('L7', 'the Settings selector lists the five languages in their own names', settings?.values.join() === 'en,it,es,fr,de' && settings?.names.join() === 'English,Italiano,Español,Français,Deutsch' && settings?.value === 'it', { settings });
+
+    // L9 (N15): six languages saved through the app, and the user's file never written
+    const now = userPrefs();
+    report('L9', "the language saved by the test server never reaches the user's config/local.json", JSON.stringify(now) === JSON.stringify(saved), { before: saved, after: now });
   } finally {
     await api('/api/config', { ui: { language: initial ?? 'en' } }).catch(() => null);
-    if (saved) writeFileSync(LOCAL_JSON, saved);
-    else if (existsSync(LOCAL_JSON)) rmSync(LOCAL_JSON);
+    // a safety net only, for a regression L9 has reported: the user's preferences come back
+    if (JSON.stringify(userPrefs()) !== JSON.stringify(saved)) {
+      if (saved) writeFileSync(LOCAL_JSON, saved.bytes);
+      else rmSync(LOCAL_JSON, { force: true });
+    }
   }
 }
 

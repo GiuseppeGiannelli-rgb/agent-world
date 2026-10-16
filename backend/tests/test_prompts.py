@@ -242,3 +242,15 @@ def test_unknown_language_is_rejected():
 def test_the_rule_does_not_break_the_role_marker():
     for builder, system in _systems("en").items():
         assert system.startswith("[[role:"), builder
+
+
+# ---------- N14: the demo provider reads the language of the run ----------
+
+
+@pytest.mark.parametrize("language", ["en", "it", "es", "fr", "de", None])
+def test_the_mock_reads_the_language_rule_of_every_builder(language):
+    """The demo provider answers in the run's language by reading the rule in
+    the system prompt (no extra field for real models to see). A prompt whose
+    rule it cannot read would make the demo answer in the wrong language."""
+    for builder, system in _systems(language if language else "omit").items():
+        assert mock.language_of(system) == language, builder
