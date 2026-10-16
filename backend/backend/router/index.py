@@ -218,19 +218,36 @@ class Router:
         team = (self.cfg.get("teams") or {}).get(role or "") or {}
         return nz(team.get("combo"), default)
 
-    def order(self, expanded: dict) -> list[dict]:
+    def order(self, expanded: dict, *, rotate: bool = True) -> list[dict]:
         """The ready targets of one combo, benched providers left out, the warm
         ones first and the cooling ones last (soonest back first)."""
         combo, strategy = expanded["combo"], expanded["strategy"]
         ready = [t for t in expanded["targets"] if self.provider_ready(t["provider"]) and self.provider_cooldown(t["provider"]) is None]
         if strategy == "round-robin" and len(ready) > 1 and combo:
             start = self.rr_cursor.get(combo, 0) % len(ready)
-            self.rr_cursor[combo] = start + 1
+            if rotate:
+                self.rr_cursor[combo] = start + 1
             ready = ready[start:] + ready[:start]
         now = self._now()
         warm = [t for t in ready if not (self.cooldowns.get(t["key"], {}).get("until", 0) > now)]
         cold = sorted((t for t in ready if self.cooldowns.get(t["key"], {}).get("until", 0) > now), key=lambda t: self.cooldowns[t["key"]]["until"])
         return warm + cold
+
+    def peek(self, spec: str | None = None, role: str | None = None) -> dict:
+        """Spec 08: the profile of the model a call would most likely reach (the
+        first ready target down the cascade), so a prompt can be sized for it
+        before the call. Nothing moves: no round-robin step, no call."""
+        spec = spec or self.spec_for_role(role)
+        try:
+            first = self.expand(spec)
+        except ValueError:
+            return self.profile(f"mock/mock-{role or 'any'}")
+        steps = [first] + ([self.expand(n) for n in self.cascade_after(first["combo"])] if first["combo"] else [])
+        for step in steps:
+            for t in self.order(step, rotate=False):
+                if not self.is_dead(t["key"]):
+                    return self.profile(t["key"])
+        return self.profile(f"mock/mock-{role or 'any'}")
 
     def plan(self, spec: str, role: str | None) -> dict:
         """The first step of a call, kept for the callers of the old router."""

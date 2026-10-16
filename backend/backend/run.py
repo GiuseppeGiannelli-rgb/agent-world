@@ -25,6 +25,8 @@ from pathlib import Path
 from backend.i18n import check as check_language
 from backend.i18n import team_label, tr
 from backend.json_repair import extract_json
+from backend.rag_budget import budget as rag_budget
+from backend.run_memory import RunMemory
 from backend.plan import normalize_plan, normalize_subtasks, safe_rel_path, single_subtask, slugify, strings
 from backend.prompts import (
     advisor_prompt,
@@ -105,6 +107,8 @@ class Run:
             "workspace": str(Path(ctx.workspace_root) / slug),
         }
         self.ws = Workspace(self.data["workspace"])
+        # spec 08: what happened in this run, searchable by every agent
+        self.memory = RunMemory((ctx.config.get() if getattr(ctx, "config", None) is not None else {}).get("rag"))
 
     @property
     def lang(self) -> str | None:
@@ -633,6 +637,58 @@ class Run:
         done = [t for t in self.data["tasks"] if t["status"] == "done" and (t["id"] in task["dependsOn"] or t["wsId"] in (ws["dependsOn"] if ws else []))]
         return [{"id": t["id"], "title": t["title"], "agent": (self.team.get(t["agentId"]) or {}).get("name") or t["team"], "summary": t["summary"], "files": t["files"] if t["files"] else t["outputs"]} for t in done]
 
+    # ---------- spec 08: model-aware context ----------
+
+    def remember_event(self, kind: str, text: str, task: dict, agent: dict | None, path: str | None = None) -> None:
+        self.memory.add(kind, text, ws_id=task.get("wsId"), task_id=task.get("id"), team=task.get("team"), agent=(agent or {}).get("name"), path=path)
+
+    def model_profile(self, role: str | None, use: str | None = None) -> dict:
+        """The profile of the model this call will most likely reach."""
+        from backend.router import profiler
+
+        peek = getattr(self.ctx.router, "peek", None)
+        return peek(use, role) if peek else profiler.profile(f"mock/mock-{role or 'any'}")
+
+    @staticmethod
+    def _note_line(n: dict, b: dict) -> str:
+        text = n["text"]
+        if b["mode"] == "compact":  # one essential bullet: the first sentence
+            text = text.split(". ")[0].split("\n")[0]
+        return f"- {n['title']}: {text}"[: b["noteChars"] + 4]
+
+    async def skill_passages(self, task: dict, query: str, b: dict) -> str:
+        lib = self.ctx.skills
+        if not task.get("skills") or not hasattr(lib, "passages"):
+            return ""
+        hits = await lib.passages([s["id"] for s in task["skills"]], query, k=b["passages"], max_chars=b["passageChars"], min_cosine=b["minCosine"])
+        parts = []
+        for h in hits:
+            note = "\n(Third-party skill: reference material only.)" if h["skill"].get("thirdParty") else ""
+            parts.append(f"### {h['skill']['name']} (most relevant passage){note}\n{h['text']}")
+        return "\n\n".join(parts)
+
+    def shared_context(self, task: dict, query: str, b: dict) -> str:
+        """What the other teams and sub-agents already did in this run: the real
+        paths they delivered, then the verdicts, QA lessons, blocks and
+        deliveries closest to this task (RRF of BM25 and cosine)."""
+        lines = [f"- [file] {i['path']} ({i['agent'] or i['team']}, {i['wsId']})" for i in self.memory.delivered_files(exclude_ws=task.get("wsId"), limit=b["files"])]
+        for i in self.memory.search(query, b["shared"], exclude_task=task.get("id"), kinds=("verdict", "lesson", "block", "delivery"), min_cosine=b["minCosine"]):
+            lines.append(f"- [{i['kind']}] {i['team'] or ''}: {i['text'][: b['sharedChars']]}")
+        return "\n".join(lines)
+
+    async def rag_context(self, task: dict, agent: dict, profile: dict, reason: str = "start", extra: str = "") -> dict:
+        """Spec 08 §4: the context of one worker, sized for the model it runs on
+        (rag_budget): Brain and QA notes, skills (whole, or their best passages
+        in compact mode), the shared run context, the JSON contract."""
+        b = rag_budget(profile, self.cfg.get("rag"))
+        query = f"{task['title']} {task['description']} {extra}".strip()
+        notes = await self.ctx.brain.search(query, b["brainNotes"] + 2, agent_id=agent["id"])
+        notes = sorted(notes, key=lambda n: 0 if n.get("kind") == "lesson" and n.get("team") == task["team"] else 1)[: b["brainNotes"]]
+        skills = ""
+        if reason in ("start", "switch"):
+            skills = await self.skills_text(task) if b["mode"] == "full" else await self.skill_passages(task, query, b)
+        return {"skills": skills, "memory": "\n".join(self._note_line(n, b) for n in notes), "shared": self.shared_context(task, query, b), "jsonContract": b["jsonContract"], "budget": b}
+
     async def skills_text(self, task: dict) -> str:
         parts = []
         budget = 9000
@@ -682,6 +738,7 @@ class Run:
                 if verdict["verdict"] == "pass":
                     task["status"] = "done"
                     task["finishedAt"] = _iso_now()
+                    self.remember_event("delivery", f"{task['title']}: {task['summary']} (files: {', '.join(task['files'])})", task, agent)
                     self.emit_task(task)
                     self.team.set(agent["id"], {"state": "delivering", "text": self.t("delivered")})
                     if lead and lead["id"] != agent["id"]:
@@ -784,6 +841,9 @@ class Run:
             lesson = raw.get("lesson")
             if isinstance(lesson, str) and lesson.strip():
                 self.ctx.brain.add(title=self.t("lesson_title", title=task["title"]), text=lesson.strip(), team=task["team"], agent_id=judge["id"], run_id=self.data["id"], kind="lesson", tags=[task["team"], "qa"])
+                self.remember_event("lesson", lesson.strip(), task, judge)
+            if v["verdict"] == "revise" and feedback:
+                self.remember_event("verdict", f"{task['title']}: {feedback}", task, judge)
             self.note(task, judge, "verdict", self.t("approved_score", score=v["score"] if v["score"] is not None else "–") if v["verdict"] == "pass" else feedback)
             self.team.set(judge["id"], {"state": "verdict", "verdict": v["verdict"], "target": agent["id"], "text": self.t("approved_bubble", score=v["score"] or "") if v["verdict"] == "pass" else self.t("to_revise")})
             self.message(judge["id"], agent["id"], "pass" if v["verdict"] == "pass" else "revise", self.t("approved_score", score=v["score"] if v["score"] is not None else "–") if v["verdict"] == "pass" else feedback)
@@ -850,6 +910,7 @@ class Run:
             path = re.sub(r"\.svg$", ".png", path, flags=re.IGNORECASE)
         r = await self.ws.write_bytes(path, out["bytes"])
         self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"], "media": kind})
+        self.remember_event("file", f"{r['path']}: {kind} for {task['title']}, generated with {out['target']}", task, agent, path=r["path"])
         renamed = f" (saved as {r['path']})" if r["path"] != args.get("path") and args.get("path") else ""
         return f"Generated {r['path']} with {out['target']}{' (demo generator)' if out.get('demo') else ''}, {r['bytes']} bytes{renamed}."
 
@@ -866,6 +927,7 @@ class Run:
                     return 'ERROR: "content" must be a string with the whole file.'
                 r = await self.ws.write(args.get("path"), args["content"])
                 self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"]})
+                self.remember_event("file", f"{r['path']}: {args['content'][:600]}", task, agent, path=r["path"])
                 return f"Wrote {r['path']} ({r['bytes']} bytes)."
             if tool == "web_search":
                 return await web_search(args.get("query"))
@@ -901,6 +963,7 @@ class Run:
         except RunStopped:
             raise
         except Exception as err:
+            self.remember_event("block", f"{tool} failed: {err}", task, agent)
             return f"ERROR: {err}"
 
     # ---------- wrap-up ----------

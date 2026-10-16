@@ -283,6 +283,37 @@ class TestRolesOnTheirTier:
         assert all(c["role"] == "ceo" for c in calls if c["marker"] in ("[[role:planner]]", "[[role:synth]]"))
 
 
+class TestRunMemory:
+    """Spec 08: the run memory fills up as the mission goes, and the workers of
+    later workstreams (sub-agents included) read what the others delivered."""
+
+    @pytest.mark.asyncio
+    async def test_a_demo_mission_fills_the_run_memory_and_shares_it(self, demo_ctx):
+        """The worker of a later workstream (a spawned sub-agent included) reads in
+        its brief the files the upstream teams delivered, from the run memory."""
+        import asyncio
+
+        from backend.run import Run
+
+        briefs = {}
+        real = demo_ctx.router.chat
+
+        async def spy(**kw):
+            system = kw["messages"][0]["content"]
+            if system.startswith("[[role:tasker") and len(kw["messages"]) == 2:
+                briefs[(kw.get("meta") or {}).get("taskId")] = kw["messages"][1]["content"]
+            return await real(**kw)
+
+        demo_ctx.router.chat = spy
+        run = Run(goal="The complete launch website for a bakery, with images and a voice-over", ctx=demo_ctx, options={"language": "en"})
+        await asyncio.wait_for(run.start(), timeout=120)
+        kinds = {i["kind"] for i in run.memory.items}
+        assert {"file", "delivery"} <= kinds
+        assert any(i["path"] == "research/notes.md" for i in run.memory.items if i["kind"] == "file")
+        dev = [b for t, b in briefs.items() if t and t.startswith(next(w["id"] for w in run.data["workstreams"] if w["team"] == "dev"))]
+        assert dev and any("FROM THE TEAM (this run)" in b and "research/notes.md" in b for b in dev)
+
+
 class TestEmergencyAnswers:
     """Spec 08: when no provider answers in a live run, the router lets the demo
     simulator answer (emergency). The run says so once, in its language, where
@@ -354,7 +385,10 @@ def demo_ctx(tmp_path, monkeypatch):
     never written), in AGENT_WORLD_FAST mode: the mock provider plays every
     role, all pacing is minimal."""
     monkeypatch.setenv("AGENT_WORLD_FAST", "1")
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "FAL_KEY", "ELEVENLABS_API_KEY"):
+    default = json.loads((REPO_ROOT / "config" / "default.json").read_text(encoding="utf-8"))
+    # every key and local server URL the config names (spec 08 added providers): a demo stays a demo
+    named = {p[k] for section in (default["providers"], default["media"]["providers"]) for p in section.values() for k in ("keyEnv", "baseUrlEnv") if p.get(k)}
+    for var in named:
         monkeypatch.delenv(var, raising=False)
     config_dir = tmp_path / "config"
     config_dir.mkdir()

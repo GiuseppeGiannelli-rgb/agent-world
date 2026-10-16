@@ -13,7 +13,7 @@ import re
 import shutil
 from pathlib import Path
 
-from backend.embed import Embedder, merge_pieces, split_pieces
+from backend.embed import LOCAL, Embedder, local_vectors, merge_pieces, split_pieces
 from backend.plan import nz
 from backend.search import HybridIndex
 
@@ -212,6 +212,34 @@ class SkillLibrary:
             s["cosine"] = round(h["cosine"], 3)
             out.append(s)
         return out
+
+    async def passages(self, ids, query: str, k: int = 2, *, max_chars: int = 1200, min_cosine: float = 0.35) -> list[dict]:
+        """Spec 08 (compact RAG): the k passages of these skills closest to the
+        query. Each skill body is cut into semantic chunks of at most max_chars;
+        the chunks are ranked by BM25 fused (RRF) with the cosine of local
+        n-gram vectors, keeping only those at min_cosine or closer. No network:
+        it runs for every task of a small model."""
+        min_sim = float((self.embedder.rag.get("chunk") or {}).get("minSimilarity", 0.5))
+        chunks: list[tuple[dict, str]] = []
+        for id_ in ids:
+            s = self.find(id_)
+            if not s:
+                continue
+            try:
+                text = await asyncio.to_thread(Path(s["path"]).read_text, encoding="utf-8")
+            except OSError:
+                continue
+            pieces = split_pieces(parse_frontmatter(text)[1], max_chars)
+            for chunk, _ in merge_pieces(pieces, local_vectors(pieces), max_chars=max_chars, min_similarity=min_sim):
+                chunks.append((s, chunk))
+        if not chunks:
+            return []
+        index = HybridIndex(min_cosine=min_cosine)
+        for i, ((s, chunk), vec) in enumerate(zip(chunks, local_vectors([c for _, c in chunks]))):
+            index.add(i, [{"text": chunk}, {"text": s["name"], "weight": 2}])
+            index.add_vectors(i, [vec], LOCAL)
+        (query_vec,) = local_vectors([query])
+        return [{"skill": chunks[h["id"]][0], "text": chunks[h["id"]][1], "score": h["score"]} for h in index.search(query, k, query_vec)]
 
     async def read(self, id_or_name, max: int = 12000) -> dict:
         s = self.find(id_or_name)

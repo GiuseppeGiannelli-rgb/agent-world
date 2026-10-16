@@ -138,6 +138,17 @@ class FakeRun:
     async def skills_text(self, task):
         return ""
 
+    def role_combo(self, kind):  # spec 08
+        return None
+
+    def model_profile(self, role, use=None):  # spec 08
+        from backend.router import profiler
+
+        return profiler.profile("mock/mock-dev")
+
+    async def rag_context(self, task, agent, profile, reason="start", extra=""):  # spec 08
+        return {"skills": await self.skills_text(task), "memory": "", "shared": "", "jsonContract": False}
+
     async def gate(self, agent):
         return None
 

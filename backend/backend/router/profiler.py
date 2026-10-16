@@ -116,6 +116,11 @@ def profile(target: str, meta: dict | None = None, provider: dict | None = None)
         "json": provider.get("jsonMode") is not False and provider.get("kind", "openai") != "mock",
     }
     p["context"] = _context(provider_id, name, meta)
+    if provider_id == "mock":
+        # the demo simulator has no window and no tier: it keeps the full context,
+        # so demo prompts stay what they were
+        p.update(context=1_000_000, tier="smart", compact=False)
+        return p
     p["tier"] = _tier(p)
     p["compact"] = p["tier"] in ("fast", "local") or p["free"] or p["local"] or p["context"] < LARGE_CONTEXT or (p["paramsB"] is not None and p["paramsB"] <= 14)
     return p
