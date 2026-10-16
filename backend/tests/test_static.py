@@ -60,6 +60,21 @@ async def test_traversal_forbidden(client, path):
         assert res.status_code == 403
 
 
+async def test_a_backslash_separates_on_every_system(client):
+    # N16: "\\" is a separator everywhere, as on Windows: the same URL serves the same file.
+    async with client as c:
+        res = await c.get("/css\\app.css")
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith("text/css")
+
+
+@pytest.mark.parametrize("path", ["/C:/Windows/win.ini", "/css/app.css:hidden"])
+async def test_a_colon_is_forbidden_on_every_system(client, path):
+    async with client as c:
+        res = await c.get(path)
+        assert res.status_code == 403
+
+
 async def test_traversal_that_stays_inside_is_fine(client):
     # "a/../css/app.css" normalizes to "css/app.css", which is inside the root.
     async with client as c:

@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from backend.paths import inside
+
 SKIP = {"node_modules", ".git", ".next", "dist", "__pycache__"}
 
 
@@ -20,11 +22,8 @@ class Workspace:
         self.root = Path(root).resolve()
 
     def resolve(self, p=".") -> Path:
-        clean = (str(p) if p is not None else ".").strip().lstrip("/\\") or "."
-        full = (self.root / clean).resolve()
-        if full != self.root and not str(full).startswith(str(self.root) + os.sep):
-            raise ValueError(f"Path outside the project folder: {p}")
-        return full
+        # N16: the same rule on every system (paths.py); a refusal is a ValueError
+        return inside(self.root, p)
 
     def rel(self, full) -> str:
         return str(Path(full).relative_to(self.root)).replace(os.sep, "/")
