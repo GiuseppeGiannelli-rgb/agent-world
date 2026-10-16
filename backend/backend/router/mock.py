@@ -1,10 +1,21 @@
 """Mirrors server/router/mock.js: the demo provider plays every role with
-believable answers, reading the [[role:...]] marker in the system prompt."""
+believable answers, reading the [[role:...]] marker in the system prompt.
+
+N14: it answers in the run's language. It reads the language rule every
+system prompt carries (prompts.language_rule), so nothing is added to the
+prompts real models see, and takes its words from router/mock_texts.py.
+With no language chosen (the legacy rule) it answers in English, the
+project's default. The JSON shapes, tool names, paths and the hashes that
+pick the demo's revisions stay the same in every language."""
 
 import asyncio
 import json
 import random
 import re
+
+from backend.i18n import DEFAULT, LANGUAGES
+from backend.prompts import language_rule
+from backend.router.mock_texts import MOCK_TEXTS
 
 FIELD_RE_CACHE: dict[str, re.Pattern] = {}
 BLOCK_RE_CACHE: dict[str, re.Pattern] = {}
@@ -42,57 +53,100 @@ def short_goal(goal: str) -> str:
     return f"{g[:67]}…" if len(g) > 70 else g
 
 
+# ---------- the language of the run ----------
+
+# The rule's words up to the language name, taken from prompts.py itself: if
+# its wording changes, the mock still reads it (test_prompts.py checks every builder).
+_RULE_HEAD = language_rule(DEFAULT).split(LANGUAGES[DEFAULT])[0]
+LANGUAGE_RE = re.compile(re.escape(_RULE_HEAD) + r"([A-Za-z]+)")
+_BY_NAME = {name: code for code, name in LANGUAGES.items()}
+
+
+def language_of(system: str) -> str | None:
+    """The language the system prompt's rule asks for, None with the legacy rule."""
+    m = LANGUAGE_RE.search(system or "")
+    return _BY_NAME.get(m.group(1)) if m else None
+
+
+def _texts(lang: str | None) -> dict:
+    return MOCK_TEXTS.get(lang or DEFAULT) or MOCK_TEXTS[DEFAULT]
+
+
 # ---------- CEO ----------
 
+# The kind of mission, read from the GOAL's words in any of the five languages:
+# the same goal makes the same plan whatever language it is written in.
+WEB_RE = re.compile(
+    r"web|sito|sitio|\bsite\b|landing|pagina|página|homepage|internetseite|html|\bapp|aplicaci|gioco|juego|\bjeux?\b|\bspiel|game"
+    r"|dashboard|portfolio|negozio|tienda|boutique|\b(?:e-?|online)?shop|saas",
+    re.IGNORECASE,
+)
+COMPLEX_RE = re.compile(
+    r"compl[eèé]t|compless|komplett|vollständig|piattaforma|plataforma|plateforme|plattform|platform|saas"
+    r"|campagn|campaña|kampagne|campaign|brand|marca|marque|\bmarke\b"
+    r"|lancio|lanzamiento|lancement|\blaunch|markteinführung|e-?commerce|v[ií]d[eé]o|social|startup|agenzia|agencia|agence|agentur|agency",
+    re.IGNORECASE,
+)
+VISUAL_RE = re.compile(
+    r"immagin|im[aá]gen|\bimage|\bbild|titelbild|foto|photo|logo|brand|marca|visual|illustr|ilustr|hero|poster"
+    r"|copertina|portada|couverture|\bcover|gr[aá]fic|graphi|grafik|social",
+    re.IGNORECASE,
+)
+VOICE_RE = re.compile(r"voce|\bvoz\b|voix|stimme|sprecher|audio|podcast|spot|voice|narra|erzähl|locuci", re.IGNORECASE)
 
-def ceo_plan(goal: str) -> dict:
-    web = bool(re.search(r"sito|landing|pagina|web|html|app|gioco|game|dashboard|portfolio|negozio|shop|saas", goal, re.IGNORECASE))
-    complex_ = len(goal) > 80 or bool(re.search(r"complet|compless|piattaforma|saas|campagna|brand|lancio|e-?commerce|video|social|startup|agenzia", goal, re.IGNORECASE))
-    visual = complex_ or bool(re.search(r"immagin|foto|logo|brand|visual|illustr|hero|poster|copertina|grafica|social", goal, re.IGNORECASE))
-    voice = bool(re.search(r"voce|audio|podcast|spot|voice|narra", goal, re.IGNORECASE))
+
+def ceo_plan(goal: str, lang: str = DEFAULT) -> dict:
+    t = _texts(lang)
+    web = bool(WEB_RE.search(goal))
+    complex_ = len(goal) > 80 or bool(COMPLEX_RE.search(goal))
+    visual = complex_ or bool(VISUAL_RE.search(goal))
+    voice = bool(VOICE_RE.search(goal))
     ws: list[dict] = []
 
-    def add(w):
-        ws.append({"id": f"w{len(ws) + 1}", **w})
+    def add(key: str, team: str, deliverables: list[str], depends_on: list[str]):
+        w = t["ws"][key]
+        ws.append(
+            {
+                "id": f"w{len(ws) + 1}",
+                "team": team,
+                "title": w["title"],
+                "objective": w["objective"].format(goal=short_goal(goal)),
+                "deliverables": deliverables,
+                "acceptance": list(w["acceptance"]),
+                "dependsOn": depends_on,
+            }
+        )
 
     if web:
-        add({"team": "research", "title": "Ricerca e requisiti", "objective": f'Capire pubblico, sezioni e riferimenti per "{short_goal(goal)}".', "deliverables": ["research/notes.md"], "acceptance": ["Pubblico e obiettivi chiari", "Sezioni della pagina proposte", "Almeno 3 riferimenti"], "dependsOn": []})
-        add({"team": "design", "title": "Sistema visivo", "objective": "Palette, tipografia e componenti in un foglio di stile riutilizzabile.", "deliverables": ["css/style.css"], "acceptance": ["Variabili CSS per colori e font", "Layout responsive"], "dependsOn": []})
-        add({"team": "content", "title": "Testi e contenuti", "objective": "Titoli, testi di sezione e call to action dalle note di ricerca.", "deliverables": ["content/copy.md"], "acceptance": ["Un testo per ogni sezione", "Call to action chiara"], "dependsOn": ["w1"]})
+        add("web_research", "research", ["research/notes.md"], [])
+        add("web_design", "design", ["css/style.css"], [])
+        add("web_content", "content", ["content/copy.md"], ["w1"])
         media: list[str] = []
         if complex_:
-            add({"team": "prompt", "title": "Prompt per le immagini", "objective": "Prompt precisi e coerenti con lo stile per ogni immagine della pagina.", "deliverables": ["prompts/image-prompts.md"], "acceptance": ["Un prompt per immagine", "Stile coerente con la palette"], "dependsOn": ["w1"]})
+            add("web_prompts", "prompt", ["prompts/image-prompts.md"], ["w1"])
         if visual:
-            deps = ["w2", "w4"] if complex_ else ["w2"]
-            add({"team": "genai", "title": "Immagini generate", "objective": "Immagine hero e immagini di sezione coerenti con lo stile.", "deliverables": ["assets/hero.png", "assets/gallery-1.png"] if complex_ else ["assets/hero.png"], "acceptance": ["Immagini coerenti con la palette", "Prompt documentati"], "dependsOn": deps})
+            add("web_images", "genai", ["assets/hero.png", "assets/gallery-1.png"] if complex_ else ["assets/hero.png"], ["w2", "w4"] if complex_ else ["w2"])
             media = [ws[-1]["id"]]
         if voice:
-            add({"team": "genai", "title": "Voice-over", "objective": "Una voce narrante per il video di presentazione.", "deliverables": ["audio/voiceover.mp3"], "acceptance": ["Testo chiaro e breve"], "dependsOn": ["w3"]})
-        add({"team": "dev", "title": "Sviluppo della pagina", "objective": "Pagina completa che integra stile, testi e immagini, con interazioni leggere.", "deliverables": ["index.html", "js/app.js"], "acceptance": ["HTML semantico", "Testi e stile integrati", "Nessun segnaposto"], "dependsOn": ["w2", "w3"] + media})
+            add("web_voice", "genai", ["audio/voiceover.mp3"], ["w3"])
+        add("web_dev", "dev", ["index.html", "js/app.js"], ["w2", "w3"] + media)
     else:
-        add({"team": "research", "title": "Ricerca approfondita", "objective": f'Quadro completo su "{short_goal(goal)}": concetti, attori, numeri, casi.', "deliverables": ["research/overview.md"], "acceptance": ["Almeno 5 punti chiave", "Fonti indicate"], "dependsOn": []})
-        add({"team": "design", "title": "Schema di presentazione", "objective": "Struttura visiva del documento finale.", "deliverables": ["design/layout.md"], "acceptance": ["Indice del documento", "Indicazioni per tabelle"], "dependsOn": []})
-        add({"team": "content", "title": "Documento finale", "objective": "Documento che unisce ricerca e schema, con conclusioni operative.", "deliverables": ["output/report.md"], "acceptance": ["Segue lo schema", "Conclusioni operative"], "dependsOn": ["w1", "w2"]})
+        add("doc_research", "research", ["research/overview.md"], [])
+        add("doc_design", "design", ["design/layout.md"], [])
+        add("doc_content", "content", ["output/report.md"], ["w1", "w2"])
         if visual:
-            add({"team": "genai", "title": "Copertina", "objective": "Un'immagine di copertina per il documento.", "deliverables": ["assets/cover.png"], "acceptance": ["Coerente con il tema"], "dependsOn": ["w2"]})
+            add("doc_cover", "genai", ["assets/cover.png"], ["w2"])
         if voice:
-            add({"team": "genai", "title": "Versione audio", "objective": "Sintesi vocale del documento.", "deliverables": ["audio/summary.mp3"], "acceptance": ["Testo chiaro"], "dependsOn": ["w3"]})
+            add("doc_audio", "genai", ["audio/summary.mp3"], ["w3"])
 
-    return {
-        "complexity": "complex" if complex_ else "simple",
-        "summary": (
-            "Missione complessa: ricerca e design partono subito, il Prompt Lab prepara le immagini, i team lavorano in parallelo con sub-agenti e lo sviluppo integra tutto alla fine."
-            if complex_
-            else "Ricerca e design partono insieme, poi contenuti e sviluppo in sequenza dove serve."
-        ),
-        "workstreams": ws,
-    }
+    return {"complexity": "complex" if complex_ else "simple", "summary": t["plan_complex"] if complex_ else t["plan_simple"], "workstreams": ws}
 
 
 # ---------- team lead ----------
 
 
-def lead_plan(text: str) -> dict:
+def lead_plan(text: str, lang: str = DEFAULT) -> dict:
+    t = _texts(lang)
     id_ = field(text, "WORKSTREAM ID")
     team = field(text, "WORKSTREAM TEAM")
     title = field(text, "WORKSTREAM")
@@ -101,9 +155,9 @@ def lead_plan(text: str) -> dict:
         parts = [
             {
                 "id": str(i + 1),
-                "title": f"Immagine {d.split('/')[-1]}" if IMG_RE.search(d) else f"Parte {d.split('/')[-1]}",
-                "description": f'Produci {d} per "{title}".',
-                "acceptance": ["Completo e coerente con il resto del progetto", "Nessun segnaposto"],
+                "title": (t["part_image"] if IMG_RE.search(d) else t["part_file"]).format(name=d.split("/")[-1]),
+                "description": t["part_description"].format(file=d, title=title),
+                "acceptance": list(t["part_acceptance"]),
                 "outputs": [d],
                 "dependsOn": [],
             }
@@ -111,45 +165,33 @@ def lead_plan(text: str) -> dict:
         ]
         return {"subtasks": parts}
     d = deliverables[0] if deliverables else f"notes/{id_}.md"
-    angles = {
-        "research": ["Mercato e pubblico", "Concorrenti", "Riferimenti e ispirazioni"],
-        "genai": ["Concept visivo", "Prompt e varianti"],
-        "design": ["Palette e tipografia", "Componenti"],
-        "content": ["Struttura e tono", "Bozze di sezione"],
-        "dev": ["Struttura", "Interazioni"],
-        "prompt": ["Analisi dello stile", "Bozze dei prompt"],
-    }.get(team, ["Analisi", "Bozza"])
+    angles = t["angles"].get(team, t["angles"]["other"])
     parts = [
-        {"id": str(i + 1), "title": a, "description": f'{a} per "{title}".', "acceptance": ["Note chiare e utilizzabili dal resto del team"], "outputs": [f"notes/{id_}-{i + 1}.md"], "dependsOn": []}
+        {"id": str(i + 1), "title": a, "description": t["angle_description"].format(angle=a, title=title), "acceptance": list(t["angle_acceptance"]), "outputs": [f"notes/{id_}-{i + 1}.md"], "dependsOn": []}
         for i, a in enumerate(angles)
     ]
-    parts.append({"id": str(len(parts) + 1), "title": "Integrazione finale", "description": f"Unisci le parti in {d}.", "acceptance": ["Usa tutte le parti del team", "Risultato finale completo"], "outputs": [d], "dependsOn": [p["id"] for p in parts]})
+    parts.append({"id": str(len(parts) + 1), "title": t["final_title"], "description": t["final_description"].format(file=d), "acceptance": list(t["final_acceptance"]), "outputs": [d], "dependsOn": [p["id"] for p in parts]})
     return {"subtasks": parts}
 
 
 # ---------- file contents ----------
 
 
-def md_file(task: str, goal: str, revised: bool) -> str:
-    extra = (
-        "\n## Aggiunte dopo la revisione\n- Esempi concreti con dati e numeri.\n- Ogni criterio di accettazione è coperto da una sezione dedicata.\n"
-        if revised
-        else ""
-    )
+def md_file(task: str, goal: str, revised: bool, lang: str = DEFAULT) -> str:
+    md = _texts(lang)["md"]
+    extra = f"\n## {md['revised_title']}\n" + "".join(f"- {x}\n" for x in md["revised_items"]) if revised else ""
+    points = "\n".join(f"- {p}" for p in md["points"])
+    details = "\n".join(f"{i}. **{label}**: {text}" for i, (label, text) in enumerate(md["detail_items"], 1))
     return f"""# {task}
 
-> Obiettivo: {goal}
+> {md['goal_label']}: {goal}
 
-## Punti chiave
-- Pubblico principale e bisogni, descritti in modo concreto.
-- Cosa distingue questo progetto dalle alternative.
-- Il messaggio da comunicare in una frase.
+## {md['key_points']}
+{points}
 
-## Dettagli
-1. **Contesto**: perché il progetto esiste e cosa risolve.
-2. **Struttura**: le parti principali e il loro ordine.
-3. **Esempi**: tre riferimenti da cui prendere spunto.
-{extra}_Scritto dall'agente come parte del lavoro di squadra._
+## {md['details']}
+{details}
+{extra}_{md['signature']}_
 """
 
 
@@ -178,11 +220,14 @@ footer { padding: 40px 6vw; color: var(--muted); }
 """
 
 
-def html(goal: str, files: list[str]) -> str:
+def html(goal: str, files: list[str], lang: str = DEFAULT) -> str:
+    p = _texts(lang)["page"]
+    lang = lang if lang in MOCK_TEXTS else DEFAULT
     hero = '\n      <img src="assets/hero.png" alt="">' if "assets/hero.png" in files else ""
     gallery = '\n        <article class="card"><img src="assets/gallery-1.png" alt="" style="width:100%;border-radius:12px"></article>' if "assets/gallery-1.png" in files else ""
+    cards = "\n".join(f"        <article class=\"card\"><h3>{h}</h3><p>{x}</p></article>" for h, x in p["cards"])
     return f"""<!doctype html>
-<html lang="it">
+<html lang="{lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -190,29 +235,27 @@ def html(goal: str, files: list[str]) -> str:
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header><strong>Progetto</strong><a class="btn" href="#contatti">Contattaci</a></header>
+  <header><strong>{p['brand']}</strong><a class="btn" href="#contact">{p['contact_cta']}</a></header>
   <main>
     <section class="hero">
       <div>
         <h1>{short_goal(goal)}</h1>
-        <p>Una pagina costruita da un'azienda di agenti: ricerca, design, testi, immagini e sviluppo.</p>
-        <a class="btn" href="#servizi">Scopri di più</a>
+        <p>{p['hero_text']}</p>
+        <a class="btn" href="#services">{p['more']}</a>
       </div>{hero}
     </section>
-    <section id="servizi">
-      <h2>Cosa offriamo</h2>
+    <section id="services">
+      <h2>{p['services']}</h2>
       <div class="grid">
-        <article class="card"><h3>Chiarezza</h3><p>Un messaggio semplice, scritto per chi legge.</p></article>
-        <article class="card"><h3>Velocità</h3><p>Una pagina leggera che si apre subito.</p></article>
-        <article class="card"><h3>Cura</h3><p>Ogni dettaglio rivisto prima della consegna.</p></article>{gallery}
+{cards}{gallery}
       </div>
     </section>
-    <section id="contatti">
-      <h2>Parliamone</h2>
-      <p>Scrivici e ti rispondiamo entro un giorno.</p>
+    <section id="contact">
+      <h2>{p['contact_title']}</h2>
+      <p>{p['contact_text']}</p>
     </section>
   </main>
-  <footer>Costruito con Agent World</footer>
+  <footer>{p['footer']}</footer>
   <script src="js/app.js"></script>
 </body>
 </html>
@@ -227,20 +270,22 @@ document.querySelectorAll('section').forEach((s) => observer.observe(s));
 """
 
 
-def file_content(path: str, task: str, goal: str, revised: bool, files: list[str]) -> str:
+def file_content(path: str, task: str, goal: str, revised: bool, files: list[str], lang: str = DEFAULT) -> str:
     if path.endswith(".css"):
         return CSS
     if path.endswith(".html"):
-        return html(goal, files)
+        return html(goal, files, lang)
     if path.endswith(".js"):
         return JS
-    return md_file(task, goal, revised)
+    return md_file(task, goal, revised, lang)
 
 
 # ---------- worker ----------
 
 
-def worker_turn(messages: list[dict], team: str) -> dict:
+def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
+    t = _texts(lang)
+    say = t["thoughts"]
     brief = messages[1]["content"] if len(messages) > 1 else ""
     goal = field(brief, "GOAL")
     task_id = field(brief, "TASK ID")
@@ -262,34 +307,35 @@ def worker_turn(messages: list[dict], team: str) -> dict:
     steps = []
     if revised:
         if text_out:
-            steps.append({"thought": "Rileggo il file per capire cosa sistemare.", "tool": "read_file", "args": {"path": text_out[0]}})
+            steps.append({"thought": say["reread"], "tool": "read_file", "args": {"path": text_out[0]}})
     else:
-        steps.append({"thought": "Guardo cosa c'è già nella cartella del progetto.", "tool": "list_files", "args": {"path": "."}})
+        steps.append({"thought": say["list"], "tool": "list_files", "args": {"path": "."}})
         if h % 3 == 0:
-            steps.append({"thought": "Controllo se il Brain ha lezioni utili.", "tool": "recall", "args": {"query": title}})
+            steps.append({"thought": say["recall"], "tool": "recall", "args": {"query": title}})
         if skills:
-            steps.append({"thought": f'Ripasso la skill "{skills[0]}".', "tool": "read_skill", "args": {"name": skills[0]}})
+            steps.append({"thought": say["skill"].format(skill=skills[0]), "tool": "read_skill", "args": {"name": skills[0]}})
         if input_files:
-            steps.append({"thought": f"Leggo il lavoro dei compagni: {input_files[0]}.", "tool": "read_file", "args": {"path": input_files[0]}})
+            steps.append({"thought": say["inputs"].format(file=input_files[0]), "tool": "read_file", "args": {"path": input_files[0]}})
         if h % 4 == 1:
-            steps.append({"thought": "Chiedo una conferma al mio lead.", "tool": "ask_lead", "args": {"question": f'Per "{title}" punto su un tono diretto e concreto: va bene?'}})
+            steps.append({"thought": say["ask"], "tool": "ask_lead", "args": {"question": t["ask_question"].format(title=title)}})
     for out in outputs:
         if IMG_RE.search(out):
-            steps.append({"thought": f"Genero l'immagine {out}.", "tool": "generate_image", "args": {"prompt": f"{title}, {short_goal(goal)}, soft editorial light, warm palette, clean composition", "path": out}})
+            # the image prompt stays in English: it is written for the image model, not for the user
+            steps.append({"thought": say["image"].format(file=out), "tool": "generate_image", "args": {"prompt": f"{title}, {short_goal(goal)}, soft editorial light, warm palette, clean composition", "path": out}})
         elif AUDIO_RE.search(out):
-            steps.append({"thought": f"Registro la voce per {out}.", "tool": "generate_speech", "args": {"text": f"{short_goal(goal)}. Scopri di più sul nostro progetto.", "path": out}})
+            steps.append({"thought": say["voice"].format(file=out), "tool": "generate_speech", "args": {"text": t["voice_text"].format(goal=short_goal(goal)), "path": out}})
         else:
-            steps.append({"thought": (f"Correggo {out} seguendo il feedback." if revised else f"Scrivo {out}."), "tool": "write_file", "args": {"path": out, "content": file_content(out, title, goal, revised, files)}})
+            steps.append({"thought": (say["fix"] if revised else say["write"]).format(file=out), "tool": "write_file", "args": {"path": out, "content": file_content(out, title, goal, revised, files, lang)}})
     if text_out:
-        steps.append({"thought": "Ricontrollo il risultato prima di consegnare.", "tool": "read_file", "args": {"path": text_out[-1]}})
+        steps.append({"thought": say["check"], "tool": "read_file", "args": {"path": text_out[-1]}})
     if not revised and h % 3 == 2:
-        steps.append({"thought": "Salvo una lezione utile nel Brain.", "tool": "remember", "args": {"title": f"Come fare: {title}", "text": "Partire dai file dei compagni e chiudere ogni sezione con un esempio concreto.", "tags": [team]}})
+        steps.append({"thought": say["remember"], "tool": "remember", "args": {"title": t["remember_title"].format(title=title), "text": t["remember_text"], "tags": [team]}})
     steps.append(
         {
-            "thought": "Tutti i criteri sono coperti: consegno.",
+            "thought": say["finish"],
             "tool": "finish",
             "args": {
-                "summary": (f"Ho corretto {', '.join(outputs)} seguendo ogni punto della revisione." if revised else f"Ho completato \"{title}\" in {', '.join(outputs) or 'note'} e ho verificato il risultato."),
+                "summary": (t["finish_revised"].format(files=", ".join(outputs)) if revised else t["finish_done"].format(title=title, files=", ".join(outputs) or t["notes_word"])),
                 "files": outputs,
             },
         }
@@ -300,7 +346,8 @@ def worker_turn(messages: list[dict], team: str) -> dict:
 # ---------- QA, lead help, CEO wrap-up ----------
 
 
-def judge_turn(messages: list[dict]) -> dict:
+def judge_turn(messages: list[dict], lang: str = DEFAULT) -> dict:
+    t = _texts(lang)["judge"]
     text = messages[1]["content"] if len(messages) > 1 else ""
     task_id = field(text, "TASK ID")
     try:
@@ -313,81 +360,72 @@ def judge_turn(messages: list[dict]) -> dict:
     strict = h % 5 < 2
     stubborn = h % 11 == 3
     if (attempt == 1 and strict) or (attempt == 2 and stubborn):
-        return {
-            "verdict": "revise",
-            "score": 5 + attempt,
-            "feedback": "1. Mancano esempi concreti: aggiungine almeno due con dati reali.\n2. Un criterio di accettazione non è coperto in modo esplicito: dedicagli una sezione.",
-            "lesson": f"Nei task del team {team}: coprire ogni criterio di accettazione con una sezione esplicita e almeno un esempio concreto.",
-        }
+        return {"verdict": "revise", "score": 5 + attempt, "feedback": t["feedback"], "lesson": t["lesson"].format(team=team)}
     return {"verdict": "pass", "score": 8 + (h % 3), "feedback": "", "lesson": ""}
 
 
-def report(messages: list[dict]) -> str:
+def report(messages: list[dict], lang: str = DEFAULT) -> str:
+    r = _texts(lang)["report"]
     text = messages[1]["content"] if len(messages) > 1 else ""
     goal = field(text, "GOAL")
     ws = block(text, "WORKSTREAMS")
     files = block(text, "PROJECT FILES")
-    has_index = "index.html" in files
-    how = "- Apri l'anteprima dal pannello **Output** oppure apri `index.html` nella cartella del progetto." if has_index else "- Apri i file markdown nella cartella del progetto, partendo dal documento finale."
-    return f"""# Report finale
+    how = r["how_index"] if "index.html" in files else r["how_docs"]
+    return f"""# {r['title']}
 
-**Obiettivo:** {goal}
+**{r['goal']}:** {goal}
 
-## Cosa ha fatto l'azienda
+## {r['done']}
 {ws}
 
-## File
+## {r['files']}
 {files}
 
-## Come usarlo
-{how}
+## {r['how']}
+- {how}
 
-## Note
-- Run eseguito in **modalità demo**: risposte e immagini sono simulate. Aggiungi una chiave in `.env` per far lavorare modelli veri.
+## {r['notes']}
+- {r['demo']}
 """
 
 
-def chat_reply(messages: list[dict]) -> str:
+def chat_reply(messages: list[dict], lang: str = DEFAULT) -> str:
+    c = _texts(lang)["chat"]
     system = messages[0]["content"] if messages else ""
     m = re.search(r"You are ([^,]+),", system)
-    name = m.group(1) if m else "L'agente"
+    name = m.group(1) if m else c["someone"]
     last = messages[-1]["content"] if messages else ""
-    if str(last).strip().endswith("?"):
-        return f"Sono {name}. In questo momento seguo il lavoro del mio team: ti rispondo appena ho il quadro completo, intanto puoi vedere i dettagli nella board."
-    return f"Ricevuto, ci penso io: lo passo subito al team e lo teniamo presente da adesso. ({name})"
+    return (c["question"] if str(last).strip().endswith("?") else c["ack"]).format(name=name)
 
 
 def answer(kind: str, messages: list[dict], team: str) -> str:
+    system = messages[0]["content"] if messages else ""
+    lang = language_of(system) or DEFAULT
+    t = _texts(lang)
     user = messages[1]["content"] if len(messages) > 1 else ""
     if kind == "planner":
-        return json.dumps(ceo_plan(block(user, "GOAL") or field(user, "GOAL")))
+        return json.dumps(ceo_plan(block(user, "GOAL") or field(user, "GOAL"), lang))
     if kind == "lead":
-        return json.dumps(lead_plan(user))
+        return json.dumps(lead_plan(user, lang))
     if kind == "librarian":
         ids = [m.group(1) for m in re.finditer(r"^- id: (\S+) \|", user, re.MULTILINE)][:2]
-        return json.dumps({"picks": [{"id": i, "why": "Copre il modo di lavorare richiesto dal task."} for i in ids]})
+        return json.dumps({"picks": [{"id": i, "why": t["librarian_why"]} for i in ids]})
     if kind == "prompteng":
-        title = field(user, "TASK")
-        return json.dumps(
-            {
-                "brief": f"Obiettivo: {title}, concreto e pronto da usare.\nStruttura: parti dai file dei compagni, poi produci i file richiesti completi.\nQualità: ogni sezione con un esempio reale, niente frasi generiche.\nVerifica: rileggi i file e spunta ogni criterio prima di consegnare.",
-                "acceptance": ["Il risultato è coerente con gli altri file del progetto"],
-                "pitfalls": ["Testi generici o segnaposto", "Ignorare il lavoro dei compagni"],
-            }
-        )
+        p = t["prompteng"]
+        return json.dumps({"brief": p["brief"].format(title=field(user, "TASK")), "acceptance": list(p["acceptance"]), "pitfalls": list(p["pitfalls"])})
     if kind == "judge":
-        return json.dumps(judge_turn(messages))
+        return json.dumps(judge_turn(messages, lang))
     if kind == "advisor":
-        return "Sì, vai con un tono diretto e concreto. Tieni le frasi brevi e chiudi ogni sezione con un'azione chiara."
+        return t["advisor"]
     if kind == "rescue":
-        return json.dumps({"action": "retry", "guidance": "Riparti dai criteri di accettazione uno per uno e verifica ciascuno nel file prima di consegnare."})
+        return json.dumps({"action": "retry", "guidance": t["rescue"]})
     if kind == "synth":
-        return report(messages)
+        return report(messages, lang)
     if kind == "chat":
-        return chat_reply(messages)
-    if not re.match(r"^\[\[role:", messages[0]["content"] if messages else ""):
+        return chat_reply(messages, lang)
+    if not re.match(r"^\[\[role:", system):
         return "pong"
-    return json.dumps(worker_turn(messages, team))
+    return json.dumps(worker_turn(messages, team, lang))
 
 
 ROLE_RE = re.compile(r"\[\[role:([a-z]+)(?::([a-z]+))?\]\]")

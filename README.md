@@ -393,7 +393,7 @@ Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 - **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Ollama, LM Studio e qualsiasi server compatibile OpenAI.
 - **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `fast`, `smart`, `frontier` (per l'escalation) e `local`. Ogni ruolo usa la sua combo.
 - **Cooldown:** dopo un 429 o un 5xx il bersaglio si raffredda, con un backoff da 15 s a 5 min. Una chiave rifiutata ferma l'intero provider per 10 min. I bersagli in cooldown passano in fondo alla lista, invece di sparire.
-- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`).
+- **Demo:** se nessun provider di una combo ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
 - **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs.
 - **Log:** ogni chiamata viene salvata in `data/calls/`.
 - **Gateway compatibile OpenAI** (protetto da `AGENT_WORLD_API_KEY` se la imposti):
@@ -529,8 +529,9 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
   - Cambia la voce: la dettatura (🎙) e la lettura ad alta voce (🔊) usano `en-US`, `it-IT`, `es-ES`, `fr-FR` o `de-DE`.
   - Cambia la lingua degli agenti: ogni prompt (CEO, lead, worker, sub-agenti, QA, Skill Hub, Prompt Lab, chat) impone di ragionare, scrivere i log e rispondere nella lingua scelta.
   - Cambia i messaggi del backend: quelli del run nel pannello Messaggi e i fumetti.
+  - Cambia anche la demo: il simulatore legge la lingua dalla regola del system prompt e scrive piani, pensieri, file e report in quella lingua. Senza una lingua scelta risponde in inglese.
 
-  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano gli errori HTTP (ticket N13) e i testi del simulatore demo (ticket N14).
+  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano solo gli errori HTTP (ticket N13).
 - **La voce generata dagli agenti** (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
 - **La ricerca BM25** toglie le stopword italiane e inglesi e gli accenti (`più` → `piu`). Funziona bene con le lingue in alfabeto latino. Le scritture non latine (cirillico, greco, cinese…) oggi non producono token, perché il tokenizer tiene solo `a-z` e `0-9` dopo aver tolto gli accenti.
 

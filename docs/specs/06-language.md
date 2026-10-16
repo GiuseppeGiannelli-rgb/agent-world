@@ -10,7 +10,7 @@ Si salva in `config/local.json` come `ui.language` e vale fra una sessione e l'a
 
 Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 
-**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13, N14 e N16; N15 è chiuso (§5).
+**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Restano aperti i ticket N13 e N16; N14 e N15 sono chiusi (§5).
 
 ## 1. Decisioni
 
@@ -20,7 +20,7 @@ Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 | D2 | La UI non ha un'opzione "Auto". Con `language` assente o `None`, i prompt tengono la regola di prima (la lingua del GOAL); è solo un fallback interno. |
 | D3 | Le etichette dei team si traducono con un dizionario del frontend, indicizzato per id del team. Se un team non è nel dizionario, si usa `label` di config. |
 | D4 | I messaggi di sistema e i log di `run.py` mandati via SSE si traducono: messaggi, testi dei fumetti, errori di task e workstream, titoli delle note del Brain (`Missione ·`, `Lezione ·`), feedback automatici. Gli errori HTTP restano in italiano: ticket **N13**. |
-| D5 | I testi del provider demo (`router/mock.py`) non si toccano: in inglese la demo resta in italiano. Ticket **N14**. |
+| D5 | I testi del provider demo (`router/mock.py`) non si toccano: in inglese la demo resta in italiano. Ticket **N14**, chiuso dopo: ora la demo parla la lingua della run (§5). |
 | D6 | Branch `feat/spec06-language`, da `fix/start-port-message` (`809e0cb`). |
 
 ## 2. Contratto backend
@@ -79,6 +79,23 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 
 - **N13**: errori HTTP del backend ancora in italiano.
 - **N14**: testi del provider demo solo in italiano.
+  - **Chiuso il 16/10/2026** (branch `feat/n14-demo-language`, decisioni D1–D3 dell'utente).
+    - **D1, la lingua dalla regola.** `mock.language_of()` legge il nome della lingua dalla regola che `language_rule()` mette in ogni system prompt. Il pezzo di regola prima del nome lo prende da `prompts.py`, così se il testo cambia il mock lo segue. Ai modelli veri non arriva niente di nuovo.
+    - **D2, inglese di riserva.** Con la regola di prima (nessuna lingua scelta) il mock risponde in inglese, il default del progetto.
+    - **D3, cinque lingue.** I testi stanno in `router/mock_texts.py`: una tabella per lingua, con la forma di quella inglese. La tabella italiana ha esattamente i testi di prima. Forme JSON, nomi dei tool, percorsi dei file e hash (che decidono revisioni, domande al lead e lezioni) sono uguali in ogni lingua.
+    - **Le parole chiave della missione.** `ceo_plan()` capisce dalle parole del GOAL se è un sito o un documento, se è semplice o complesso, se servono immagini e voce. Prima conosceva solo le parole italiane e qualcuna inglese, ora quelle delle cinque lingue: lo stesso GOAL dà lo stesso piano in ogni lingua. Resta la regola della lunghezza (oltre 80 caratteri è complesso), quindi un GOAL tedesco, più lungo, può diventare complesso prima.
+    - **La pagina** generata dichiara la lingua della run in `<html lang>` (prima sempre `it`), e le ancore sono `#services` e `#contact` invece di `#servizi` e `#contatti`.
+    - **Resta in inglese** il prompt per le immagini: lo legge il modello di immagini, non l'utente.
+    - **Test, visti rossi prima del codice:**
+      - `test_mock_language.py` (31 test). Le tabelle hanno tutte la stessa forma e sono tradotte davvero: al massimo il 15% dei testi uguali all'inglese. `language_of()` riconosce ogni lingua, e con la regola di prima dà `None`. Lo stesso GOAL scritto nelle cinque lingue dà lo stesso piano, in quattro tipi di missione; uno di questi è un GOAL corto, complesso solo per la parola "completo". Ogni ruolo risponde nella lingua della run. La pagina dichiara la sua lingua. La tabella inglese non contiene italiano.
+      - `test_prompts.py`: il mock legge la lingua dal system prompt di ogni builder, nelle cinque lingue e con `None`.
+      - `test_run.py`, `TestDemoRunInEveryLanguage`: una missione demo intera per lingua. Ogni chiamata porta la regola della run. Messaggi, fumetti, storie dei task, note del Brain, report, piano e file `.md` e `.html` non contengono pezzi fissi (di almeno 12 caratteri) delle altre lingue, né di `MESSAGES` né di `MOCK_TEXTS`. Prima di N14 il test doveva togliere le parole del modello (§6). Il report di `test_demo_run_completes_end_to_end` ora comincia con `# Final report`.
+    - **Mutazioni.** I test diventano rossi in ognuno di questi casi:
+      - `language_of()` ignorato;
+      - pensieri dei worker, feedback del judge, file markdown o piano del lead sempre in italiano;
+      - `<html lang="it">` fisso;
+      - `compl[eèé]t` ridotto a `complet`, `komplett` o `\bbild` tolti;
+      - l'inizio della regola cambiato.
 - **N15**: `test_state.py::test_api_config_post_updates_and_emits` scrive nel vero `config/local.json` (per questo lì c'è `limits.maxParallel = 3`). Va isolato su una cartella temporanea. È un problema preesistente, fuori da questa spec. Lo fanno anche i due test di `test_events.py` che chiamano `POST /api/config` (`maxParallel` 1…5): `live_server` crea l'app con il `Config` del repo.
   - **Chiuso il 16/10/2026** (branch `fix/n15-test-isolation`, decisioni D1–D3 dell'utente).
     - **Le fonti misurate erano quattro:**
@@ -112,7 +129,7 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 - D3 vale anche per il backend: `i18n.TEAM_LABELS` traduce in inglese le etichette dei team negli elenchi che `run.py` scrive (piano, richiesta di approvazione). Se un team non è nella tabella, si usa `label` di config, come nel frontend.
 - `POST /api/config` rifiuta con 400 un `ui.language` non supportato, prima di scrivere `local.json`.
 - Il tag `missione` delle note del Brain resta così: è un identificativo, non un testo da mostrare.
-- Il test anti-italiano del run in inglese prima toglie dai testi quello che ha scritto il modello, cioè il provider demo (D5): controlla solo le parole del backend. Ho provato che può fallire con due mutazioni:
+- Il test anti-italiano del run in inglese prima toglie dai testi quello che ha scritto il modello, cioè il provider demo (D5): controlla solo le parole del backend. Con N14 il taglio non serve più: il test controlla tutto, in ogni lingua (§5). Ho provato che può fallire con due mutazioni:
   - `"Consegnato!"` rimesso come testo fisso;
   - `language` tolto dalla chiamata del judge.
 
@@ -189,5 +206,5 @@ Richiesta dall'utente dopo il merge in `main`: spagnolo, francese e tedesco, e i
   - L7: il selettore delle Impostazioni elenca le cinque lingue.
   - L8 (nuovo): in ogni lingua ogni tab è tutta visibile e la topbar non va in overflow, a 1920×1080 e 1440×900. Senza la correzione del CSS L8 è rosso (1–2 tab tagliate in ogni lingua).
 
-**Restano aperti:** N13 (errori HTTP in italiano) e N14 (simulatore demo in italiano). Con l'inglese di default si notano di più: la demo, in inglese, mostra comunque piani e consegne in italiano.
+**Restano aperti:** N13 (errori HTTP in italiano). N14 (simulatore demo in italiano) è chiuso il 16/10/2026: la demo parla la lingua della run, e senza lingua l'inglese (§5).
 
