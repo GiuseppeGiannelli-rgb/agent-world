@@ -113,6 +113,25 @@ try {
   stageOnly({ 'docs/agents.md': 'Every agent in the world has a desk.\n' });
   r = scan('--staged');
   check('with the file, the pseudonymous git name is not a personal word', r.code === 0, r);
+
+  // a worktree has a git dir of its own (.git/worktrees/<name>), but the file lives in
+  // the repository's common one: committing from a worktree reads the same list
+  git('commit', '-q', '-m', 'agents');
+  git('worktree', 'add', '-q', '-b', 'wt', 'wt');
+  const wt = join(repo, 'wt');
+  const inWt = (...args) => execFileSync('git', ['-c', 'core.hooksPath=', ...args], { cwd: wt, stdio: ['ignore', 'pipe', 'pipe'] });
+  const scanWt = (...args) => {
+    const s = spawnSync(process.execPath, [SCAN, ...args], { cwd: wt, encoding: 'utf8' });
+    return { code: s.status, out: `${s.stdout}${s.stderr}` };
+  };
+  writeFileSync(join(wt, 'desk.md'), 'Every agent in the world has a desk.\n');
+  inWt('add', 'desk.md');
+  r = scanWt('--staged');
+  check('in a worktree, the pseudonymous git name is not a personal word either', r.code === 0, r);
+  writeFileSync(join(wt, 'retro.md'), 'A note about Marmellatone.\n');
+  inWt('add', 'retro.md');
+  r = scanWt('--staged');
+  check('in a worktree, a word from the repository list is still blocked', r.code === 1 && /personal word/.test(r.out), r);
 } finally {
   await removeDir(repo);
 }
