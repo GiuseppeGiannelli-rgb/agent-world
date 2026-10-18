@@ -9,6 +9,7 @@ import re
 
 from backend.json_repair import extract_json
 from backend.prompts import OWNER_TOOLS, TOOL_DOCS, output_contract, tasker_brief, tasker_system, tools_for
+from backend.router.hiring import chain_keys
 
 KEEP_RECENT = 16
 KEPT_PREFIXES = ("REVISION REQUESTED", "MESSAGE FROM THE USER", "MESSAGE FROM THE OWNER", "FILES FROM THE OWNER")
@@ -127,19 +128,32 @@ class Tasker:
         self.profile: dict | None = None  # spec 08: the model the prompt is sized for
         self.model_key: str | None = None
         self.pending: dict | None = None  # a context refresh, sent before the next step
+        self.cross_cursor: int | None = None  # spec 10: the newest run-memory item this worker has seen
+        self.switched = False  # spec 10: its model changed since the last step
 
     def _use(self) -> str | None:
         """The combo of this worker's calls: the escalation, or router.roles.sub
         for a sub-agent, or None for the team's own combo."""
         return self.use or (self.run.role_combo("sub") if self.agent.get("kind") == "sub" else None)
 
+    def _chain(self) -> list[str]:
+        """Spec 10: the models hired for this subtask, tried before the combo above."""
+        return chain_keys(self.task)
+
+    def _profile(self) -> dict:
+        """The profile the prompt is sized for: the hired model, or the combo's first."""
+        chain = self._chain()
+        if chain and hasattr(self.run, "hired_profile"):
+            return self.run.hired_profile(chain)
+        return self.run.model_profile(self.task["team"], self._use())
+
     async def init(self) -> None:
         run, task, agent = self.run, self.task, self.agent
         cfg = run.cfg
         ws = run.ws_by_id(task["wsId"])
         inputs = run.inputs_for(task)
-        # spec 08: the context is sized for the model the call will most likely reach
-        self.profile = run.model_profile(task["team"], self._use())
+        # spec 08: the context is sized for the model the call will most likely reach (spec 10: the hired one)
+        self.profile = self._profile()
         self.model_key = self.profile["key"]
         ctx = await run.rag_context(task, agent, self.profile)
         owner = ""
@@ -156,7 +170,7 @@ class Tasker:
         it resumed. The owner's files it already saw are not announced again."""
         run, task = self.run, self.task
         self.messages = list(session.get("messages") or [])
-        self.profile = run.model_profile(task["team"], self._use())
+        self.profile = self._profile()
         self.model_key = session.get("model") or self.profile["key"]
         if any(isinstance(m.get("content"), str) and "FILES FROM THE OWNER" in m["content"] for m in self.messages):
             self.tools = tools_for(run.cfg, task["team"], owner_files=True)
@@ -172,7 +186,7 @@ class Tasker:
         if not key:
             return
         if self.model_key and key != self.model_key:
-            self.profile = res.get("profile") or self.run.model_profile(self.task["team"], self._use())
+            self.profile = res.get("profile") or self._profile()
             ctx = await self.run.rag_context(self.task, self.agent, self.profile, reason="switch")
             parts = [f"MODEL SWITCH: you now run on {key} ({self.profile.get('tier', '?')}). Keep working on the same task; what you need from this run:"]
             if ctx["shared"]:
@@ -184,6 +198,7 @@ class Tasker:
             if ctx["jsonContract"]:
                 parts.append(output_contract(self.tools))
             self.pending = {"role": "user", "content": "\n\n".join(parts)}
+            self.switched = True
         self.model_key = key
 
     async def work(self, feedback: str | None = None) -> dict:
@@ -215,9 +230,20 @@ class Tasker:
             if self.pending:
                 self.messages.append(self.pending)
                 self.pending = None
+            if hasattr(run, "cross_update"):
+                # spec 10: what linked teammates produced since the last step, when it matters
+                if self.cross_cursor is None:
+                    self.cross_cursor = run.memory_cursor()  # the brief already holds what came before
+                block, self.cross_cursor = run.cross_update(task, self.cross_cursor, self.profile, switched=self.switched)
+                self.switched = False
+                if block:
+                    self.messages.append({"role": "user", "content": block})
             run.team.set(agent["id"], {"state": "thinking", "tool": None, "toolTarget": None})
             # spec 08: a sub-agent works on router.roles.sub, unless escalated
-            res = await run.chat(role=task["team"], use=self._use(), messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task)
+            chain = self._chain()
+            res = await run.chat(role=task["team"], use=self._use(), messages=compact(self.messages), json=True, max_tokens=8000, agent=agent, task=task, **({"chain": chain} if chain else {}))
+            if hasattr(run, "hire_promoted"):
+                run.hire_promoted(task, agent, res)  # spec 10: the hired model failed, the next candidate answered
             await self._switched(res)
             action = parse_action(res["text"], self.tools)
             if not action:

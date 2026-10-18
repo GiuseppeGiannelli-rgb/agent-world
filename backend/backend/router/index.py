@@ -142,6 +142,56 @@ class Router:
         meta = next((p.get("meta") for p in self.discovered.get(provider_id, []) if p["key"] == key), None)
         return profiler.profile(key, meta, self.cfg["providers"].get(provider_id))
 
+    # ---------- spec 10: the catalog of the hiring matcher ----------
+
+    def health(self, key: str) -> dict:
+        """How a model did in this session (D9: since the server started): its
+        calls, successes and mean latency, and whether it can answer now."""
+        s = self.stats.get(key) or {}
+        calls, ok, fail = s.get("calls", 0), s.get("ok", 0), s.get("fail", 0)
+        provider = key.partition("/")[0]
+        state, reason = "ok", None
+        if self.is_dead(key):
+            state, reason = "dead", self.dead[key]["reason"]
+        elif self.provider_cooldown(provider):
+            state, reason = "benched", self.provider_cooldowns[provider]["reason"]
+        elif (self.cooldowns.get(key) or {}).get("until", 0) > self._now():
+            state, reason = "cooling", self.cooldowns[key]["reason"]
+        elif not self.provider_ready(provider):
+            state = "unready"
+        return {"calls": calls, "ok": ok, "fail": fail, "successRate": round(ok / calls, 2) if calls else None, "avgMs": round(s["totalMs"] / calls) if calls else None, "state": state, "reason": reason}
+
+    def catalog(self) -> list[dict]:
+        """Every model that writes text and can be named: the combos (in their
+        order), the aliases, the ones found at runtime. Once each, with its
+        profile, whether its provider is ready, its health and its combos."""
+        cfg = self.cfg
+        combos_of: dict[str, list[str]] = {}
+
+        def add(key: str, combo: str | None = None) -> None:
+            t = self.parse_target(key)
+            p = cfg["providers"].get(t["provider"]) if t else None
+            if not p or p.get("kind", "openai") not in CHAT_KINDS or profiler.NON_CHAT_RE.search(t["model"]):
+                return
+            names = combos_of.setdefault(key, [])
+            if combo and combo not in names:
+                names.append(combo)
+
+        for name, c in cfg["combos"].items():
+            for m in c["models"]:
+                add(m, name)
+        for targets in (cfg["router"].get("aliases") or {}).values():
+            for m in targets:
+                add(m)
+        for profiles in self.discovered.values():
+            for p in profiles:
+                add(p["key"])
+        out = []
+        for key, names in combos_of.items():
+            p = {k: v for k, v in self.profile(key).items() if k != "meta"}
+            out.append({**p, "ready": self.provider_ready(p["provider"]), "health": self.health(key), "combos": names})
+        return out
+
     def assumed(self, combo: str, configured: set[str]) -> list[dict]:
         """The models found at runtime that join `combo` (profiler.combos_for),
         after the configured ones, at most router.discoverMax of them."""
@@ -289,11 +339,16 @@ class Router:
             return True
         return bool(emergency if emergency is not None else r.get("emergencyMock", True))
 
-    async def chat(self, *, role: str | None = None, use: str | None = None, messages: list[dict], json: bool = False, max_tokens: int | None = None, temperature: float | None = None, meta: dict | None = None, cascade: bool | None = None, emergency: bool | None = None) -> dict:
+    async def chat(self, *, role: str | None = None, use: str | None = None, messages: list[dict], json: bool = False, max_tokens: int | None = None, temperature: float | None = None, meta: dict | None = None, cascade: bool | None = None, emergency: bool | None = None, chain: list[str] | None = None) -> dict:
         meta = meta or {}
         spec = use or self.spec_for_role(role)
         first = self.expand(spec)
         steps = [first]
+        if chain:
+            # spec 10: the subtask's hired chain first (logged as "hire"), then the
+            # combo of the role and its cascade, as before (D3)
+            hired = [t for t in (self.parse_target(k) for k in chain) if t]
+            steps = [{"combo": "hire", "strategy": "fallback", "targets": self._live(hired)}, first]
         if emergency is None and first["combo"] is None:
             emergency = False  # one explicit model: its own error, not an invented answer
         if cascade if cascade is not None else first["combo"] is not None:
@@ -453,4 +508,5 @@ class Router:
             combos.append({"name": name, "strategy": c.get("strategy", "fallback"), "targets": targets})
         # the shape the panel reads stays the same (test_state.py): a dead model or a
         # benched provider shows up as the reason and the coolingMs of its targets
-        return {"mode": self.mode(), "providers": providers, "combos": combos, "recent": self.recent[:60]}
+        # spec 10: the profiled catalog (size, tier, specialties, cost, health), for the panel and /api/state
+        return {"mode": self.mode(), "providers": providers, "combos": combos, "recent": self.recent[:60], "catalog": self.catalog()}

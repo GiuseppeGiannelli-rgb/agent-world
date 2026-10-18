@@ -18,7 +18,22 @@ A profile says:
 The tier follows the spec: reasoning, flagship and >= 70B models are frontier;
 coders are code; 24-69B and the mid-size names (sonnet, gpt-4o, deepseek-chat,
 command, mistral-large) are smart; small names and 7-23B models are fast; a
-local model up to 8B is local."""
+local model up to 8B is local.
+
+Spec 10 adds the competence matrix the hiring matcher (router/hiring.py) reads:
+- sizeB: paramsB when the name says it, else the class of the family (a closed
+  flagship or reasoning model counts as 400B, a mid-size name as 120B, a coder
+  as 32B, a small name as 24B, otherwise the size of its tier); sizeSource
+  says which ("name" or "family");
+- specialties, each from 0 to 1: a base from the size (0.2 + 0.1 * log2 of
+  the billions), moved by the families (a coder codes, a reasoning model
+  reasons, Perplexity searches, a model without vision sees nothing) and by
+  the provider (Groq, Cerebras and SambaNova are fast);
+- costTier: local, free (the free tiers above), high (a flagship, or a
+  reasoning model of a premium provider), low (any other paid model).
+None of it needs the network; the health of a model comes from the router."""
+
+import math
 
 import re
 
@@ -29,6 +44,16 @@ SMALL_RE = re.compile(r"flash|haiku|mini|lite|nano|instant|small|tiny|(?:^|[\-_/
 FLAGSHIP_RE = re.compile(r"opus|(?:^|[/\-])gpt-5(?![\-.]?(?:mini|nano))|gemini-[\d.]+-pro|grok-4|claude-opus|mistral-large-3", re.IGNORECASE)
 MID_RE = re.compile(r"sonnet|gpt-4o(?!-mini)|gpt-4\.1(?!-mini|-nano)|deepseek-chat|deepseek-v3|command-a|command-r\+|mistral-large|mistral-medium|llama-4", re.IGNORECASE)
 PARAMS_RE = re.compile(r"(?<![a-z0-9.])(?:(\d+)x)?(\d+(?:\.\d+)?)\s*b(?![a-z])", re.IGNORECASE)
+# spec 10: the families known for one strength, on top of their size
+CODING_STRONG_RE = re.compile(r"claude-(?:sonnet|opus)|gpt-5|gpt-4\.1|deepseek|qwen[\w.\-]*coder|codestral|devstral|kimi|glm", re.IGNORECASE)
+TOOL_STRONG_RE = re.compile(r"claude|gpt-4o|gpt-4\.1|gpt-5|gemini|qwen|deepseek-(?:chat|v3)|mistral-large|llama-3\.3|llama-4|command-a|gpt-oss", re.IGNORECASE)
+CREATIVE_STRONG_RE = re.compile(r"claude|gpt-4o|gpt-5|gemini|mistral-large|llama-3\.3|llama-4|command-a", re.IGNORECASE)
+RESEARCH_RE = re.compile(r"sonar|perplexity", re.IGNORECASE)
+# the models /models lists that do not write text: never hired for a worker
+NON_CHAT_RE = re.compile(r"embed|whisper|tts|dall-e|gpt-image|flux|stable-diffusion|sdxl|rerank|moderation|guard", re.IGNORECASE)
+PREMIUM_PROVIDERS = {"openai", "anthropic", "gemini", "xai"}
+SPECIALTIES = ("reasoning", "coding", "creative", "research", "vision", "toolUse", "speed")
+TIER_SIZE = {"frontier": 400, "smart": 120, "code": 32, "fast": 24, "local": 8}
 
 LOCAL_PROVIDERS = {"ollama", "lmstudio", "localopenai"}
 FREE_TIER_PROVIDERS = {"groq", "cerebras", "nvidia", "cloudflare"}  # spec 09: NIM credits, the Workers AI daily allowance
@@ -120,10 +145,61 @@ def profile(target: str, meta: dict | None = None, provider: dict | None = None)
         # the demo simulator has no window and no tier: it keeps the full context,
         # so demo prompts stay what they were
         p.update(context=1_000_000, tier="smart", compact=False)
+        # spec 10: never hired (it is not in the catalog); a matrix of zeros for the readers
+        p.update(sizeB=None, sizeSource=None, specialties=dict.fromkeys(SPECIALTIES, 0.0), costTier="free")
         return p
     p["tier"] = _tier(p)
     p["compact"] = p["tier"] in ("fast", "local") or p["free"] or p["local"] or p["context"] < LARGE_CONTEXT or (p["paramsB"] is not None and p["paramsB"] <= 14)
+    p["sizeB"], p["sizeSource"] = size_of(p)
+    p["specialties"] = specialties(p)
+    p["costTier"] = cost_tier(p)
     return p
+
+
+# ---------- spec 10: the competence matrix ----------
+
+
+def size_of(p: dict) -> tuple[float, str]:
+    """(billions, "name" | "family"): the size the matcher compares."""
+    if p["paramsB"] is not None:
+        return p["paramsB"], "name"
+    if p["flagship"] or (p["reasoning"] and not p["local"]):
+        return 400, "family"
+    if MID_RE.search(p["model"]):
+        return 120, "family"
+    if p["small"]:
+        return 24, "family"
+    if p["coder"]:
+        return 32, "family"
+    return TIER_SIZE.get(p.get("tier"), 24), "family"
+
+
+def _clamp(v: float) -> float:
+    return float(round(min(1.0, max(0.0, v)), 2))
+
+
+def specialties(p: dict) -> dict:
+    model, size = p["model"], max(float(p["sizeB"]), 1.0)
+    cap = min(0.95, max(0.2, 0.2 + 0.1 * math.log2(size)))
+    return {
+        "reasoning": _clamp(cap + (0.15 if p["reasoning"] else 0) + (0.05 if p["flagship"] else 0) - (0.05 if p["small"] else 0)),
+        "coding": _clamp(cap + (0.2 if p["coder"] else 0) + (0.1 if CODING_STRONG_RE.search(model) else 0)),
+        "creative": _clamp(cap + (0.1 if CREATIVE_STRONG_RE.search(model) else 0) - (0.15 if p["coder"] else 0) - (0.05 if p["reasoning"] else 0)),
+        "research": _clamp(cap + (0.1 if p["context"] >= LARGE_CONTEXT else 0) + (0.2 if RESEARCH_RE.search(f"{p['provider']}/{model}") else 0) - (0.1 if p["context"] < 16_000 else 0)),
+        "vision": _clamp(cap) if p["vision"] else 0.0,
+        "toolUse": _clamp(cap + (0.1 if TOOL_STRONG_RE.search(model) else 0) - (0.2 if not p["json"] else 0)),
+        "speed": _clamp(1.05 - 0.12 * math.log2(size) + (0.25 if p["provider"] in FAST_PROVIDERS else 0) + (0.1 if p["small"] else 0) - (0.2 if p["reasoning"] else 0)),
+    }
+
+
+def cost_tier(p: dict) -> str:
+    if p["local"]:
+        return "local"
+    if p["free"]:
+        return "free"
+    if p["flagship"] or (p["reasoning"] and p["provider"] in PREMIUM_PROVIDERS):
+        return "high"
+    return "low"
 
 
 def combos_for(p: dict) -> list[str]:
