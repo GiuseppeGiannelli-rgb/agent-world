@@ -49,10 +49,10 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
     async def lifespan(app: FastAPI):
         async def boot_skills():
             count = await skills.reindex()
-            print(f"Skill Hub    →  {count} skill indicizzate")
+            print(f"Skill Hub    →  {count} skills indexed")
             added = await skills.ensure_repos() if skill_repos_enabled() else []
             if added:
-                print(f"Skill Hub    →  scaricate le repo predefinite {', '.join(added)} ({len(skills.skills)} skill)")
+                print(f"Skill Hub    →  default repos downloaded: {', '.join(added)} ({len(skills.skills)} skills)")
 
         asyncio.ensure_future(boot_skills())
         # Spec 05: the Skiller scouts GitHub on a schedule. The test launchers
@@ -98,7 +98,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     try:
         download_root = resolve_download_root(os.environ.get("CUSTOM_DOWNLOAD_PATH"), app_root=ROOT, data_dir=home)
     except DownloadError as err:
-        print(f"Skiller      →  download spenti: {err}", flush=True)
+        print(f"Skiller      →  downloads off: {err}", flush=True)
     if download_root is not None:
         skills.extra_sources = [{"label": "downloads", "dir": download_root, "thirdParty": True}]
     skiller = skiller or Skiller(config, skills, home, client=router.client, bus=bus, download_root=download_root)

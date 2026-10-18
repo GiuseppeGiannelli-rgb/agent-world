@@ -10,6 +10,7 @@ import uvicorn
 from backend.app import ROOT, create_app, env_file
 from backend.config import Config
 from backend.env import load_env
+from backend.i18n import tr, ui_language
 
 
 # N16: set by spawnBackend() (scripts/lib/backend-launcher.js) for the test servers.
@@ -88,18 +89,14 @@ def main() -> None:
         print(f"{EXIT_WITH_PARENT}=1 needs stdin to be a pipe from the script that starts the server (spawnBackend in scripts/lib/backend-launcher.js).", file=sys.stderr, flush=True)
         sys.exit(1)
     load_env(env_file())  # ROOT/.env, or AGENT_WORLD_ENV_FILE (spec 09: the test servers read none)
-    server = Config(ROOT / "config").get()["server"]
-    host, port = server["host"], server["port"]
+    cfg = Config(ROOT / "config").get()
+    host, port = cfg["server"]["host"], cfg["server"]["port"]
     if _port_in_use(host, port):
         # uvicorn would only print a traceback (WinError 10048): say what it
-        # means. On stderr and without the "Agent World  →" prefix: the test
-        # scripts read that prefix on stdout as the ready line.
-        print(
-            f"La porta {port} è già in uso: probabilmente Agent World (o un altro server) è già avviato.\n"
-            f"Chiudilo (Ctrl+C nella sua finestra), oppure scegli un'altra porta: PORT=4301 nel file .env.",
-            file=sys.stderr,
-            flush=True,
-        )
+        # means, in the language of the app (N17). On stderr and without the
+        # "Agent World  →" prefix: the test scripts read that prefix on stdout
+        # as the ready line.
+        print(tr(ui_language(cfg), "port_busy", port=port), file=sys.stderr, flush=True)
         sys.exit(1)
     app = create_app()
     asyncio.run(_serve(app, host, port))

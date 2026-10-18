@@ -104,6 +104,9 @@ MESSAGES = {
         "writing_report": "Scrivo il report finale…",
         "mission_title": "Missione · {goal}",
         "report_ready": "Report finale pronto: REPORT.md",
+        "invalid_answer": "Risposta non valida, riprovo",
+        # N17: not a run message, but the backend's own text all the same (`npm start` on a busy port)
+        "port_busy": "La porta {port} è già in uso: probabilmente Agent World (o un altro server) è già avviato.\nChiudilo (Ctrl+C nella sua finestra), oppure scegli un'altra porta: PORT=4301 nel file .env.",
     },
     "en": {
         "paused": "Run paused: work in progress finishes its current step.",
@@ -185,6 +188,8 @@ MESSAGES = {
         "writing_report": "Writing the final report…",
         "mission_title": "Mission · {goal}",
         "report_ready": "Final report ready: REPORT.md",
+        "invalid_answer": "Invalid answer, trying again",
+        "port_busy": "Port {port} is already in use: Agent World (or another server) is probably running already.\nClose it (Ctrl+C in its window), or pick another port: PORT=4301 in the .env file.",
     },
     "es": {
         "paused": "Run en pausa: el trabajo en curso termina su paso actual.",
@@ -266,6 +271,8 @@ MESSAGES = {
         "writing_report": "Escribo el informe final…",
         "mission_title": "Misión · {goal}",
         "report_ready": "Informe final listo: REPORT.md",
+        "invalid_answer": "Respuesta no válida, lo intento de nuevo",
+        "port_busy": "El puerto {port} ya está en uso: probablemente Agent World (u otro servidor) ya está en marcha.\nCiérralo (Ctrl+C en su ventana) o elige otro puerto: PORT=4301 en el archivo .env.",
     },
     "fr": {
         "paused": "Run en pause : le travail en cours termine son étape actuelle.",
@@ -347,6 +354,8 @@ MESSAGES = {
         "writing_report": "J'écris le rapport final…",
         "mission_title": "Mission · {goal}",
         "report_ready": "Rapport final prêt : REPORT.md",
+        "invalid_answer": "Réponse non valide, je réessaie",
+        "port_busy": "Le port {port} est déjà utilisé : Agent World (ou un autre serveur) tourne sans doute déjà.\nFerme-le (Ctrl+C dans sa fenêtre), ou choisis un autre port : PORT=4301 dans le fichier .env.",
     },
     "de": {
         "paused": "Run pausiert: Die laufende Arbeit beendet ihren aktuellen Schritt.",
@@ -428,6 +437,8 @@ MESSAGES = {
         "writing_report": "Ich schreibe den Abschlussbericht…",
         "mission_title": "Mission · {goal}",
         "report_ready": "Abschlussbericht bereit: REPORT.md",
+        "invalid_answer": "Ungültige Antwort, ich versuche es noch einmal",
+        "port_busy": "Port {port} ist bereits belegt: Wahrscheinlich läuft Agent World (oder ein anderer Server) schon.\nSchließ ihn (Strg+C in seinem Fenster) oder wähle einen anderen Port: PORT=4301 in der Datei .env.",
     },
 }
 

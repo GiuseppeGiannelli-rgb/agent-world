@@ -223,7 +223,7 @@ class Tasker:
             if not action:
                 self.messages.append({"role": "assistant", "content": res["text"][:2000]})
                 self.messages.append({"role": "user", "content": f'FORMAT ERROR: reply with exactly one JSON object {{"thought": "...", "tool": "one of {", ".join(self.tools)}", "args": {{...}}}} and nothing else.'})
-                run.note(task, agent, "error", "Risposta non valida, riprovo")
+                run.note(task, agent, "error", run.t("invalid_answer"))
                 continue
             self.messages.append({"role": "assistant", "content": _dumps(action)})
             run.step(task, agent, action)

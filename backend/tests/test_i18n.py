@@ -3,6 +3,7 @@ Brain titles) in every supported language, English first and by default.
 The tables must stay in lockstep: a key missing from one language would
 crash a run halfway."""
 
+import json
 import re
 import string
 
@@ -305,6 +306,84 @@ async def test_a_language_switch_changes_the_errors_at_once(app_in):
         assert (await c.post("/api/config", json={"ui": {"language": "es"}})).status_code == 200
         after = (await c.get("/api/runs/nope")).json()["error"]
     assert (before, after) == (http_error("en", "run_not_found"), http_error("es", "run_not_found"))
+
+
+# ---------- N17: the last texts written in one language ----------
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "es", "fr", "de"])
+async def test_an_invalid_answer_is_noted_in_the_language_of_the_run(lang):
+    """A model that answers no JSON leaves a note in the task's timeline: it is
+    the run's own text, like every other run message."""
+    from test_tasker import AGENT, TASK, FakeRun  # the tasker's own stand-in run (tests/ is on sys.path)
+
+    from backend.i18n import tr
+    from backend.tasker import Tasker
+
+    run = FakeRun(
+        [
+            "this is not JSON",
+            json.dumps({"thought": "write", "tool": "write_file", "args": {"path": "out.md", "content": "x"}}),
+            json.dumps({"thought": "deliver", "tool": "finish", "args": {"summary": "Done", "files": ["out.md"]}}),
+        ]
+    )
+    run.data["language"] = lang
+    await Tasker(run, dict(TASK, history=[]), AGENT).work()
+    assert ("error", tr(lang, "invalid_answer")) in run.notes
+
+
+def test_a_busy_port_is_explained_in_the_language_of_the_app(tmp_path):
+    """`npm start` on a busy port: the owner reads why it stopped in the language
+    chosen in the app (ui.language of the preferences file)."""
+    import os
+    import socket
+    import subprocess
+    import sys
+
+    from backend.i18n import tr
+
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"ui": {"language": "de"}}), encoding="utf-8")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        env = {**os.environ, "PORT": str(port), "AGENT_WORLD_SKILLER": "0", "PYTHONIOENCODING": "utf-8", "AGENT_WORLD_LOCAL_CONFIG": str(local)}
+        r = subprocess.run([sys.executable, "-m", "backend"], cwd=ROOT / "backend", env=env, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert tr("de", "port_busy", port=port) in r.stderr
+
+
+# Literals that are data, not texts for anyone to read: stopwords and the sample
+# texts of the Rust parity probes, a provider's error pattern, a Windows reserved
+# name. Matched by their start, file by file, so a new message next to them is seen.
+DATA_LITERALS = {
+    "downloads.py": ("CON",),
+    "embed.py": ("Caffè e tipografia", "il la di"),
+    "prompts.py": (", the CEO of an autonomous AI company",),
+    "router/providers.py": ("per ?minute",),
+    "search.py": ("the and for with", "Più cose per una pizza", "ricetta della tradizione", "il la di un per"),
+}
+# the language tables themselves, and the demo's goal keywords in five languages
+TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py"}
+LOG_WORDS = re.compile(r"\b(riprovo|risposta|porta|indicizzat\w*|scaricat\w*|predefinit\w*|valutat\w*|approvat\w*|fallit\w*|giro|spent[io]|ignorat\w*)\b", re.IGNORECASE)
+
+
+def test_no_italian_text_is_left_in_the_backend():
+    """N17: the guard of N13 over every module of the backend. What the owner
+    reads goes through i18n (run messages, HTTP errors, the port message); a
+    console log is English, like the code."""
+    backend = ROOT / "backend" / "backend"
+    leftovers = {}
+    for f in sorted(backend.rglob("*.py")):
+        rel = f.relative_to(backend).as_posix()
+        if rel in TABLES:
+            continue
+        allowed = DATA_LITERALS.get(rel, ())
+        hits = [s for s in _string_literals(f) if (ITALIAN.search(s) or LOG_WORDS.search(s)) and not s.startswith(allowed)]
+        if hits:
+            leftovers[rel] = hits
+    assert not leftovers
 
 
 def test_attachment_errors_carry_their_key_and_read_in_english():

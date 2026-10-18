@@ -287,7 +287,7 @@ class SkillLibrary:
         for url in (self.config.get().get("skills") or {}).get("repos") or []:
             repo = self.repo(url)
             if not repo:
-                print(f"Skill Hub    →  repo ignorata, non è un indirizzo GitHub: {url}")
+                print(f"Skill Hub    →  repo skipped, not a GitHub address: {url}")
                 continue
             if repo["dir"].exists():
                 continue
@@ -301,7 +301,7 @@ class SkillLibrary:
             except Exception as err:  # noqa: BLE001 -- never throws, like ensureRepos() in Node
                 await asyncio.to_thread(shutil.rmtree, tmp, True)
                 if not repo["dir"].exists():
-                    print(f"Skill Hub    →  {repo['slug']} non scaricata: {str(err).splitlines()[0]}")
+                    print(f"Skill Hub    →  {repo['slug']} not downloaded: {str(err).splitlines()[0]}")
         if added:
             await self.refresh()
         return added

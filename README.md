@@ -76,7 +76,7 @@ npm start
 3. Per fermarlo: **Ctrl+C** nella finestra del terminale.
 
 - **Senza npm:** è lo stesso server. Entra in `backend/` e lancia `uv run python -m backend`.
-- **Porta già in uso?** Se all'avvio leggi "la porta 4300 è già in uso", un altro server occupa quella porta: spesso è Agent World stesso, avviato in un'altra finestra. Chiudilo con Ctrl+C nella sua finestra, oppure scegli un'altra porta con `PORT=4301` nel file `.env`.
+- **Porta già in uso?** Se all'avvio leggi che la porta 4300 è già in uso (il messaggio è nella lingua dell'app; in inglese "Port 4300 is already in use"), un altro server occupa quella porta: spesso è Agent World stesso, avviato in un'altra finestra. Chiudilo con Ctrl+C nella sua finestra, oppure scegli un'altra porta con `PORT=4301` nel file `.env`.
 - **Per lo sviluppo**, con il reload automatico a ogni modifica: `npm run dev`.
 - **Demo o modelli veri.** Senza chiavi API l'app parte in **modalità demo** (pillola `DEMO` in alto). Per usare modelli veri copia `.env.example` in `.env`, inserisci almeno una chiave e riavvia: l'app passa in modalità `LIVE`.
 
@@ -501,7 +501,7 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 
 | Strumento | Versione | Uso |
 |---|---|---|
-| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 927 test del backend |
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 934 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
 | Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (255 verifiche) |
 
@@ -682,7 +682,7 @@ npm run test:browser   # runner headless: 255 verifiche sul front-end vero (~5 m
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (927 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
+- **`pytest` (934 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
