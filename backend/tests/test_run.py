@@ -76,7 +76,9 @@ class TestDataShape:
     def test_constructor_mirrors_node(self, make_run, tmp_path):
         run = make_run("Apri un bar sulla luna!")
         d = run.data
-        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "report", "error", "usage", "workspace"}
+        # spec 09 adds "attachments" (the owner's files); the rest is the Node shape
+        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "attachments", "report", "error", "usage", "workspace"}
+        assert d["attachments"] == []
         assert d["status"] == "planning" and d["paused"] is False and d["mode"] == "demo"
         assert len(d["id"]) == 8
         assert d["slug"].startswith("apri-un-bar-sulla-luna-")
@@ -150,15 +152,18 @@ class TestFlowControl:
         run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"}, abort_waiters=lambda run_id: None)
         sleeper = asyncio.ensure_future(run.sleep(60000))
         item = run.add_waiting({"kind": "question", "from": "nina", "text": "Scelta?"})
+        plan = run.add_waiting({"kind": "plan", "from": "ada", "text": "Approvi?"})
         answer = asyncio.ensure_future(run.wait_answer(item, 0))
+        approval = asyncio.ensure_future(run.wait_answer(plan, 0))
         await asyncio.sleep(0.05)
         run.stop()
         with pytest.raises(RunStopped):
             await sleeper
-        assert await answer is None
-        # stop() resolves the waiter with None, and the done() path marks the
-        # item expired -- same as a timeout, exactly like Node
-        assert item["status"] == "expired"
+        assert await answer is None and await approval is None
+        # stop() resolves the waiters with None. Spec 09: a question waits for the
+        # owner across sessions (answer it, then resume); a plan approval expires
+        assert item["status"] == "pending"
+        assert plan["status"] == "expired"
 
     @pytest.mark.asyncio
     async def test_sleep_returns_normally_without_abort(self, make_run):
@@ -276,7 +281,7 @@ class TestRolesOnTheirTier:
         assert leads and all(c["use"] == roles["lead"] for c in leads)
         subs = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "sub"]
         assert subs, "a complex mission spawns sub-agents"
-        assert all(c["use"] in (roles["sub"], "frontier") for c in subs)
+        assert all(c["use"] in (roles["sub"], "frontier") for c in subs), [c for c in subs if c["use"] not in (roles["sub"], "frontier")]
         workers = [c for c in calls if c["marker"].startswith("[[role:tasker") and kinds.get(c["agent"]) == "worker"]
         assert workers and all(c["use"] in (None, "frontier") for c in workers)  # their team combo, or escalated
         assert all(c["role"] == "qa" for c in calls if c["marker"] == "[[role:judge]]")
@@ -612,3 +617,33 @@ class TestDemoRunInEveryLanguage:
         await asyncio.wait_for(starter, timeout=30)
         assert run.data["status"] == "stopped"
         assert run.data["error"] == tr("en", "plan_rejected_because", reason="Not now")
+
+
+class TestTickLaunchesEachTaskOnce:
+    """Spec 09 found it: tick() starts a task with ensure_future, and the task
+    only leaves "queued" when its coroutine runs. Two ticks in the same turn of
+    the loop (two workstreams done preparing at once) started the same task
+    twice, with two agents: double work, double calls, double sub-agents."""
+
+    @pytest.mark.asyncio
+    async def test_two_ticks_in_a_row_start_a_task_once(self, demo_ctx):
+        from backend.plan import new_task
+        from backend.run import Run
+
+        run = Run(goal="Un documento per il bar", ctx=demo_ctx)
+        run.data["complexity"] = "simple"
+        run.data["workstreams"] = [{"id": "w1", "team": "research", "title": "t", "objective": "o", "deliverables": [], "acceptance": [], "dependsOn": [], "status": "running"}]
+        run.data["tasks"] = [new_task({"id": f"w1.{i}", "wsId": "w1", "team": "research", "title": f"t{i}", "description": "d", "acceptance": [], "outputs": [], "dependsOn": []}) for i in (1, 2)]
+        started = []
+
+        async def run_task(task, agent):
+            started.append(task["id"])
+            await asyncio.sleep(0.05)
+            task["status"] = "done"
+
+        run.run_task = run_task
+        run._finish_schedule = asyncio.Event()
+        run.tick()
+        run.tick()  # before the first tick's coroutines had a chance to run
+        await asyncio.sleep(0.2)
+        assert sorted(started) == ["w1.1", "w1.2"]

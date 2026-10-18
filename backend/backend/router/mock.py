@@ -19,8 +19,11 @@ from backend.router.mock_texts import MOCK_TEXTS
 
 FIELD_RE_CACHE: dict[str, re.Pattern] = {}
 BLOCK_RE_CACHE: dict[str, re.Pattern] = {}
-IMG_RE = re.compile(r"\.(png|jpe?g|webp|svg)$", re.IGNORECASE)
+IMG_RE = re.compile(r"\.(png|jpe?g|webp|svg|gif)$", re.IGNORECASE)
 AUDIO_RE = re.compile(r"\.(mp3|wav|ogg)$", re.IGNORECASE)
+DOC_RE = re.compile(r"\.(pdf|docx|txt|md|csv|json)$", re.IGNORECASE)
+# spec 09: the owner's files, as the brief and the "just added" messages list them
+OWNER_RE = re.compile(r"^- (attachments/\S+) \(", re.MULTILINE)
 
 
 def _hash(s: str) -> int:
@@ -220,11 +223,26 @@ footer { padding: 40px 6vw; color: var(--muted); }
 """
 
 
+def page_images(files: list[str]) -> tuple[str | None, list[str]]:
+    """The hero and the gallery of the page: the images the team put in assets/
+    (whatever their format: spec 09, the owner's .jpg), or else the owner's own."""
+    images = [f for f in files if IMG_RE.search(f)]
+    # spec 09: a photo the owner gave with a change request takes the hero's place
+    hero = next((f for f in images if re.match(r"^assets/hero-owner\.", f)), None) or next((f for f in images if re.match(r"^assets/hero\.", f)), None)
+    gallery = [f for f in images if re.match(r"^assets/gallery-\d+\.", f)]
+    if not hero and not gallery:
+        owner = [f for f in images if f.startswith("attachments/")]
+        if owner:
+            hero, gallery = owner[0], owner[1:4]
+    return hero, gallery
+
+
 def html(goal: str, files: list[str], lang: str = DEFAULT) -> str:
     p = _texts(lang)["page"]
     lang = lang if lang in MOCK_TEXTS else DEFAULT
-    hero = '\n      <img src="assets/hero.png" alt="">' if "assets/hero.png" in files else ""
-    gallery = '\n        <article class="card"><img src="assets/gallery-1.png" alt="" style="width:100%;border-radius:12px"></article>' if "assets/gallery-1.png" in files else ""
+    hero_path, gallery_paths = page_images(files)
+    hero = f'\n      <img src="{hero_path}" alt="">' if hero_path else ""
+    gallery = "".join(f'\n        <article class="card"><img src="{g}" alt="" style="width:100%;border-radius:12px"></article>' for g in gallery_paths)
     cards = "\n".join(f"        <article class=\"card\"><h3>{h}</h3><p>{x}</p></article>" for h, x in p["cards"])
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -283,6 +301,12 @@ def file_content(path: str, task: str, goal: str, revised: bool, files: list[str
 # ---------- worker ----------
 
 
+def _owner_pick(out: str, files: list[str]) -> str:
+    """hero -> the first owner file, gallery-1 -> the second...: each output its own photo."""
+    m = re.search(r"(\d+)", out.rsplit("/", 1)[-1])
+    return files[(int(m.group(1)) if m else 0) % len(files)]
+
+
 def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
     t = _texts(lang)
     say = t["thoughts"]
@@ -294,6 +318,12 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
     skills = csv(field(brief, "SKILLS"))
     input_files = [f for m in re.finditer(r"^\s+files: (.*)$", brief, re.MULTILINE) for f in csv(m.group(1)) if not IMG_RE.search(f) and not AUDIO_RE.search(f)]
     files = [m.group(1) for m in re.finditer(r"^(\S+) \(\d+ B\)$", brief, re.MULTILINE)]
+
+    owner_text = "\n".join(str(m["content"]) for m in messages[1:] if m["role"] == "user" and "FILES FROM THE OWNER" in str(m["content"]))
+    owner = list(dict.fromkeys(OWNER_RE.findall(owner_text)))
+    owner_images = [f for f in owner if IMG_RE.search(f)]
+    owner_audio = [f for f in owner if AUDIO_RE.search(f)]
+    owner_docs = [f for f in owner if DOC_RE.search(f)]
 
     rev_index = -1
     for i, m in enumerate(messages):
@@ -318,8 +348,25 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
             steps.append({"thought": say["inputs"].format(file=input_files[0]), "tool": "read_file", "args": {"path": input_files[0]}})
         if h % 4 == 1:
             steps.append({"thought": say["ask"], "tool": "ask_lead", "args": {"question": t["ask_question"].format(title=title)}})
+        # spec 09: what the owner gave comes first
+        if owner_docs:
+            steps.append({"thought": say["read_doc"].format(file=owner_docs[0]), "tool": "read_document", "args": {"path": owner_docs[0]}})
+        if owner_images and (team in ("genai", "design") or any(IMG_RE.search(o) for o in outputs)):
+            steps.append({"thought": say["inspect"].format(file=owner_images[0]), "tool": "inspect_image", "args": {"path": owner_images[0]}})
+    asked = any(m["role"] == "user" and "MESSAGE FROM THE OWNER about this task" in str(m["content"]) for m in messages)  # also kept by compact()
+    if asked and owner_images and any(o.endswith(".html") for o in outputs) and "assets/hero-owner" not in " ".join(files):
+        # spec 09: "use this photo instead": the newest owner photo becomes the hero, then the page is written again
+        src = owner_images[-1]
+        steps.append({"thought": say["use_file"].format(src=src, file="assets/hero-owner"), "tool": "use_attachment", "args": {"from": src, "path": f"assets/hero-owner{src[src.rfind('.'):]}"}})
+        files = [*files, f"assets/hero-owner{src[src.rfind('.'):]}"]
     for out in outputs:
-        if IMG_RE.search(out):
+        if IMG_RE.search(out) and owner_images:
+            src = _owner_pick(out, owner_images)
+            steps.append({"thought": say["use_file"].format(src=src, file=out), "tool": "use_attachment", "args": {"from": src, "path": out}})
+        elif AUDIO_RE.search(out) and owner_audio:
+            src = _owner_pick(out, owner_audio)
+            steps.append({"thought": say["use_file"].format(src=src, file=out), "tool": "use_attachment", "args": {"from": src, "path": out}})
+        elif IMG_RE.search(out):
             # the image prompt stays in English: it is written for the image model, not for the user
             steps.append({"thought": say["image"].format(file=out), "tool": "generate_image", "args": {"prompt": f"{title}, {short_goal(goal)}, soft editorial light, warm palette, clean composition", "path": out}})
         elif AUDIO_RE.search(out):
@@ -398,10 +445,34 @@ def chat_reply(messages: list[dict], lang: str = DEFAULT) -> str:
     return (c["question"] if str(last).strip().endswith("?") else c["ack"]).format(name=name)
 
 
+def refine_targets(text: str) -> dict:
+    """The tasks a change names: those whose title shares a word with the
+    directive, or else the one that owns the page, or else the last one."""
+    directive = field(text, "DIRECTIVE")
+    words = {w.lower() for w in re.findall(r"[\w']{5,}", directive)}
+    rows = [r.split(" | ") for r in re.findall(r"^- (.+)$", block(text, "DONE TASKS") or text.split("DONE TASKS:", 1)[-1], re.MULTILINE)]
+    rows = [r for r in rows if len(r) >= 4]
+    picked = [r[0] for r in rows if words & {w.lower() for w in re.findall(r"[\w']{5,}", r[1])}]
+    if not picked:
+        page = [r[0] for r in rows if "index.html" in r[3]]
+        picked = page[-1:] or [r[0] for r in rows[-1:]]
+    return {"targets": [{"taskId": tid, "instruction": directive} for tid in picked[:3]]}
+
+
 def answer(kind: str, messages: list[dict], team: str) -> str:
     system = messages[0]["content"] if messages else ""
     lang = language_of(system) or DEFAULT
     t = _texts(lang)
+    if kind == "arbiter":
+        a = t["arbiter"]
+        return json.dumps({"options": [{"id": "a", "solution": a["a"], "why": a["why_a"]}, {"id": "b", "solution": a["b"], "why": a["why_b"]}], "pick": "a"})
+    if kind == "refiner":
+        return json.dumps(refine_targets(messages[1]["content"] if len(messages) > 1 else ""))
+    if kind == "vision":
+        content = messages[1]["content"] if len(messages) > 1 else ""
+        text = "".join(p if isinstance(p, str) else (p or {}).get("text", "") for p in content) if isinstance(content, list) else str(content)
+        m = re.search(r"^IMAGE: (\S+) \((.*)\)$", text, re.MULTILINE)
+        return t["vision"].format(file=m.group(1) if m else "?", head=m.group(2) if m else "")
     user = messages[1]["content"] if len(messages) > 1 else ""
     if kind == "planner":
         return json.dumps(ceo_plan(block(user, "GOAL") or field(user, "GOAL"), lang))

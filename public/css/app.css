@@ -436,3 +436,28 @@ body:not(.night) .primary { background: var(--ink); }
   .roster { left: 8px; right: 8px; bottom: 8px; }
   .member .nm small { display: none; }
 }
+
+/* ---------- spec 09: the owner's files, the box of a task, resume, changes ---------- */
+.composer textarea { padding-right: 76px; }
+.composer .mic.attach { right: 42px; }
+.row .mic, .ibox .mic { position: static; flex: none; }
+[data-drop].dragging { outline: 2px dashed #f5c451; outline-offset: 3px; border-radius: 12px; }
+.att-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.att-chips:empty { display: none; }
+.att-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 11.5px; overflow-wrap: anywhere; }
+.att-chip button { border: 0; background: none; color: var(--ink-3); cursor: pointer; padding: 0 2px; }
+.refine { margin-top: 10px; }
+.refine textarea { min-height: 54px; }
+.refine .row { gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.ibox { margin-top: 8px; padding: 8px; border: 1px solid rgba(245, 196, 81, .55); border-radius: 10px; background: var(--card); }
+.ibox-title { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+.ibox textarea { width: 100%; min-height: 48px; }
+.ibox .row { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.ibox .check { margin: 0; font-size: 12px; }
+.ilog { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.ilog .b { max-width: 92%; padding: 4px 8px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ilog .b.me { align-self: flex-end; background: rgba(138, 108, 240, .14); }
+.ilog .b.them { align-self: flex-start; background: rgba(245, 196, 81, .18); }
+.task-q { margin-top: 6px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 107, 154, .14); font-size: 12px; white-space: pre-wrap; }
+.prov-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.prov-form input { width: 100%; }

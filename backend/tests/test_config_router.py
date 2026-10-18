@@ -37,13 +37,14 @@ def test_every_combo_model_names_a_provider():
 
 def test_the_cascade_is_made_of_real_combos():
     chain = CFG["router"]["cascade"]
-    assert chain == ["frontier", "smart", "fast", "free", "local"]
+    # spec 09: the coders come right after the frontier models, before smart
+    assert chain == ["frontier", "code", "smart", "fast", "free", "local"]
     for name in chain:
         assert name in CFG["combos"]
     for name, combo in CFG["combos"].items():
         if name not in chain:
-            assert combo.get("joins") in chain, name
-    assert CFG["combos"]["code"]["joins"] == "smart"
+            # the vision combo never cascades: a model without vision fails on the images
+            assert combo.get("joins") in chain or combo.get("cascade") is False, name
 
 
 @pytest.mark.parametrize("name", ["frontier", "smart", "fast"])
@@ -55,7 +56,8 @@ def test_the_main_combos_end_with_free_fallbacks(name):
 
 
 def test_the_free_combo_is_free_only():
-    assert all(_is_free(m) or m.split("/", 1)[0] in ("huggingface", "together", "cohere") for m in CFG["combos"]["free"]["models"])
+    # spec 09: NVIDIA NIM (free credits) and Cloudflare Workers AI (a free daily allowance) too
+    assert all(_is_free(m) or m.split("/", 1)[0] in ("huggingface", "together", "cohere", "nvidia", "cloudflare") for m in CFG["combos"]["free"]["models"])
     assert "openrouter/openrouter/free" in CFG["combos"]["free"]["models"]
 
 
@@ -163,3 +165,103 @@ def test_discovery_lists_local_servers_and_free_openrouter_models():
     for local in ("ollama", "lmstudio", "localopenai"):
         assert providers[local]["local"] is True  # a local server is listed when it runs
     assert CFG["router"]["discoverMax"] == 6
+
+
+# ---------- spec 09: more providers, the TypeSafe arbiter, vision ----------
+
+
+@pytest.mark.parametrize(
+    "provider,base,key",
+    [
+        ("xai", "https://api.x.ai/v1", "XAI_API_KEY"),
+        ("perplexity", "https://api.perplexity.ai", "PPLX_API_KEY"),
+        ("nvidia", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
+        ("novita", "https://api.novita.ai/openai", "NOVITA_API_KEY"),
+        ("hyperbolic", "https://api.hyperbolic.xyz/v1", "HYPERBOLIC_API_KEY"),
+        ("cloudflare", "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1", "CLOUDFLARE_API_TOKEN"),
+    ],
+)
+def test_the_spec09_chat_providers(provider, base, key):
+    p = CFG["providers"][provider]
+    assert p["kind"] == "openai" and p["baseUrl"] == base and p["keyEnv"] == key
+    used = {m.split("/", 1)[0] for c in CFG["combos"].values() for m in c["models"]}
+    assert provider in used, f"{provider} is in no combo"
+
+
+def test_perplexity_gets_no_json_mode():
+    # Sonar takes a json_schema response_format, not json_object: no wasted 400 per call
+    assert CFG["providers"]["perplexity"]["jsonMode"] is False
+
+
+def test_typesafe_is_the_arbiter_not_a_chat_model():
+    """Jev answers typed questions (a choice among options, with probabilities):
+    it picks among solutions, it never writes text, so it is in no combo."""
+    p = CFG["providers"]["typesafe"]
+    assert p == {"kind": "typesafe", "baseUrl": "https://api.typesafe.ai/v1", "baseUrlEnv": "TYPESAFE_BASE_URL", "keyEnv": "TYPESAFE_API_KEY"}
+    assert not any(m.startswith("typesafe/") for c in CFG["combos"].values() for m in c["models"])
+    arbiter = CFG["router"]["arbiter"]
+    assert arbiter["provider"] == "typesafe" and arbiter["model"] == "jev-latest" and 0 < arbiter["minConfidence"] < 1
+
+
+def _router(monkeypatch, tmp_path, cfg=None):
+    from backend.router.index import Router
+
+    class Cfg:
+        def get(self):
+            return cfg or CFG
+
+    for p in CFG["providers"].values():
+        for k in ("keyEnv", "baseUrlEnv"):
+            if p.get(k):
+                monkeypatch.delenv(p[k], raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    return Router(Cfg(), tmp_path)
+
+
+def test_a_typesafe_key_alone_keeps_the_demo(monkeypatch, tmp_path):
+    router = _router(monkeypatch, tmp_path)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-test")
+    assert router.provider_ready("typesafe") is True
+    assert router.mode() == "demo"  # no model can write: the simulator still answers
+
+
+def test_typesafe_base_url_can_be_moved_by_its_variable(monkeypatch):
+    from backend.router.providers import base_url
+
+    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
+    assert base_url(CFG["providers"]["typesafe"]) == "https://api.typesafe.ai/v1"
+    monkeypatch.setenv("TYPESAFE_BASE_URL", "https://eu.typesafe.example/v1/")
+    assert base_url(CFG["providers"]["typesafe"]) == "https://eu.typesafe.example/v1"
+
+
+def test_cloudflare_needs_its_account_id_and_puts_it_in_the_url(monkeypatch, tmp_path):
+    from backend.router.providers import base_url
+
+    router = _router(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-test")
+    assert router.provider_ready("cloudflare") is False  # the URL names an account that is not set
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
+    assert router.provider_ready("cloudflare") is True
+    assert base_url(CFG["providers"]["cloudflare"]) == "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"
+
+
+def test_a_placeholder_never_reads_an_unrelated_variable(monkeypatch):
+    from backend.router.providers import base_url
+
+    monkeypatch.setenv("SECRET_THING", "leak")
+    assert "leak" not in base_url({"baseUrl": "https://x.example/${SECRET_THING}/v1"})  # only *_ACCOUNT_ID / *_URL / *_HOST names
+
+
+def test_the_vision_combo_holds_vision_models():
+    from backend.router import profiler
+
+    models = CFG["combos"]["vision"]["models"]
+    assert len(models) >= 4
+    assert all(profiler.profile(m)["vision"] for m in models), [m for m in models if not profiler.profile(m)["vision"]]
+    assert CFG["combos"]["vision"]["cascade"] is False and "vision" not in CFG["router"]["cascade"]
+
+
+def test_the_spec09_keys_are_documented():
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in ("XAI_API_KEY", "PPLX_API_KEY", "NVIDIA_API_KEY", "NOVITA_API_KEY", "HYPERBOLIC_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL"):
+        assert f"\n{name}=" in example, name

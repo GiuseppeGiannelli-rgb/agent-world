@@ -16,7 +16,7 @@ from backend.downloads import DownloadError, resolve_download_root
 from backend.media import Media
 from backend.router.index import Router
 from backend.security import LocalGuard, allowed_hosts
-from backend.routes import api_state, events, gateway, runs, skills_brain, static
+from backend.routes import api_state, events, gateway, providers, runs, skills_brain, static
 from backend.skiller import Skiller
 from backend.skills import SkillLibrary
 from backend.store import Store
@@ -29,6 +29,13 @@ def skill_repos_enabled() -> bool:
     """N15: AGENT_WORLD_SKILL_REPOS=0 skips the clone of the missing skills.repos
     at startup. The tests set it: no test reaches GitHub or writes skills/vendor/."""
     return os.environ.get("AGENT_WORLD_SKILL_REPOS") != "0"
+
+
+def env_file() -> Path:
+    """Spec 09: the .env the provider registration reads again. AGENT_WORLD_ENV_FILE
+    moves it (the tests do: they never read the developer's real keys)."""
+    v = os.environ.get("AGENT_WORLD_ENV_FILE")
+    return Path(v) if v else ROOT / ".env"
 
 
 def data_home() -> Path:
@@ -108,10 +115,11 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
     api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)
-    runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx)
+    runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx, uploads_dir=home / "uploads")
     skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller)
     events.mount(app, bus=bus, shutdown=shutdown)
     gateway.mount(app, config=config, router=router)
+    providers.mount(app, config=config, router=router, bus=bus, env_file=env_file)
     static.mount(
         app,
         public_root=ROOT / "public",
@@ -132,5 +140,6 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     app.state.ctx = ctx
     app.state.live = live
     app.state.chats = chats
+    app.state.uploads_dir = home / "uploads"
     app.state.shutdown = shutdown
     return app

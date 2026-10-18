@@ -26,12 +26,13 @@
 6. [Agenti, sub-agenti e utility](#agenti-sub-agenti-e-utility)
 7. [Memoria e recupero (RAG)](#memoria-e-recupero-rag)
 8. [Il router OmniRoute](#il-router-omniroute)
-9. [Tech stack](#tech-stack)
-10. [Lingue supportate](#lingue-supportate)
-11. [Configurazione](#configurazione)
-12. [Sicurezza](#sicurezza)
-13. [Test](#test)
-14. [Struttura del repository](#struttura-del-repository)
+9. [File, dialogo e ripresa](#file-dialogo-e-ripresa)
+10. [Tech stack](#tech-stack)
+11. [Lingue supportate](#lingue-supportate)
+12. [Configurazione](#configurazione)
+13. [Sicurezza](#sicurezza)
+14. [Test](#test)
+15. [Struttura del repository](#struttura-del-repository)
 
 ---
 
@@ -400,8 +401,9 @@ Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta 
 
 Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 
-- **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Together, Fireworks, SambaNova, Cohere (endpoint compatibile OpenAI), Hugging Face, Ollama, LM Studio e qualsiasi server locale compatibile OpenAI (vLLM, llama.cpp, Jan) all'indirizzo `LOCAL_OPENAI_URL`. GitHub Models non c'è: GitHub l'ha ritirato il 30/07/2026.
-- **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `frontier`, `smart`, `code`, `fast`, `free` e `local`; `frontier`, `smart` e `fast` finiscono con modelli gratuiti (OpenRouter `:free`, Gemini Flash, Groq, Cerebras).
+- **Provider:** Anthropic, OpenAI, OpenRouter, Groq, Cerebras, Gemini, DeepSeek, Mistral, Together, Fireworks, SambaNova, Cohere (endpoint compatibile OpenAI), Hugging Face, xAI Grok, Perplexity, NVIDIA NIM, Novita AI, Hyperbolic, Cloudflare Workers AI (`CLOUDFLARE_ACCOUNT_ID` nell'URL), Ollama, LM Studio e qualsiasi server locale compatibile OpenAI (vLLM, llama.cpp, Jan) all'indirizzo `LOCAL_OPENAI_URL`. GitHub Models non c'è: GitHub l'ha ritirato il 30/07/2026.
+- **Provider aggiunti dall'app** (spec 09): dalle Impostazioni si registra qualsiasi provider compatibile OpenAI, o un modello nuovo di un provider di serie, senza riavviare (`POST /api/providers`, `DELETE /api/providers/{id}`). I modelli entrano nelle combo scelte o in quelle del loro tier. La chiave resta in `.env`, che viene riletto; valgono le regole della spec 07 (https, niente credenziali nell'URL, una variabile `*_KEY` o `*_TOKEN` tutta sua).
+- **Combo:** liste ordinate di `provider/modello`, con strategia `fallback` o `round-robin`. Sono pronte `frontier`, `smart`, `code`, `fast`, `free` e `local`; `frontier`, `smart` e `fast` finiscono con modelli gratuiti (OpenRouter `:free`, Gemini Flash, Groq, Cerebras). La combo `vision` (Gemini Flash, GPT-5 mini, Claude Haiku e Sonnet) guarda le foto del proprietario e non scende mai lungo la cascata (`"cascade": false`).
 - **Ruoli e tier** (spec 08): CEO e QA su `frontier`, Sviluppo su `code`, Prompt Lab e AI Generativa su `smart`, Ricerca, Contenuti, Design e Skill Hub su `fast`. Un lead pianifica e aiuta su `smart`, un sub-agente lavora su `fast`; dopo le bocciature il worker sale su `frontier`.
 - **Perché una chiamata fallisce** (spec 08):
   - **credito finito** (402, oppure 400/403/429 con `insufficient_quota`, `credit balance`, `billing`…): l'intero provider resta fuori per 6 ore e non si provano i suoi altri modelli;
@@ -409,7 +411,9 @@ Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
   - **modello sparito** (404, `model_not_found`): quel `provider/modello` va in blacklist per 24 ore e si provano subito i suoi alias aggiornati (`router.aliases`, per esempio `gemini-2.5-pro` → `gemini-3.1-pro-preview` → `gemini-2.5-flash`);
   - **chiave rifiutata**: il provider resta fuori 10 minuti;
   - **429 o 5xx**: il bersaglio si raffredda, con un backoff da 15 s a 5 min, e passa in fondo alla lista.
-- **Cascata:** se nessun bersaglio di una combo risponde, si scende lungo `router.cascade`: `frontier` → `smart` → `fast` → `free` → `local`. Se non risponde nessuno, in una run live risponde il simulatore demo come **emergenza**: la run lo dice una volta nel pannello Messaggi e lo conta in `usage.emergencies` (si spegne con `router.emergencyMock: false`). Il pulsante di test e il gateway `/v1` non ricevono mai risposte simulate.
+- **Cascata:** se nessun bersaglio di una combo risponde, si scende lungo `router.cascade`: `frontier` → `code` → `smart` → `fast` → `free` → `local`. Se non risponde nessuno, in una run live risponde il simulatore demo come **emergenza**: la run lo dice una volta nel pannello Messaggi e lo conta in `usage.emergencies` (si spegne con `router.emergencyMock: false`). Il pulsante di test e il gateway `/v1` non ricevono mai risposte simulate.
+- **Senza fermate** (spec 09): un cambio di modello non ferma il lavoro. Il worker tiene tutta la sua conversazione, il modello nuovo riceve un messaggio `MODEL SWITCH` con il contesto RAG ridimensionato per lui, e la scheda del task mostra il cambio (🔀, evento `model.switch`). Se non risponde nessun modello, la chiamata aspetta il primo che torna (al massimo `limits.modelWaitMaxMs`) e riprova; dopo `limits.modelRetries` tentativi apre una richiesta "nessun modello disponibile" con "Riprova ora", e intanto continua a provare. Vale per worker, lead, CEO e QA.
+- **L'arbitro TypeSafe** (spec 09): con `TYPESAFE_API_KEY`, il modello Jev di TypeSafe sceglie tra le opzioni del lead quando una domanda resta senza risposta (vedi [File, dialogo e ripresa](#file-dialogo-e-ripresa)). Jev risponde a domande tipizzate e non scrive testo, quindi non sta in nessuna combo. La sua scelta vale da `router.arbiter.minConfidence` in su.
 - **Profiler** (`router/profiler.py`): da nome e metadati di ogni modello ricava parametri, famiglia (reasoning, coder, vision, piccolo), finestra di contesto, gratuità, esecuzione locale e tier. I modelli dei server locali avviati (e i `:free` di OpenRouter) vengono scoperti da `/models` all'avvio e ogni 10 minuti, ed entrano in coda alla combo del loro tier.
 - **Demo:** se nessun provider ha una chiave, risponde il simulatore (`router/mock.py`). Risponde nella lingua della run: piani, pensieri, file, pagina e report (testi in `router/mock_texts.py`).
 - **Media:** immagini con OpenAI `gpt-image-1`, fal.ai (Flux) o Pollinations (gratis, spento di default); voce con OpenAI TTS o ElevenLabs. In una run live un file media è sempre reale: se i provider cloud non hanno credito o chiave, la voce passa a edge-tts, una voce neurale naturale (è una dipendenza del backend: `npm start` lo installa da solo, senza `uv add`; in LIVE non va attivato, perché i prompt vanno già a provider esterni; si spegne con `media.providers.edgetts.enabled: false`, e senza rete si passa oltre), e poi al sintetizzatore del sistema (SAPI su Windows, `say` su macOS, `espeak-ng` su Linux: offline e gratis), le immagini al generatore locale. Un WAV chiesto come `.mp3` viene convertito con ffmpeg, se c'è; altrimenti si salva come `.wav`.
@@ -422,6 +426,34 @@ curl http://127.0.0.1:4300/v1/chat/completions -H "content-type: application/jso
 ```
 
 I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispondano ai tuoi account e cambiali dalle Impostazioni.
+
+---
+
+## File, dialogo e ripresa
+
+Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un agente non sa chiudere (spec 09, [`docs/specs/09-multimodal-interactive-recovery.md`](docs/specs/09-multimodal-interactive-recovery.md)). Il proprietario può dare i suoi file, parlare con il task bloccato, riprendere il lavoro da dove si è fermato e chiedere modifiche anche a missione finita.
+
+- **I tuoi file.** Nel composer, nel box sotto la missione e nel box di ogni task: pulsante 📎, trascina e rilascia, oppure incolla un'immagine con Ctrl+V.
+  - Formati: immagini (`png jpg jpeg webp svg gif`), documenti (`pdf docx txt md csv json html htm css js`), audio (`mp3 wav ogg`).
+  - Ogni file viene controllato: estensione in lista, byte che corrispondono all'estensione, un nome semplice, al massimo `limits.maxUploadMB`.
+  - Il testo dei documenti entra subito nella memoria della run e nel Brain.
+  - Gli agenti li usano al posto di generarli: `use_attachment` mette il file dove il piano lo aspetta, `read_document` ne legge il testo o i passaggi pertinenti, `inspect_image` chiede alla combo `vision` che cosa mostra una foto. Il QA accetta i file del proprietario.
+- **Parlare con un task.** Dalla sua scheda ("Parla con l'agente · dai una soluzione o dei file") o dall'inspector dell'agente. Le parole e i file arrivano al worker al passo successivo; se il task era fallito, torna in coda con quello che aveva bloccato.
+- **Domande che non scadono.** Una domanda ancora aperta quando la run si ferma resta `pending`: la ritrovi riaprendo la run da "Previous runs", anche dopo un riavvio del server.
+- **Nessun collo di bottiglia.** Senza risposta entro `limits.askUserTimeoutMs`, o con "💡 Trova tu una soluzione", decide il lead del team (il CEO, se è il lead a chiedere), con l'arbitro TypeSafe se configurato. `limits.autoAnswer: false` lascia la decisione al worker.
+- **Ripresa dal punto di blocco.** "⟲ Riprendi il workflow" fa ripartire una run salvata (ferma, fallita o con errori) senza rifare il lavoro consegnato: la memoria della run viene ricostruita e un worker interrotto riparte dalla sua conversazione.
+- **Modifiche dopo la fine.** "Non mi piace la hero: usa questa foto" nel box sotto la missione: il CEO sceglie i task da rifare, che ripartono con la direttiva e i file; il QA li rivede e il report viene riscritto. Si possono fare quanti giri si vuole.
+
+| Endpoint | Che cosa fa |
+|---|---|
+| `POST /api/uploads?name=…` | carica un file prima della missione (il corpo sono i byte del file) |
+| `POST /api/runs {goal, attachments}` | avvia la missione con i file caricati: sono nella run prima che il CEO pianifichi |
+| `POST /api/runs/{id}/attachments?name=…&taskId=…` | aggiunge un file a una run, attiva o salvata, e facoltativamente a un task |
+| `POST /api/runs/{id}/tasks/{task}/interact {text, attachments, resume}` | parla con un task; `resume: true` riprende anche la run ferma |
+| `POST /api/runs/{id}/answer {itemId, text}` o `{itemId, solve: true}` | risponde a una domanda, anche di una run salvata, o la fa decidere alla squadra |
+| `POST /api/runs/{id}/resume` | riprende una run salvata dal punto di blocco (su una run in pausa toglie la pausa) |
+| `POST /api/runs/{id}/refine {text, attachments, taskId}` | chiede una modifica: i task coinvolti ripartono e il QA li rivede |
+| `POST /api/providers` · `DELETE /api/providers/{id}` | registra o toglie un provider compatibile OpenAI senza riavviare |
 
 ---
 
@@ -438,6 +470,7 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 | [watchfiles](https://watchfiles.helpmanual.io/) | 1.3 | il reload di `npm run dev` |
 | [httpx](https://www.python-httpx.org/) | 0.28 | chiamate asincrone ai provider e al web |
 | [Pydantic](https://docs.pydantic.dev/) | 2.14 | dipendenza di FastAPI |
+| [pypdf](https://pypdf.readthedocs.io/) | 6.21 | il testo dei PDF caricati dal proprietario (spec 09) |
 | [uv](https://docs.astral.sh/uv/) | — | Python 3.13, ambiente virtuale, lockfile |
 | [hatchling](https://hatch.pypa.io/) | — | build del pacchetto `backend` |
 
@@ -468,9 +501,9 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 
 | Strumento | Versione | Uso |
 |---|---|---|
-| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 629 test del backend |
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 796 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (246 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (254 verifiche) |
 
 ### Skill e plugin
 
@@ -574,16 +607,28 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | Variabile | Effetto |
 |---|---|
 | `PORT` | porta del server (predefinita 4300) |
-| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, … | accendono i provider; senza chiavi si va in demo |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `NVIDIA_API_KEY`, … | accendono i provider; senza chiavi si va in demo |
+| `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers AI: l'account entra nell'URL del provider |
+| `TYPESAFE_API_KEY` (e `TYPESAFE_BASE_URL`, facoltativo) | l'arbitro TypeSafe delle decisioni prese per il proprietario; da solo non accende la modalità live |
 | `AGENT_WORLD_API_KEY` | protegge il gateway `/v1` con un Bearer token |
 | `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli) |
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
 | `AGENT_WORLD_LOCAL_CONFIG` | sposta il file delle preferenze (di default `config/local.json`): lo usano i test, per non leggere né scrivere le tue |
+| `AGENT_WORLD_ENV_FILE` | sposta il file `.env`, che si legge all'avvio e di nuovo quando registri un provider: i test e i loro server non leggono mai il tuo |
 | `AGENT_WORLD_SKILL_REPOS=0` | all'avvio non clona le repo di `skills.repos` che mancano (lo usano i test) |
 | `AGENT_WORLD_DISCOVER=0` | non chiede ai provider e ai server locali quali modelli hanno (lo usano i test) |
 | `AGENT_WORLD_EXIT_WITH_PARENT=1` | il server si chiude quando si chiude il suo stdin, cioè quando muore chi l'ha avviato; senza uno stdin collegato a una pipe non parte. Lo imposta `spawnBackend()` per i server dei test |
+
+I limiti della spec 09 stanno in `limits` di `config/default.json`; il tempo di risposta e `autoAnswer` si cambiano anche dalle Impostazioni:
+
+| Limite | Predefinito | Effetto |
+|---|---|---|
+| `askUserTimeoutMs` | 300000 (5 min) | dopo quanto una domanda senza risposta viene decisa dalla squadra |
+| `autoAnswer` | `true` | `false`: la decide il worker da solo, come prima |
+| `modelRetries` / `modelWaitMaxMs` | 4 / 60000 | tentativi e attesa massima quando nessun modello risponde, prima della richiesta "nessun modello disponibile" |
+| `maxUploadMB` / `maxAttachments` | 25 / 60 | dimensione di un file del proprietario e numero di file per run |
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 
@@ -632,15 +677,15 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 246 verifiche sul front-end vero (~5 min)
+npm run test:browser   # runner headless: 254 verifiche sul front-end vero (~5 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (410 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust.
+- **`pytest` (796 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
 
@@ -661,9 +706,9 @@ Quello che trova lo stampa oscurato.
 ```
 agent-world/
 ├─ backend/                 backend FastAPI (progetto uv)
-│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py
-│  │  ├─ routes/            api_state · runs · skills_brain · events (SSE) · gateway (/v1) · static
-│  │  └─ router/            index (OmniRoute) · providers · mock (demo)
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py
+│  │  ├─ routes/            api_state · runs · providers · skills_brain · events (SSE) · gateway (/v1) · static
+│  │  └─ router/            index (OmniRoute) · providers · profiler · mock (demo)
 │  ├─ tests/                pytest
 │  └─ bench/                bm25_bench.py (soglia 5×)
 ├─ crates/aw_core/          modulo nativo Rust (PyO3 + maturin)
@@ -676,4 +721,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md).

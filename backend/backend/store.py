@@ -21,6 +21,15 @@ class Store:
             if run.get("status") not in NON_TERMINAL_RESET:
                 run["status"] = "stopped"
                 run.setdefault("error", "Interrupted: the server stopped while this run was active.")
+                # spec 09: what was in flight is interrupted, not given up: a resume runs it again
+                for item in (*(run.get("tasks") or []), *(run.get("workstreams") or [])):
+                    if item.get("status") not in ("done", "failed", "skipped"):
+                        item["status"] = "skipped"
+                        item["stopped"] = True
+            for w in run.get("waiting") or []:
+                if w.get("status") == "open":
+                    # spec 09: a question waits for the owner across sessions, the rest expires
+                    w["status"] = "pending" if w.get("kind") == "question" else "expired"
             self.runs[run["id"]] = run
 
     def get(self, id: str) -> dict | None:

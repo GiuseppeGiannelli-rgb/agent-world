@@ -27,7 +27,7 @@ import httpx
 
 from backend.plan import nz
 from backend.router import profiler
-from backend.router.providers import ProviderError, base_url, call_provider
+from backend.router.providers import ProviderError, base_url, call_provider, unfilled
 
 log = logging.getLogger("agent_world.router")
 
@@ -36,6 +36,7 @@ DEFAULT_DEAD_MODEL_TTL_MS = 24 * 3600 * 1000
 DEFAULT_DISCOVER_MAX = 6
 DEFAULT_DISCOVER_INTERVAL_MS = 10 * 60 * 1000
 DISCOVER_TIMEOUT_S = 4
+CHAT_KINDS = {"openai", "anthropic"}  # the kinds that write text; "typesafe" decides, "mock" simulates
 
 
 class Router:
@@ -66,8 +67,10 @@ class Router:
         p = self.cfg["providers"].get(id)
         if not p or p.get("enabled") is False:
             return False
-        if p.get("baseUrlEnv") and not os.environ.get(p["baseUrlEnv"], "").strip():
+        if p.get("baseUrlEnv") and not p.get("baseUrl") and not os.environ.get(p["baseUrlEnv"], "").strip():
             return False  # a server named only by its environment variable, which is not set
+        if p.get("kind") != "mock" and unfilled(p):
+            return False  # spec 09: its URL names a variable that is not set (Cloudflare's account id)
         if p.get("kind") == "mock" or p.get("keyless"):
             return True
         return bool(p.get("keyEnv") and os.environ.get(p["keyEnv"]))
@@ -86,7 +89,8 @@ class Router:
         return bool(d and d["until"] > self._now())
 
     def mode(self) -> str:
-        live = any(p.get("kind") != "mock" and self.provider_ready(id) for id, p in self.cfg["providers"].items())
+        # spec 09: only a provider that can write counts (TypeSafe only picks among options)
+        live = any(p.get("kind") in CHAT_KINDS and self.provider_ready(id) for id, p in self.cfg["providers"].items())
         return "live" if live else "demo"
 
     def parse_target(self, target: str) -> dict | None:
@@ -204,6 +208,8 @@ class Router:
         """The combos to try after `name`, down router.cascade."""
         chain = list(self.cfg["router"].get("cascade") or [])
         combos = self.cfg["combos"]
+        if name and (combos.get(name) or {}).get("cascade") is False:
+            return []  # spec 09: the vision combo; a model without vision would fail on the images
         if name in chain:
             rest = chain[chain.index(name) + 1 :]
         else:
@@ -249,6 +255,27 @@ class Router:
                     return self.profile(t["key"])
         return self.profile(f"mock/mock-{role or 'any'}")
 
+    def next_ready_ms(self, spec: str | None = None, role: str | None = None) -> float | None:
+        """Spec 09: how long until a target of this call (down the cascade) can
+        answer again: 0 when one is warm now, the soonest end of a cooldown, a
+        bench or a blacklist otherwise, None when no provider has a key at all
+        (nothing comes back by itself)."""
+        spec = spec or self.spec_for_role(role)
+        try:
+            first = self.expand(spec)
+        except ValueError:
+            return None
+        steps = [first] + ([self.expand(n) for n in self.cascade_after(first["combo"])] if first["combo"] else [])
+        now = self._now()
+        best = None
+        for step in steps:
+            for t in step["targets"]:
+                if not self.provider_ready(t["provider"]):
+                    continue
+                wait, _ = self._target_state(t["key"], t["provider"], now)
+                best = wait if best is None else min(best, wait)
+        return best
+
     def plan(self, spec: str, role: str | None) -> dict:
         """The first step of a call, kept for the callers of the old router."""
         expanded = self.expand(spec)
@@ -275,6 +302,7 @@ class Router:
         tried: set[str] = set()
         visited: list[str] = []
         errors: list[str] = []
+        failed: list[dict] = []  # spec 09: the targets that failed in this call, for the run to say so
         for step in steps:
             visited.append(step["combo"] or spec)
             queue = self.order(step)
@@ -293,6 +321,7 @@ class Router:
                     self.record(target, ok=False, ms=ms, error=str(err))
                     self.log(target, step["combo"], role, meta, ms, False, error=str(err))
                     errors.append(f"{target['key']}: {err}")
+                    failed.append({"target": target["key"], "kind": err.kind})
                     if err.kind == "model_not_found":
                         # its updated aliases first, before the next target
                         queue[0:0] = [a for a in self.aliases_of(target) if a["key"] not in tried and self.provider_ready(a["provider"])]
@@ -301,9 +330,9 @@ class Router:
                 self.cooldowns.pop(target["key"], None)
                 self.record(target, ok=True, ms=ms, usage=res["usage"])
                 summary = self.log(target, step["combo"], role, meta, ms, True, usage=res["usage"])
-                return {"text": res["text"], "provider": target["provider"], "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": False, "emergency": False, "combo": step["combo"], "requested": spec, "cascade": visited, "profile": self.profile(target["key"])}
+                return {"text": res["text"], "provider": target["provider"], "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": False, "emergency": False, "combo": step["combo"], "requested": spec, "cascade": visited, "profile": self.profile(target["key"]), "failed": failed}
         if self._may_simulate(emergency):
-            return await self._simulate(req, role, spec, visited, meta, errors)
+            return {**await self._simulate(req, role, spec, visited, meta, errors), "failed": failed}
         if not errors:
             raise ProviderError(f'No provider with a key in "{spec}"')
         raise ProviderError(f'Every target failed for "{spec}":\n' + "\n".join(errors))

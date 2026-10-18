@@ -12,6 +12,8 @@ dependencies = [
     "httpx>=0.27",
     # spec 08: the natural neural voice of a live run when the cloud voices have no credit
     "edge-tts>=7.3.1",
+    # spec 09: the text of the PDFs the owner gives the agents (pure Python, BSD)
+    "pypdf>=6.21",
 ]
 
 [dependency-groups]

@@ -199,3 +199,14 @@ def test_discovery_is_off_in_the_tests():
     import os
 
     assert os.environ.get("AGENT_WORLD_DISCOVER") == "0"
+
+
+def test_spec09_free_tiers_get_the_compact_context():
+    # NVIDIA NIM (free credits) and Cloudflare Workers AI (a free daily allowance)
+    for key in ("nvidia/meta/llama-3.3-70b-instruct", "cloudflare/@cf/openai/gpt-oss-120b"):
+        p = profiler.profile(key)
+        assert p["free"] is True and p["compact"] is True, key
+
+
+def test_a_grok_4_model_is_frontier():
+    assert profiler.profile("xai/grok-4.7")["tier"] == "frontier"

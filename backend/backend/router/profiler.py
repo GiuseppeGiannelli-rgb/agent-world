@@ -31,7 +31,7 @@ MID_RE = re.compile(r"sonnet|gpt-4o(?!-mini)|gpt-4\.1(?!-mini|-nano)|deepseek-ch
 PARAMS_RE = re.compile(r"(?<![a-z0-9.])(?:(\d+)x)?(\d+(?:\.\d+)?)\s*b(?![a-z])", re.IGNORECASE)
 
 LOCAL_PROVIDERS = {"ollama", "lmstudio", "localopenai"}
-FREE_TIER_PROVIDERS = {"groq", "cerebras"}
+FREE_TIER_PROVIDERS = {"groq", "cerebras", "nvidia", "cloudflare"}  # spec 09: NIM credits, the Workers AI daily allowance
 FAST_PROVIDERS = {"groq", "cerebras", "sambanova"}
 
 # context windows by family, when /models says nothing (first match wins)

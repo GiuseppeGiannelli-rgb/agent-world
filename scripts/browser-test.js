@@ -48,7 +48,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -610,6 +610,104 @@ async function run(cdp) {
   report('A10', 'sub-agents work at their bay seat', p.counts.spawn > 0 && p.counts.spawn === p.counts.despawn && Object.values(p.subs).every((s) => s.workingMax <= 0.5), { spawned: p.counts.spawn, removed: p.counts.despawn, subs: p.subs });
 }
 
+// ---------- spec 09: the owner's files, the box of a task, resume, changes ----------
+
+// files built in the page, as a user's would be: a 1x1 PNG, a text file
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const pngJs = (name) => `new File([Uint8Array.from(atob('${PNG_1PX}'), (c) => c.charCodeAt(0))], '${name}', { type: 'image/png' })`;
+const textJs = (name, text) => `new File([${JSON.stringify(text)}], '${name}', { type: 'text/plain' })`;
+const dropJs = (selector, files) => `(() => {
+  const dt = new DataTransfer(); ${files.map((f) => `dt.items.add(${f});`).join(' ')}
+  const el = document.querySelector('${selector}');
+  el.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  el.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  return true; })()`;
+const pasteJs = (selector, file) => `(() => { const dt = new DataTransfer(); dt.items.add(${file}); document.querySelector('${selector}').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`;
+const until = async (fn, ms, step = 500) => {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(step)) {
+    const v = await fn().catch(() => null);
+    if (v) return v;
+  }
+  return null;
+};
+const RECOVERY_MISSION = 'Una landing page per il bar con immagini';
+
+async function recovery(cdp) {
+  await load(cdp, VIEWPORTS[0]);
+  await layout(cdp, LAYOUTS.LR);
+  // 1. the composer takes files three ways (drop, paste, the 📎 picker) and refuses the rest
+  await cdp.eval(dropJs('.composer', [pngJs('facciata.png'), textJs('menu.txt', 'Margherita 7 euro'), textJs('virus.exe', 'MZ')]));
+  await cdp.eval(pasteJs('#goal', pngJs('image.png')));
+  await cdp.eval(`(() => { const dt = new DataTransfer(); dt.items.add(${pngJs('logo.png')}); document.querySelector('[data-attach="goal"]').click(); const i = document.querySelector('#file-picker'); i.files = dt.files; i.dispatchEvent(new Event('change')); return true; })()`);
+  const chips = await cdp.eval(`[...document.querySelectorAll('[data-chips="goal"] .att-chip')].map((c) => c.textContent)`);
+  report('recovery', 'the composer takes files by drop, paste and the picker, and refuses the rest', chips.length === 4 && chips.some((c) => c.includes('pasted-')) && !chips.some((c) => c.includes('virus')), { chips });
+  await shot(cdp, 'recovery-composer');
+
+  // 2. the files are in the run before the CEO plans it
+  await cdp.eval(`(() => { document.querySelector('#goal').value = ${JSON.stringify(RECOVERY_MISSION)}; document.querySelector('#btn-start').click(); return true; })()`);
+  const rid = await until(async () => (await api('/api/runs')).find((r) => r.goal === RECOVERY_MISSION)?.id, 20000);
+  let r = rid ? await api(`/api/runs/${rid}`) : {};
+  report('recovery', 'the composer files reach the run before the plan', (r.attachments ?? []).length === 4 && r.attachments.every((a) => a.path.startsWith('attachments/')), { attachments: (r.attachments ?? []).map((a) => a.path) });
+  if (!rid) return;
+
+  // 3. stopped half-way: the resume button, the change box, the stopped tasks
+  await until(async () => (await api(`/api/runs/${rid}`)).tasks?.some((t) => t.status === 'done'), 5 * 60_000);
+  await cdp.eval(`document.querySelector('[data-act="stop"]').click()`);
+  r = await until(async () => { const x = await api(`/api/runs/${rid}`); return x.status === 'stopped' && x; }, 30000);
+  const panel = await until(() => cdp.eval(`(() => ({ resume: Boolean(document.querySelector('[data-act="resume-block"]')), refine: !document.querySelector('#refine').classList.contains('hidden') }))()`).then((p) => p.resume && p.refine && p), 10000);
+  report('recovery', 'a stopped run offers to resume from where it stopped, and the change box', Boolean(panel), { panel, status: r?.status });
+  await shot(cdp, 'recovery-stopped');
+
+  // 4. the box of a blocked task keeps what the owner types through the redraws
+  const blocked = (r?.tasks ?? []).find((t) => t.status !== 'done');
+  await cdp.eval(`document.querySelector('[data-tab="board"]').click()`);
+  await until(() => cdp.eval(`Boolean(document.querySelector('[data-task="${blocked.id}"]'))`), 5000, 100);
+  await cdp.eval(`document.querySelector('[data-task="${blocked.id}"] .top').click()`);
+  const opened = await until(() => cdp.eval(`Boolean(document.querySelector('[data-ibox-text="${blocked.id}"]'))`), 5000, 100);
+  await cdp.eval(`(() => { const ta = document.querySelector('[data-ibox-text="${blocked.id}"]'); ta.value = 'Non usare l\\'API immagini: usa la foto che ti allego'; ta.closest('.ibox').__mark = 'kept'; return true; })()`);
+  await cdp.eval(dropJs(`.ibox[data-ibox="${blocked.id}"]`, [pngJs('forno.png')]));
+  await cdp.eval(`document.querySelector('[data-filter="all"]').click()`); // the board is drawn again
+  await sleep(300);
+  const kept = await cdp.eval(`(() => { const ta = document.querySelector('[data-ibox-text="${blocked.id}"]'); return { value: ta?.value, same: ta?.closest('.ibox').__mark === 'kept', chips: document.querySelectorAll('[data-chips="task:${blocked.id}"] .att-chip').length }; })()`);
+  report('recovery', 'the box of a task survives the redraws of the board', Boolean(opened) && kept.same && kept.value.startsWith('Non usare') && kept.chips === 1, kept);
+  await shot(cdp, 'recovery-box');
+
+  // 5. sent with "and resume": the words and the photo reach the task, the run starts again
+  await cdp.eval(`document.querySelector('[data-isend="${blocked.id}"]').click()`);
+  r = await until(async () => { const x = await api(`/api/runs/${rid}`); const t = x.tasks.find((y) => y.id === blocked.id); return !['stopped'].includes(x.status) && t.interactions?.some((i) => i.from === 'user' && i.text.startsWith('Non usare')) && x; }, 30000);
+  const task = r?.tasks.find((t) => t.id === blocked.id);
+  report('recovery', 'the words and the file reach the blocked task, and the workflow resumes', Boolean(r) && r.attachments.some((a) => a.taskId === blocked.id && a.path === 'attachments/forno.png') && (r.resumes ?? 0) >= 1, { status: r?.status, resumes: r?.resumes, interactions: task?.interactions?.length });
+
+  // 6. a change from the box under the mission: the CEO names the tasks, they run again
+  await api(`/api/runs/${rid}/stop`, {});
+  await until(async () => (await api(`/api/runs/${rid}`)).status === 'stopped', 30000);
+  await until(() => cdp.eval(`!document.querySelector('#refine').classList.contains('hidden')`), 10000, 200);
+  await cdp.eval(`(() => { document.querySelector('#refine-text').value = 'Nella pagina metti in evidenza i prezzi'; return true; })()`);
+  await cdp.eval(dropJs('#refine', [pngJs('prezzi.png')]));
+  await cdp.eval(`document.querySelector('#refine-send').click()`);
+  r = await until(async () => { const x = await api(`/api/runs/${rid}`); return x.refinements?.length && x; }, 30000);
+  report('recovery', 'a change request reaches the delivered tasks and the run goes on', Boolean(r) && r.refinements[0].text.startsWith('Nella pagina') && r.refinements[0].targets.length > 0 && r.status !== 'stopped', { refinements: r?.refinements, status: r?.status });
+  await api(`/api/runs/${rid}/stop`, {});
+  await until(async () => (await api(`/api/runs/${rid}`)).status === 'stopped', 30000);
+
+  // 7. the Output tab lists the owner's files
+  await cdp.eval(`document.querySelector('[data-tab="output"]').click()`);
+  const listed = await until(() => cdp.eval(`[...document.querySelectorAll('#tab-output .file')].filter((f) => f.textContent.includes('📎')).length`), 10000, 200);
+  report('recovery', 'the Output tab lists the owner files', listed >= 6, { listed });
+
+  // 8. a provider registered from the Settings, then removed, without a restart
+  await cdp.eval(`document.querySelector('#btn-settings').click()`);
+  await until(() => cdp.eval(`Boolean(document.querySelector('#prov-id'))`), 5000, 100);
+  await cdp.eval(`(() => { document.querySelector('#prov-id').value = 'local-box'; document.querySelector('#prov-url').value = 'http://127.0.0.1:9/v1'; document.querySelector('#prov-keyless').checked = true; document.querySelector('#prov-models').value = 'tiny-model'; document.querySelector('[data-prov-combo="local"]').checked = true; document.querySelector('[data-act="prov-add"]').click(); return true; })()`);
+  const added = await until(async () => (await api('/api/config')).providers?.['local-box']?.custom && (await api('/api/config')).combos.local.models.includes('local-box/tiny-model'), 10000);
+  const removeButton = await until(() => cdp.eval(`Boolean(document.querySelector('[data-prov-remove="local-box"]'))`), 5000, 100);
+  await shot(cdp, 'recovery-provider');
+  await cdp.eval(`document.querySelector('[data-prov-remove="local-box"]')?.click()`);
+  const removed = await until(async () => !(await api('/api/config')).providers?.['local-box'], 10000);
+  await cdp.eval(`document.querySelector('#settings').classList.add('hidden')`);
+  report('recovery', 'a provider is added from the Settings and removed, without a restart', Boolean(added && removeButton && removed), { added: Boolean(added), removeButton: Boolean(removeButton), removed: Boolean(removed) });
+}
+
 // ---------- spec 06: the language ----------
 
 // N15: the demo server keeps its preferences in its temp home (demoEnv), so the
@@ -897,6 +995,7 @@ try {
   if (PHASES.includes('labels')) await labels(cdp);
   if (PHASES.includes('language')) await language(cdp);
   if (PHASES.includes('run')) await run(cdp);
+  if (PHASES.includes('recovery')) await recovery(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });
 } catch (e) {

@@ -26,6 +26,8 @@ def test_tool_docs_cover_exactly_the_node_set():
         "list_files", "read_file", "write_file", "web_search", "web_fetch", "run_command",
         "generate_image", "generate_speech", "search_skills", "read_skill", "remember",
         "recall", "ask_lead", "ask_user", "finish",
+        # spec 09: the owner's files (only in a run that has them)
+        "use_attachment", "read_document", "inspect_image",
     }
 
 
