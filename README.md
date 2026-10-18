@@ -701,6 +701,8 @@ Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
 
 Quello che trova lo stampa oscurato.
 
+`npm run scan:secrets` controlla tutta la history con le stesse regole, più le identità di autori e committer. Un'eccezione: i merge fatti dall'interfaccia di GitHub (due genitori, GitHub come committer, oggetto `Merge pull request #N from <account>/<branch>`). In quei commit passano il nome dell'account nell'oggetto e l'autore, cioè l'account che ha cliccato. Il titolo della PR, i file e tutti gli altri commit si controllano come sempre. Gli hook di commit non hanno eccezioni.
+
 ---
 
 ## Struttura del repository
