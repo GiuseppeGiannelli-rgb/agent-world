@@ -152,15 +152,18 @@ class TestFlowControl:
         run.ctx.team = types.SimpleNamespace(set=lambda *a: None, ceo=lambda: {"id": "ada"}, abort_waiters=lambda run_id: None)
         sleeper = asyncio.ensure_future(run.sleep(60000))
         item = run.add_waiting({"kind": "question", "from": "nina", "text": "Scelta?"})
+        plan = run.add_waiting({"kind": "plan", "from": "ada", "text": "Approvi?"})
         answer = asyncio.ensure_future(run.wait_answer(item, 0))
+        approval = asyncio.ensure_future(run.wait_answer(plan, 0))
         await asyncio.sleep(0.05)
         run.stop()
         with pytest.raises(RunStopped):
             await sleeper
-        assert await answer is None
-        # stop() resolves the waiter with None, and the done() path marks the
-        # item expired -- same as a timeout, exactly like Node
-        assert item["status"] == "expired"
+        assert await answer is None and await approval is None
+        # stop() resolves the waiters with None. Spec 09: a question waits for the
+        # owner across sessions (answer it, then resume); a plan approval expires
+        assert item["status"] == "pending"
+        assert plan["status"] == "expired"
 
     @pytest.mark.asyncio
     async def test_sleep_returns_normally_without_abort(self, make_run):

@@ -73,6 +73,16 @@ class FakeRun:
     def answer(self, id, answer):
         return self.answers.pop(id, None) is not None
 
+    @classmethod
+    def from_data(cls, data, ctx):
+        """Spec 09: a stored run, for an answer given while it is stopped."""
+        run = cls.__new__(cls)
+        run.data, run.ctx = data, ctx
+        return run
+
+    def answer_pending(self, id, text, record=True):
+        return False
+
 
 @pytest.fixture
 def app_and_store(tmp_path, monkeypatch):
@@ -211,10 +221,15 @@ async def test_actions_require_an_active_run(client, app_and_store):
     _, store, _ = app_and_store
     store.save({"id": "r1", "goal": "finito", "status": "completed", "tasks": []}, immediate=True)
     async with client as c:
-        for action in ("pause", "resume", "stop", "answer"):
+        for action in ("pause", "stop"):
             res = await c.post(f"/api/runs/r1/{action}", json={})
             assert res.status_code == 409
             assert res.json()["error"] == "Questo run non è attivo"
+        # spec 09: a stored run can be resumed (not a complete one) and its questions answered
+        res = await c.post("/api/runs/r1/resume", json={})
+        assert res.status_code == 409 and "già completo" in res.json()["error"]
+        res = await c.post("/api/runs/r1/answer", json={"itemId": "nope", "text": "x"})
+        assert res.status_code == 409 and res.json()["error"] == "Questa richiesta non è più aperta"
 
 
 async def test_pause_resume_stop_delegate(client, app_and_store):

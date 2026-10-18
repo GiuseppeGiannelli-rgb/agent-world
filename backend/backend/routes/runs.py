@@ -124,6 +124,31 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
     def active_run():
         return next(iter(live.values()), None)
 
+    def launch(run, step) -> None:
+        """Runs a mission (start, or a resume) in the background; it leaves `live` at the end."""
+
+        async def _go(r=run):
+            try:
+                await step()
+            except Exception:
+                traceback.print_exc()
+            finally:
+                live.pop(r.data["id"], None)
+
+        asyncio.ensure_future(_go())
+
+    def resume_stored(run_id: str, data: dict):
+        """Spec 09: a stored run starts again from where it stopped, or the JSONResponse that refuses it."""
+        if active_run() is not None:
+            return _err(409, "La squadra sta già lavorando a un run. Fermalo o aspetta che finisca.")
+        if data.get("status") == "completed" and all(w["status"] == "done" for w in data.get("workstreams") or []) and all(t["status"] == "done" for t in data.get("tasks") or []):
+            return _err(409, "Questo run è già completo: non c'è niente da riprendere. Chiedi una modifica, se vuoi cambiare qualcosa.")
+        team.load(config.get()["staff"])
+        run = Run.from_data(data, ctx)
+        live[run_id] = run
+        launch(run, run.resume_from_block)
+        return None
+
     def max_bytes() -> int:
         return int(float(config.get()["limits"].get("maxUploadMB", 25)) * 1024 * 1024)
 
@@ -229,16 +254,7 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
             live.pop(run.data["id"], None)
             return _err(400, str(err))
         run.emit_run(True)
-
-        async def _start(r=run):
-            try:
-                await r.start()
-            except Exception:
-                traceback.print_exc()
-            finally:
-                live.pop(r.data["id"], None)
-
-        asyncio.ensure_future(_start())
+        launch(run, run.start)
         return JSONResponse({"id": run.data["id"]}, status_code=201)
 
     @app.get("/api/runs/{run_id}")
@@ -255,15 +271,53 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
         data = run.data if run is not None else store.get(run_id)
         if data is None:
             return _err(404, "Run non trovato")
-        if run is None:
-            return _err(409, "Questo run non è attivo")
         body = await _body(request)
+        if run is None:
+            # spec 09: a question of a stopped run is answered now and reaches its task on resume
+            stored = Run.from_data(data, ctx)
+            if not stored.answer_pending(str(body.get("itemId") or ""), str(body.get("text") or "")):
+                return _err(409, "Questa richiesta non è più aperta")
+            store.save(data, True)
+            return {"ok": True, "resumable": True}
         decision = body.get("decision")
         ok = run.answer(
             str(body.get("itemId") or ""),
             {"text": body.get("text") or "", "decision": decision if decision in ("approve", "reject") else None},
         )
         return {"ok": True} if ok else _err(409, "Questa richiesta non è più aperta")
+
+    @app.post("/api/runs/{run_id}/tasks/{task_id}/interact")
+    async def api_task_interact(run_id: str, task_id: str, request: Request):
+        """Spec 09 §2: the owner talks to one task -- a blocked one too, in a stopped run."""
+        run = live.get(run_id)
+        data = run.data if run is not None else store.get(run_id)
+        if data is None:
+            return _err(404, "Run non trovato")
+        target = run if run is not None else Run.from_data(data, ctx)
+        task = target.task_by_id(task_id)
+        if task is None:
+            return _err(404, "Task non trovato")
+        body = await _body(request)
+        text = str(body.get("text") or "").strip()[:4000]
+        ids = body.get("attachments") or []
+        known = {a["id"]: a for a in data.get("attachments") or []}
+        if not isinstance(ids, list) or any(i not in known for i in ids):
+            return _err(400, "Uno degli allegati non è di questo run: caricalo prima con /attachments.")
+        if not text and not ids:
+            return _err(400, "Scrivi qualcosa all'agente, o allega un file.")
+        if ids:
+            text = f"{text}\n" if text else ""
+            text += "Files: " + ", ".join(known[i]["path"] for i in ids)
+        out = await target.interact(task, text, attachment_ids=ids)
+        if run is None:
+            store.save(data, True)
+            out["resumable"] = True
+            if body.get("resume"):
+                refused = resume_stored(run_id, data)
+                if refused is not None:
+                    return refused
+                out["resumed"] = True
+        return out
 
     @app.post("/api/runs/{run_id}/{action}")
     async def api_run_action(run_id: str, action: str):
@@ -273,6 +327,10 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
         data = run.data if run is not None else store.get(run_id)
         if data is None:
             return _err(404, "Run non trovato")
+        if run is None and action == "resume":
+            # spec 09: "Riprendi workflow dal punto di blocco"
+            refused = resume_stored(run_id, data)
+            return refused if refused is not None else {"ok": True, "resumed": True}
         if run is None:
             return _err(409, "Questo run non è attivo")
         getattr(run, action)()

@@ -55,7 +55,8 @@ TERMINAL_RUN = {"completed", "completed_with_failures", "failed", "stopped"}
 # (a model with no credit for TTS wrote a fake 133-byte .mp3 that QA rejected)
 MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".ogg", ".m4a", ".mp4"}
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
-VISION_MAX_BYTES = 4 * 1024 * 1024  # the providers take 5-20 MB; a bigger photo is described from its header
+VISION_MAX_BYTES = 4 * 1024 * 1024
+MAX_NOTE_ROUNDS = 3  # spec 09: extra rounds for the owner's last-moment words, then the task goes on as it is  # the providers take 5-20 MB; a bigger photo is described from its header
 TEXT_EXT = {".md", ".txt", ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".json", ".svg", ".py", ".csv", ".yml", ".yaml", ".xml", ".sh", ".php", ".sql"}
 
 
@@ -268,6 +269,9 @@ class Run:
         self._abort.set()
         self._resume.set()
         self.team.abort_waiters(self.data["id"])  # close the handoff window, like Node's sync abort listener
+        for w in self.data["waiting"]:
+            if w["status"] == "open" and w.get("kind") == "question":
+                w["status"] = "pending"  # spec 09: it waits for the owner across sessions
         for done in list(self.answer_waiters.values()):
             done(None)
 
@@ -807,7 +811,9 @@ class Run:
         keep = {}
         for task_id, tasker in self.taskers.items():
             task = self.task_by_id(task_id)
-            if task and task["status"] != "done" and tasker.messages:
+            # only an interrupted worker goes on from its steps; a failed one starts afresh
+            # (with the owner's words and files), its history stays in the task
+            if task and (task.get("stopped") or task["status"] not in TERMINAL) and tasker.messages:
                 keep[task_id] = {"messages": compact(tasker.messages), "model": tasker.model_key}
         try:
             if keep:
@@ -861,7 +867,10 @@ class Run:
 
     def reopen_task(self, task: dict, reason: str = "") -> None:
         """A failed or skipped task of a live run goes back in the queue, with the
-        tasks (and workstreams) that were skipped because of it."""
+        tasks (and workstreams) that were skipped because of it. Its worker starts
+        afresh: the conversation that failed is not where to go on from."""
+        if task["status"] == "failed":
+            self.taskers.pop(task["id"], None)
         task.update(status="queued", error=None, agentId=None, finishedAt=None, stopped=False, revisions=0)
         ws = self.ws_by_id(task["wsId"])
         if ws and ws["status"] in TERMINAL:
@@ -912,8 +921,83 @@ class Run:
         for i in task.get("interactions") or []:
             if i.get("from") == "user" and not i.get("delivered"):
                 i["delivered"] = True
-                out.append(i["text"])
+                out.append(f"answer to your question \"{i['question']}\": {i['text']}" if i.get("question") else i["text"])
         return out
+
+    @staticmethod
+    def has_unread_notes(task: dict) -> bool:
+        return any(i.get("from") == "user" and not i.get("delivered") for i in task.get("interactions") or [])
+
+    def answer_pending(self, id: str, text: str, *, record: bool = True) -> bool:
+        """Spec 09: an answer to a question of a stopped run. It waits in the task's
+        interactions and reaches the worker when the run resumes."""
+        item = next((w for w in self.data["waiting"] if w["id"] == id), None)
+        if not item or item.get("kind") != "question" or item["status"] not in ("pending", "open") or not str(text).strip():
+            return False
+        item["answer"] = {"text": str(text)[:4000], "decision": None, "at": _now_ms()}
+        item["status"] = "answered"
+        task = self.task_by_id(item.get("taskId") or "")
+        if task is not None and record:
+            self.add_interaction(task, "user", text, answers=item["id"], question=item["text"][:300])
+        self.message("user", item["from"], "reply", text)
+        self.emit_run(True)
+        return True
+
+    async def agent_reply(self, task: dict, agent: dict, text: str) -> str:
+        """The agent of a task answers the owner in a few words (the box of the task)."""
+        from backend.prompts import chat_prompt
+
+        context = (
+            f"Mission: {self.data['goal']}\nRun status: {self.data['status']}\nYour task: {task['id']} {task['title']} (status: {task['status']})"
+            + (f"\nLast error: {task['error']}" if task.get("error") else "")
+            + (f"\nThe owner's files:\n{self.owner_files_text(task)}" if self.data.get("attachments") else "")
+        )
+        history = [{"from": "user" if i["from"] == "user" else agent["id"], "text": i["text"]} for i in (task.get("interactions") or [])[-9:-1]]
+        try:
+            res = await self.ctx.router.chat(
+                role="ceo" if agent.get("kind") == "ceo" else task["team"],
+                messages=chat_prompt(agent=agent, who=f"the agent of task {task['id']} \"{task['title']}\"", context=context, history=history, text=text, language=self.lang),
+                max_tokens=500,
+                meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]},
+            )
+            self.data["usage"]["calls"] += 1
+            return res["text"].strip()[:1500]
+        except ProviderError:
+            return self.t("direct_ack", name=agent["name"])
+
+    async def interact(self, task: dict, text: str, *, attachment_ids=()) -> dict:
+        """Spec 09 §2.1: the owner talks to one task (or to the agent on it). The
+        words wait in task.interactions until its worker reads them: at its next
+        step, at its first step, or when the run resumes. They answer the task's
+        open question, if it has one. A failed or skipped task of a live run goes
+        back in the queue."""
+        item = self.add_interaction(task, "user", text, attachments=list(attachment_ids))
+        agent = self.team.get(task.get("agentId") or "") or self.team.lead(task["team"]) or self.ceo
+        self.message("user", agent["id"], "direct", f"[{task['id']}] {text}")
+        live = not self.detached and self.data["status"] not in TERMINAL_RUN
+        answered = None
+        question = next((w for w in self.data["waiting"] if w.get("taskId") == task["id"] and w.get("kind") == "question" and w["status"] in ("open", "pending")), None)
+        if question is not None:
+            if question["status"] == "open" and question["id"] in self.answer_waiters:
+                self.answer(question["id"], {"text": text})
+                item["delivered"] = True  # it reaches the worker as the answer to ask_user
+            else:
+                self.answer_pending(question["id"], text, record=False)
+            answered = question["id"]
+        if not live:
+            delivered = "on_resume"
+        elif task["status"] in ("assigned", "working", "review", "revise"):
+            delivered = "next_step"
+        elif task["status"] == "queued":
+            delivered = "when_it_starts"
+        else:
+            self.reopen_task(task)
+            delivered = "reopened"
+        reply = await self.agent_reply(task, agent, text)
+        self.add_interaction(task, agent["id"], reply)
+        self.message(agent["id"], "user", "direct", reply)
+        self.emit_task(task)
+        return {"ok": True, "delivered": delivered, "answered": answered, "reply": reply, "agent": agent["id"]}
 
     def add_interaction(self, task: dict, who: str, text: str, **extra) -> dict:
         item = {"id": uuid.uuid4().hex[:8], "ts": _now_ms(), "from": who, "text": str(text)[:4000], "delivered": who != "user", **extra}
@@ -1095,9 +1179,16 @@ class Run:
             tasker.restore(session)
         feedback = None
         rescued = False
+        note_rounds = 0
         while True:
             task["attempts"] += 1
             out = await tasker.work(feedback)
+            if not out.get("stepLimit") and self.has_unread_notes(task) and note_rounds < MAX_NOTE_ROUNDS:
+                # spec 09: the owner wrote to this task while its worker was finishing:
+                # the words are never lost, the worker reads them and finishes again
+                note_rounds += 1
+                feedback = None
+                continue
             problems = [self.t("step_limit", n=limits["maxSteps"])] if out.get("stepLimit") else await self.machine_check(task)
 
             if not problems:
@@ -1107,6 +1198,12 @@ class Run:
                 self.emit_task(task)
                 self.team.set(agent["id"], {"state": "waiting", "tool": None, "text": self.t("awaiting_review")})
                 verdict = await self.review(task, agent, out)
+                if verdict["verdict"] == "pass" and self.has_unread_notes(task) and note_rounds < MAX_NOTE_ROUNDS:
+                    note_rounds += 1
+                    task["status"] = "working"  # QA passed it, but the owner has just said something to it
+                    self.emit_task(task)
+                    feedback = None
+                    continue
                 if verdict["verdict"] == "pass":
                     task["status"] = "done"
                     task["finishedAt"] = _iso_now()
