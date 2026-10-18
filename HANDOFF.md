@@ -360,3 +360,33 @@ npm run sweep -- --dry-run                   # cosa lascerebbero gli strumenti u
 1. Review e merge della PR della spec 08.
 2. Le verifiche su Windows qui sopra.
 3. N13.
+
+
+## Stato al 18/10/2026
+- main = `6ca7919`: PR #5 (spec 08) unita. Il branch remoto `claude/charming-thompson-mv8ucu` non si è potuto cancellare da qui (403 del proxy); ora porta la spec 09.
+- Branch `claude/charming-thompson-mv8ucu`: spec 09 in quattro commit (failover e file; dialogo e ripresa; arbitro, modifiche e provider; interfaccia e documenti). Nessuna PR aperta.
+
+### Completate
+- **Spec 09: recupero interattivo, file del proprietario, failover, ciclo di modifica** (dettagli: `docs/specs/09-multimodal-interactive-recovery.md`):
+  - **Failover senza fermate.** Il worker tiene la conversazione, il modello nuovo riceve `MODEL SWITCH` con il RAG ricalibrato. Se non risponde nessuno, `Run.chat` aspetta il primo modello che torna e riprova (`limits.modelRetries`, `modelWaitMaxMs`), poi apre una richiesta `model` con "Riprova ora". Cascata `frontier → code → smart → fast → free → local`.
+  - **Provider nuovi:** xAI, Perplexity, NVIDIA NIM, Novita, Hyperbolic, Cloudflare Workers AI (segnaposto non segreti nell'URL: `*_ACCOUNT_ID`…), combo `vision` senza cascata. Registrazione dalle Impostazioni senza riavvio (`POST/DELETE /api/providers`), con le regole della spec 07; le chiavi restano in `.env`, che viene riletto (`AGENT_WORLD_ENV_FILE`).
+  - **TypeSafe è l'arbitro, non un fallback:** Jev risponde a domande "choice" (`POST /v1/systemone`) e non genera testo. Sceglie fra le opzioni del lead quando una domanda scade o il proprietario chiede "Trova tu una soluzione"; vale da `router.arbiter.minConfidence` (0,55).
+  - **Dialogo e ripresa:** `POST /api/runs/{id}/tasks/{task}/interact`; domande `pending` che sopravvivono a stop e riavvii; `POST /resume` su una run salvata riparte dal punto di blocco (sessioni dei worker interrotti in `data/runs/sessions/<id>.json`, memoria della run ricostruita).
+  - **File del proprietario:** 📎, trascina, Ctrl+V in composer, box della missione e box del task. Controllo di estensione, byte e nome; limite applicato mentre i dati arrivano; testo di PDF (pypdf) e DOCX (lettura limitata) in RunMemory e Brain. Strumenti `use_attachment`, `read_document`, `inspect_image` (combo `vision`, poi l'intestazione). Il QA accetta i file del proprietario.
+  - **Modifiche dopo la fine:** `POST /api/runs/{id}/refine`. Il CEO sceglie i task (id validati, ripiego sul task della pagina), che ripartono con direttiva e file; il QA li rivede, il report viene riscritto; `run.refinements`.
+  - **Bug trovato e corretto:** `tick()` poteva lanciare due volte lo stesso task in coda (test `TestTickLaunchesEachTaskOnce`).
+  - **Verifiche (Linux):** pytest 796 passati, 3 saltati; `npm test` verde; browser `language`, `run` (A10) e `recovery` (8 verifiche nuove) `ALL OK`; `npm run scan:secrets` pulito.
+
+### Ticket aperti
+- N13: errori HTTP ancora in italiano (anche quelli nuovi della spec 09).
+
+### Da verificare su Windows (o con chiavi vere)
+- Le verifiche della spec 08 elencate sopra (edge-tts, SAPI, scoperta dei modelli locali).
+- Una chiamata vera a TypeSafe con `TYPESAFE_API_KEY`: qui il servizio non è raggiungibile, il formato viene dai sample e dalle guide ufficiali.
+- I nomi dei modelli dei provider nuovi: verificati sulle fonti, non con chiamate vere (un nome sbagliato costa un 404, poi la blacklist).
+- Il trascinamento di un file dal Desktop, e il runner del browser intero: qui sei controlli di `views` e `input` sono rossi anche sul commit precedente (camera in headless).
+
+### Prossimi passi
+1. Review della spec 09 e PR verso `main` (quando l'utente la chiede).
+2. Le verifiche qui sopra.
+3. N13.

@@ -26,12 +26,16 @@ const S = {
   files: null,
   chats: new Map(),
   speak: false,
+  staged: {}, // spec 09: zone ('goal', 'refine', 'task:<id>') -> the files chosen, not uploaded yet
+  pickZone: null,
 };
 
 const TERMINAL = ['completed', 'completed_with_failures', 'failed', 'stopped'];
 const TEXT_EXT = /\.(md|txt|html?|css|js|mjs|json|svg|csv|py|ts|tsx|jsx|yml|yaml|xml|sh)$/i;
 const IMG_EXT = /\.(png|jpe?g|webp|gif|svg)$/i;
 const AUDIO_EXT = /\.(mp3|wav|ogg)$/i;
+// spec 09: what the agents can use (the server checks it again, bytes included)
+const ATTACH_EXT = /\.(png|jpe?g|webp|svg|gif|pdf|docx|txt|md|csv|json|html?|css|js|mp3|wav|ogg)$/i;
 
 const shown = () => S.view ?? S.run;
 const isLive = (run) => run && !TERMINAL.includes(run.status);
@@ -85,6 +89,80 @@ function loadPref(k, d) {
     return d;
   }
 }
+
+// ---------- spec 09: the owner's files ----------
+
+function stage(zone, files) {
+  const list = (S.staged[zone] ??= []);
+  for (const f of files) {
+    if (!ATTACH_EXT.test(f.name)) toast(t('attach.refused', { name: f.name }), true);
+    else list.push(f);
+  }
+  renderChips(zone);
+}
+
+function renderChips(zone) {
+  document.querySelectorAll(`[data-chips="${CSS.escape(zone)}"]`).forEach((el) => {
+    el.innerHTML = (S.staged[zone] ?? []).map((f, i) => `<span class="att-chip">📎 ${esc(f.name)}<button data-unstage="${esc(zone)}" data-i="${i}" title="${esc(t('attach.remove'))}">✕</button></span>`).join('');
+  });
+}
+
+async function uploadFile(file, url) {
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(t('attach.failed', { name: file.name, error: body.error ?? res.status }));
+  return body;
+}
+
+// Uploads the files of a zone, one at a time; what is uploaded leaves the zone, so a
+// retry after an error never sends a file twice. Returns the ids.
+async function uploadStaged(zone, urlOf) {
+  const files = S.staged[zone] ?? [];
+  if (!files.length) return [];
+  toast(t('attach.uploading', { n: files.length }));
+  const ids = [];
+  try {
+    while (files.length) {
+      ids.push((await uploadFile(files[0], urlOf(files[0]))).id);
+      files.shift();
+    }
+  } finally {
+    renderChips(zone);
+  }
+  return ids;
+}
+
+const runFileUrl = (run, taskId) => (f) => `/api/runs/${run.id}/attachments?name=${encodeURIComponent(f.name)}${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ''}`;
+const zoneOf = (el) => el?.closest?.('[data-drop]');
+const withFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+// a pasted screenshot is called image.png: give it a name of its own
+const named = (f, i) => (/^image\.\w+$/i.test(f.name) ? new File([f], `pasted-${Date.now()}-${i}${f.name.slice(f.name.lastIndexOf('.'))}`, { type: f.type }) : f);
+
+// Drag & drop everywhere: a zone takes the files; a drop anywhere else is ignored
+// (the browser would leave the app to open the file).
+document.addEventListener('dragover', (e) => {
+  if (!withFiles(e)) return;
+  e.preventDefault();
+  zoneOf(e.target)?.classList.add('dragging');
+});
+document.addEventListener('dragleave', (e) => {
+  const z = zoneOf(e.target);
+  if (z && !z.contains(e.relatedTarget)) z.classList.remove('dragging');
+});
+document.addEventListener('drop', (e) => {
+  if (!withFiles(e)) return;
+  e.preventDefault();
+  const z = zoneOf(e.target);
+  document.querySelectorAll('[data-drop].dragging').forEach((el) => el.classList.remove('dragging'));
+  if (z && e.dataTransfer.files.length) stage(z.dataset.drop, e.dataTransfer.files);
+});
+document.addEventListener('paste', (e) => {
+  const z = zoneOf(e.target);
+  const files = [...(e.clipboardData?.files ?? [])];
+  if (!z || !files.length) return;
+  e.preventDefault();
+  stage(z.dataset.drop, files.map(named));
+});
 
 // ---------- voice ----------
 
@@ -147,7 +225,7 @@ function invalidate(...parts) {
 
 const RENDER = {
   top: renderTop,
-  current: renderCurrent,
+  current: () => (renderCurrent(), renderRefine()),
   waiting: renderWaiting,
   runs: renderRuns,
   board: () => S.tab === 'board' && renderBoard(),
@@ -189,10 +267,27 @@ function renderRoomStats() {
 
 // ---------- left ----------
 
+// The focused text field survives a re-render: same field, same caret (spec 09:
+// the boxes live in panels that every run event redraws).
+function keepFocus(root, attr, render) {
+  const active = document.activeElement;
+  const key = active && root.contains(active) ? active.getAttribute(attr) : null;
+  const caret = key ? [active.selectionStart, active.selectionEnd] : null;
+  render();
+  if (!key) return;
+  const again = root.querySelector(`[${attr}="${CSS.escape(key)}"]`);
+  if (again && again !== document.activeElement) {
+    again.focus();
+    if (caret && again.setSelectionRange) again.setSelectionRange(...caret);
+  }
+}
+
 function renderWaiting() {
   const el = $('#waiting');
-  const run = S.run;
-  const open = isLive(run) ? run.waiting.filter((w) => w.status === 'open') : [];
+  // spec 09: the questions of the run in view; a stopped run keeps them ("pending"), answered later
+  const run = shown();
+  const live = isLive(run) && run.id === S.run?.id;
+  const open = run ? (run.waiting ?? []).filter((w) => (live ? w.status === 'open' : w.status === 'pending')) : [];
   el.classList.toggle('hidden', !open.length);
   if (!open.length) {
     el.innerHTML = '';
@@ -200,17 +295,25 @@ function renderWaiting() {
   }
   // keep what the user is typing
   const drafts = Object.fromEntries([...el.querySelectorAll('textarea[data-wait]')].map((t) => [t.dataset.wait, t.value]));
-  el.innerHTML = `<h3>${t('wait.title', { n: open.length })}</h3>${open
-    .map((w) => {
-      const a = S.agents.get(w.from);
-      return `<div class="wait-item">
-        <div class="who"><b style="color:${agentColor(w.from)}">${esc(a?.name ?? w.from)}</b> · ${w.kind === 'plan' ? t('wait.plan') : t('wait.question', { task: esc(w.taskId ?? '') })}</div>
-        <div class="q">${esc(w.text)}</div>
-        <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
-        <div class="row">${w.kind === 'plan' ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.approve')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.reject')}</button>` : `<button class="btn go" data-answer="${w.id}">${t('wait.reply')}</button>`}</div>
-      </div>`;
-    })
-    .join('')}`;
+  keepFocus(el, 'data-wait', () => {
+    el.innerHTML = `<h3>${live ? t('wait.title', { n: open.length }) : t('wait.pendingTitle', { n: open.length })}</h3>${open
+      .map((w) => {
+        const a = S.agents.get(w.from);
+        const what = w.kind === 'plan' ? t('wait.plan') : w.kind === 'model' ? t('wait.model') : t('wait.question', { task: esc(w.taskId ?? '') });
+        const buttons = w.kind === 'plan'
+          ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.approve')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.reject')}</button>`
+          : w.kind === 'model'
+            ? `<button class="btn go" data-answer="${w.id}">${t('wait.retry')}</button>`
+            : `<button class="btn go" data-answer="${w.id}">${t('wait.reply')}</button><button class="btn" data-solve="${w.id}">${t('wait.solve')}</button>`;
+        return `<div class="wait-item">
+          <div class="who"><b style="color:${agentColor(w.from)}">${esc(a?.name ?? w.from)}</b> · ${what}</div>
+          <div class="q">${esc(w.text)}</div>
+          <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
+          <div class="row">${buttons}</div>
+        </div>`;
+      })
+      .join('')}`;
+  });
 }
 
 function renderCurrent() {
@@ -225,9 +328,14 @@ function renderCurrent() {
   }
   const done = run.tasks.filter((t) => t.status === 'done').length;
   const total = run.tasks.length || 1;
+  // spec 09: a stopped run (or one with failures) starts again from where it stopped
+  const resumable = !isLive(run) && ['stopped', 'completed_with_failures', 'failed'].includes(run.status) && !isLive(S.run);
+  const pendingQ = (run.waiting ?? []).filter((w) => w.status === 'pending').length;
   const controls = isLive(run) && run.id === S.run?.id
     ? `<div class="row" style="margin-top:10px">${run.paused ? `<button class="btn" data-act="resume">${t('current.resume')}</button>` : `<button class="btn" data-act="pause">${t('current.pause')}</button>`}<button class="btn danger" data-act="stop">${t('current.stop')}</button></div>`
-    : '';
+    : resumable
+      ? `${pendingQ ? `<div class="muted" style="margin-top:8px">${t('current.pendingQ', { n: pendingQ })}</div>` : ''}<div class="row" style="margin-top:10px"><button class="btn go" data-act="resume-block">${t('current.resumeBlock')}</button></div>`
+      : '';
   const ws = (run.workstreams ?? []).map((w) => {
     const ts = run.tasks.filter((t) => t.wsId === w.id);
     const d = ts.filter((t) => t.status === 'done').length;
@@ -243,6 +351,42 @@ function renderCurrent() {
     ${ws.length ? `<div class="ws-mini">${ws.join('')}</div>` : ''}
     ${run.error ? `<div class="verdict revise" style="margin-top:8px">${esc(run.error)}</div>` : ''}
     ${controls}`;
+}
+
+// spec 09: the box under the mission ("talk to the team or ask for a change") is never
+// redrawn, only shown or hidden: what the owner types in it survives every run event
+function renderRefine() {
+  const run = shown();
+  $('#refine').classList.toggle('hidden', !run?.tasks?.length);
+}
+
+async function sendRefine() {
+  const run = shown();
+  const text = $('#refine-text').value.trim();
+  if (!run) return;
+  if (!text) return toast(t('refine.empty'), true);
+  try {
+    const attachments = await uploadStaged('refine', runFileUrl(run));
+    const r = await api(`/api/runs/${run.id}/refine`, { method: 'POST', body: JSON.stringify({ text, attachments }) });
+    $('#refine-text').value = '';
+    toast(t('refine.sent', { ids: r.targets.map((x) => x.taskId).join(', ') }));
+    if (r.resumed) S.view = null;
+    invalidate(...ALL);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function resumeBlock() {
+  const run = shown();
+  try {
+    await api(`/api/runs/${run.id}/resume`, { method: 'POST' });
+    S.view = null;
+    toast(t('current.resumed'));
+    invalidate(...ALL);
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 function renderRuns() {
@@ -271,10 +415,15 @@ function taskCard(t) {
   let detail = '';
   if (open) {
     const hist = t.history.slice(-14).map((h) => {
-      const what = h.kind === 'step' ? `${label('tool', h.tool)}${h.target ? ` <code>${esc(h.target.slice(0, 60))}</code>` : ''}<br><span class="muted">${esc(h.text)}</span>` : h.kind === 'verdict' ? `⚖️ ${esc(h.text)}` : h.kind === 'escalate' ? `⬆️ ${esc(h.text)}` : h.kind === 'check' ? `🧪 ${esc(h.text)}` : `⚠️ ${esc(h.text)}`;
+      const icon = { verdict: '⚖️', escalate: '⬆️', check: '🧪', switch: '🔀', decision: '💡', model_wait: '⏳' }[h.kind] ?? '⚠️';
+      const what = h.kind === 'step' ? `${label('tool', h.tool)}${h.target ? ` <code>${esc(h.target.slice(0, 60))}</code>` : ''}<br><span class="muted">${esc(h.text)}</span>` : `${icon} ${esc(h.text)}`;
       return `<div class="ev"><span class="t">${esc(agentName(h.agentId).slice(0, 2))}</span><div>${what}</div></div>`;
     });
     const verdicts = t.verdicts.map((v) => `<div class="verdict ${v.verdict}">${v.verdict === 'pass' ? '✔️' : '✖️'} <b>${esc(agentName(v.judgeId))}</b>, ${tr('card.attempt', { n: v.attempt })}${v.score != null ? ` · ${v.score}/10` : ''}${v.security ? tr('card.security') : ''}${v.feedback ? `\n${esc(v.feedback)}` : ''}</div>`).join('');
+    // spec 09: the question of this task, the talk with its agent, and the box to write to it
+    const run = shown();
+    const asks = (run?.waiting ?? []).filter((w) => w.taskId === t.id && w.kind === 'question' && ['open', 'pending'].includes(w.status));
+    const talk = (t.interactions ?? []).slice(-8).map((i) => `<div class="b ${i.from === 'user' ? 'me' : 'them'}"><b>${esc(i.from === 'user' ? tr('you') : agentName(i.from))}</b> ${esc(i.text)}</div>`).join('');
     detail = `<div class="detail">
       ${esc(t.description)}
       ${t.brief ? `<div class="brief"><b>Prompt Lab</b>\n${esc(t.brief)}</div>` : ''}
@@ -285,6 +434,9 @@ function taskCard(t) {
       ${t.summary ? `<div style="margin-top:6px"><b>${tr('card.delivery')}</b> ${esc(t.summary)}</div>` : ''}
       ${t.error ? `<div class="verdict revise">${esc(t.error)}</div>` : ''}
       ${verdicts}
+      ${asks.map((w) => `<div class="task-q">🙋 <b>${tr('box.question')}</b>\n${esc(w.text)}</div>`).join('')}
+      ${talk ? `<div class="ilog">${talk}</div>` : ''}
+      <div class="ibox-slot" data-slot="${esc(t.id)}"></div>
       ${hist.length ? `<div class="timeline">${hist.join('')}</div>` : ''}
     </div>`;
   }
@@ -314,7 +466,94 @@ function renderBoard() {
       return `<div class="ws-head" style="--team:${teamColor(w.team)}"><i></i>${w.id} · ${esc(w.title)}<span>${esc(teamLabel(w.team))} · ${label('ws', w.status)}</span></div>${ts.map(taskCard).join('') || `<div class="muted" style="padding:2px 4px 6px">${w.status === 'preparing' ? t('board.splitting') : t('board.waitingDeps')}</div>`}`;
     })
     .join('');
-  el.innerHTML = `<div class="filters">${filters.map(([k, label, n]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${label} ${n}</button>`).join('')}${waiting ? `<button class="on" style="border-color:#ff6b9a">${t('board.waitingYou', { n: waiting })}</button>` : ''}</div>${body || `<div class="empty">${t('board.nothing')}</div>`}`;
+  const boxes = new Map([...el.querySelectorAll('.ibox')].map((b) => [b.dataset.ibox, b]));
+  keepFocus(el, 'data-ibox-text', () => {
+    el.innerHTML = `<div class="filters">${filters.map(([k, label, n]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${label} ${n}</button>`).join('')}${waiting ? `<button class="on" style="border-color:#ff6b9a">${t('board.waitingYou', { n: waiting })}</button>` : ''}</div>${body || `<div class="empty">${t('board.nothing')}</div>`}`;
+    fillBoxes(el, boxes, run);
+  });
+}
+
+// The box of a task is one DOM node that survives the redraws of the board (what the
+// owner types stays); it is built again only when its kind changes (done or not, live
+// or stopped, the language).
+function fillBoxes(root, boxes, run) {
+  for (const slot of root.querySelectorAll('.ibox-slot')) {
+    const task = run.tasks.find((x) => x.id === slot.dataset.slot);
+    if (!task) continue;
+    const key = `${task.status === 'done'}|${isLive(run) && run.id === S.run?.id}|${getLang()}`;
+    let box = boxes.get(task.id);
+    if (!box || box.dataset.key !== key) {
+      const fresh = taskBox(task, run, key);
+      if (box) fresh.querySelector('textarea').value = box.querySelector('textarea').value;
+      box = fresh;
+    }
+    slot.replaceWith(box);
+    renderChips(`task:${task.id}`);
+  }
+}
+
+function taskBox(task, run, key) {
+  const done = task.status === 'done';
+  const stopped = !(isLive(run) && run.id === S.run?.id);
+  const box = document.createElement('div');
+  box.className = 'ibox';
+  box.dataset.ibox = task.id;
+  box.dataset.drop = `task:${task.id}`;
+  box.dataset.key = key;
+  box.innerHTML = `<div class="ibox-title">${t('box.title')}</div>
+    <textarea rows="2" data-ibox-text="${esc(task.id)}" placeholder="${esc(done ? t('box.changePlaceholder') : t('box.placeholder'))}"></textarea>
+    <div class="att-chips" data-chips="task:${esc(task.id)}"></div>
+    <div class="row"><button class="mic attach" data-attach="task:${esc(task.id)}" title="${esc(t('html.attach'))}">📎</button><button class="btn go" data-isend="${esc(task.id)}">${t('box.send')}</button>${done ? '' : `<button class="btn" data-isolve="${esc(task.id)}">${t('box.solve')}</button>`}${stopped && !done ? `<label class="check"><input type="checkbox" data-iresume="${esc(task.id)}" checked> ${t('box.resume')}</label>` : ''}</div>`;
+  return box;
+}
+
+async function refreshView(run) {
+  if (S.view?.id === run.id && !isLive(S.view)) S.view = await api(`/api/runs/${run.id}`).catch(() => S.view);
+  invalidate(...ALL);
+}
+
+// Spec 09: the owner talks to one task -- and gives it files. A delivered task takes a
+// change (it runs again and QA reviews it again); a stopped run can resume at once.
+async function sendBox(taskId, solve = false) {
+  const run = shown();
+  const task = run?.tasks.find((x) => x.id === taskId);
+  if (!task) return;
+  const area = document.querySelector(`[data-ibox-text="${CSS.escape(taskId)}"]`);
+  let text = (area?.value ?? '').trim();
+  if (solve) {
+    const q = (run.waiting ?? []).find((w) => w.taskId === taskId && w.kind === 'question' && ['open', 'pending'].includes(w.status));
+    if (q) return solveWaiting(q.id);
+    text = t('box.solveText');
+  }
+  const resume = Boolean(document.querySelector(`[data-iresume="${CSS.escape(taskId)}"]`)?.checked);
+  try {
+    const attachments = await uploadStaged(`task:${taskId}`, runFileUrl(run, taskId));
+    if (!text && !attachments.length) return toast(t('refine.empty'), true);
+    let r;
+    if (task.status === 'done') {
+      r = await api(`/api/runs/${run.id}/refine`, { method: 'POST', body: JSON.stringify({ text: text || t('box.useFiles'), attachments, taskId }) });
+      toast(t('box.changed'));
+    } else {
+      r = await api(`/api/runs/${run.id}/tasks/${encodeURIComponent(taskId)}/interact`, { method: 'POST', body: JSON.stringify({ text, attachments, resume }) });
+      toast(r.resumed ? t('current.resumed') : t(`box.${r.delivered}`));
+    }
+    if (area) area.value = '';
+    if (r.resumed) S.view = null;
+    await refreshView(run);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function solveWaiting(id) {
+  const run = shown();
+  try {
+    const r = await api(`/api/runs/${run.id}/answer`, { method: 'POST', body: JSON.stringify({ itemId: id, solve: true }) });
+    toast(t('answer.solved', { name: agentName(r.by), text: r.decision.slice(0, 180) }));
+    await refreshView(run);
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 // ---------- comms ----------
@@ -506,7 +745,7 @@ function renderOutput() {
     return;
   }
   const files = S.files.list;
-  const images = files.filter((f) => IMG_EXT.test(f.path));
+  const images = files.filter((f) => IMG_EXT.test(f.path) && !f.path.startsWith('attachments/')); // spec 09: the owner's are under "Your files"
   const audio = files.filter((f) => AUDIO_EXT.test(f.path));
   const hasIndex = files.some((f) => f.path === 'index.html');
   const src = (p) => `/preview/${run.id}/${p.split('/').map(encodeURIComponent).join('/')}`;
@@ -514,6 +753,7 @@ function renderOutput() {
     ${hasIndex ? `<a class="btn preview-btn" href="/preview/${run.id}/index.html" target="_blank" rel="noopener">${t('output.preview')}</a>` : ''}
     ${images.length ? `<div class="col-title"><span>${t('output.images')}</span><span>${images.length}</span></div><div class="gallery">${images.map((f) => `<img src="${src(f.path)}?v=${f.size}" alt="${esc(f.path)}" data-file="${esc(f.path)}">`).join('')}</div>` : ''}
     ${audio.length ? `<div class="col-title"><span>${t('output.audio')}</span></div>${audio.map((f) => `<div style="margin-bottom:6px"><code>${esc(f.path)}</code><audio controls src="${src(f.path)}" style="width:100%;margin-top:4px"></audio></div>`).join('')}` : ''}
+    ${run.attachments?.length ? `<div class="col-title"><span>${t('output.attachments')}</span><span>${run.attachments.length}</span></div><div class="files">${run.attachments.map((a) => `<div class="file" data-file="${esc(a.path)}">📎 ${esc(a.name)}<span>${esc(a.info?.text ?? a.kind)}</span></div>`).join('')}</div>` : ''}
     <div class="col-title"><span>${t('output.files')}</span><span>${files.length}</span></div>
     <div class="files">${files.map((f) => `<div class="file" data-file="${esc(f.path)}">${esc(f.path)}<span>${f.size < 1024 ? `${f.size} B` : `${(f.size / 1024).toFixed(1)} KB`}</span></div>`).join('') || `<div class="muted" style="padding:6px">${t('output.noFiles')}</div>`}</div>
     <div class="col-title"><span>${t('output.report')}</span></div>
@@ -585,7 +825,7 @@ function renderInspector() {
   el.innerHTML = `
     <div class="hd"><div class="av" style="--team:${agentColor(a.id)}">${esc(a.name.slice(0, 1))}</div><div><div class="nm">${esc(a.name)}</div><div class="rl">${esc(role)}</div></div><button class="icon-btn x" data-act="close-inspector">✕</button></div>
     <div class="now"><b>${esc(label('state', a.state))}</b>${a.tool ? ` · ${label('tool', a.tool)}` : ''}
-      ${task ? `<div>${tr('inspector.task', { id: task.id, title: esc(task.title) })}</div>` : ''}
+      ${task ? `<div>${tr('inspector.task', { id: task.id, title: esc(task.title) })}</div><button class="btn" style="margin-top:6px" data-openbox="${esc(task.id)}">${tr('box.openFromInspector', { id: esc(task.id) })}</button>` : ''}
       ${a.text ? `<div class="muted" style="margin-top:4px">${esc(a.text)}</div>` : ''}
       ${a.model ? `<div class="muted" style="margin-top:4px;font-family:var(--mono);font-size:11px">${esc(a.model)}</div>` : ''}</div>
     ${events.length ? `<div class="timeline">${events.map((h) => `<div class="ev"><span class="t">${h.task.split('.').pop()}</span><div>${h.kind === 'step' ? `${label('tool', h.tool)} ${h.target ? `<code>${esc(h.target.slice(0, 36))}</code>` : ''}` : esc(h.text)}</div></div>`).join('')}</div>` : ''}
@@ -594,6 +834,13 @@ function renderInspector() {
     <div class="chatbox"><input type="text" id="chat-input" data-agent="${a.id}" placeholder="${tr('inspector.write', { name: esc(a.name) })}" value="${esc(draft)}"><button class="mic" id="chat-mic" title="${tr('inspector.talk')}">🎙</button><button class="btn go" data-act="chat-send">${tr('inspector.send')}</button></div>`;
   const log = $('#chat-log');
   log.scrollTop = log.scrollHeight;
+}
+
+// spec 09: from an agent to the box of its task, on the board
+function openTaskBox(id) {
+  S.openTasks.add(id);
+  switchTab('board');
+  setTimeout(() => document.querySelector(`[data-ibox-text="${CSS.escape(id)}"]`)?.focus(), 80);
 }
 
 async function sendChat() {
@@ -650,7 +897,7 @@ function openSettings() {
   const combos = Object.keys(c.combos);
   const sel = (key, value) => `<select data-combo="${key}">${combos.map((n) => `<option ${n === value ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
   const teamRows = [`<tr><td><b>CEO</b></td><td>${esc(c.ceo.name)}</td><td>${sel('ceo', c.ceo.combo)}</td><td></td></tr>`, ...Object.entries(c.teams).map(([id, t]) => `<tr><td><span class="team-chip" style="--team:${t.color}">${esc(teamLabel(id))}</span></td><td>${esc(t.lead?.name ?? '')}${t.workers?.length ? ` + ${t.workers.map((w) => esc(w.name)).join(', ')}` : ''}</td><td>${sel(id, t.combo)}</td><td><input type="number" min="0" max="3" data-subs="${id}" value="${t.maxSubAgents ?? 0}" title="${tr('settings.subMaxTitle')}"></td></tr>`)].join('');
-  const provRows = S.router.providers.filter((p) => p.kind !== 'mock').map((p) => `<tr><td><span class="dot ${p.ready ? 'on' : ''}"></span> <b>${esc(p.id)}</b></td><td>${esc(p.kind)}</td><td><code>${esc(p.keyEnv ?? tr('settings.noKey'))}</code></td><td><label><input type="checkbox" data-prov="${p.id}" ${p.enabled ? 'checked' : ''}> ${tr('settings.on')}</label></td></tr>`).join('');
+  const provRows = S.router.providers.filter((p) => p.kind !== 'mock').map((p) => `<tr><td><span class="dot ${p.ready ? 'on' : ''}"></span> <b>${esc(p.id)}</b>${c.providers[p.id]?.custom ? ` <span class="muted">· ${tr('settings.custom')}</span>` : ''}</td><td>${esc(p.kind)}</td><td><code>${esc(p.keyEnv ?? tr('settings.noKey'))}</code></td><td><label><input type="checkbox" data-prov="${p.id}" ${p.enabled ? 'checked' : ''}> ${tr('settings.on')}</label>${c.providers[p.id]?.custom ? ` <button class="btn" data-prov-remove="${esc(p.id)}">${tr('settings.providerRemove')}</button>` : ''}</td></tr>`).join('');
   const mediaRows = (S.media?.providers ?? []).map((p) => `<tr><td><span class="dot ${p.ready ? 'on' : ''}"></span> <b>${esc(p.id)}</b></td><td><code>${esc(p.keyEnv ?? tr('settings.keyless'))}</code></td><td><label><input type="checkbox" data-mprov="${p.id}" ${p.enabled ? 'checked' : ''}> ${tr('settings.on')}</label></td></tr>`).join('');
   const L = c.limits;
   const P = c.pacing;
@@ -674,10 +921,23 @@ function openSettings() {
       <label>${t('settings.escalationCombo')} ${sel('__escalation', c.router.escalationCombo)}</label>
       <label class="check" style="margin:0"><input type="checkbox" data-bool="approvePlan" ${L.approvePlan ? 'checked' : ''}> ${t('settings.alwaysApprove')}</label>
     </div>
+    <div class="row" style="margin-top:8px;gap:14px;flex-wrap:wrap">
+      <label>${t('settings.askTimeout')} <input type="number" min="1" max="1440" data-limit-min="askUserTimeoutMs" value="${Math.max(1, Math.round((L.askUserTimeoutMs ?? 300000) / 60000))}"></label>
+      <label class="check" style="margin:0"><input type="checkbox" data-bool="autoAnswer" ${L.autoAnswer !== false ? 'checked' : ''}> ${t('settings.autoAnswer')}</label>
+    </div>
     <div class="hint" style="margin-top:6px">${t('settings.shell', { state: L.allowShell ? t('settings.shellOn') : t('settings.shellOff') })}</div>
     <h3>${t('settings.pacing')}</h3>
     <div class="row" style="flex-wrap:wrap;gap:14px">${Object.entries(P).map(([k, v]) => `<label>${esc(k)} <input type="number" min="0" step="100" data-pace="${k}" value="${v}"></label>`).join('')}</div>
     <h3>${t('settings.textProviders')}</h3><table>${provRows}</table>
+    <h3>${t('settings.providerTitle')}</h3>
+    <div class="hint">${t('settings.providerHint')}</div>
+    <div class="prov-form">
+      <label>${t('settings.providerId')} <input id="prov-id" placeholder="my-llm"></label>
+      <label>${t('settings.providerUrl')} <input id="prov-url" placeholder="https://api.example.com/v1"></label>
+      <label>${t('settings.providerKey')} <input id="prov-key" placeholder="MY_LLM_API_KEY"></label>
+      <label>${t('settings.providerModels')} <input id="prov-models" placeholder="model-a, model-b"></label>
+    </div>
+    <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:6px"><label class="check" style="margin:0"><input type="checkbox" id="prov-keyless"> ${t('settings.providerKeyless')}</label><span class="muted">${t('settings.providerCombos')}</span>${combos.map((n) => `<label class="check" style="margin:0"><input type="checkbox" data-prov-combo="${esc(n)}"> ${esc(n)}</label>`).join('')}<button class="btn go" data-act="prov-add">${t('settings.providerAdd')}</button></div>
     <h3>${t('settings.mediaProviders')}</h3><table>${mediaRows}</table>
     <div class="hint">${t('settings.pollinations')}</div>
     <h3>${t('settings.combo')}</h3>
@@ -696,6 +956,7 @@ async function saveSettings() {
   });
   document.querySelectorAll('#settings [data-subs]').forEach((i) => ((body.teams[i.dataset.subs] ??= {}).maxSubAgents = Number(i.value)));
   document.querySelectorAll('#settings [data-limit]').forEach((i) => (body.limits[i.dataset.limit] = Number(i.value)));
+  document.querySelectorAll('#settings [data-limit-min]').forEach((i) => (body.limits[i.dataset.limitMin] = Math.max(1, Number(i.value)) * 60000));
   document.querySelectorAll('#settings [data-bool]').forEach((i) => (body.limits[i.dataset.bool] = i.checked));
   document.querySelectorAll('#settings [data-pace]').forEach((i) => (body.pacing[i.dataset.pace] = Number(i.value)));
   document.querySelectorAll('#settings [data-prov]').forEach((i) => (body.providers[i.dataset.prov] = { enabled: i.checked }));
@@ -721,6 +982,40 @@ async function saveSettings() {
   }
 }
 
+// spec 09: a provider registered while the server runs; the sheet is drawn again, so
+// its combos (saved with the other settings) include the new models
+async function refreshSettings() {
+  S.config = await api('/api/config');
+  S.router = await api('/api/router');
+  S.mode = S.router.mode;
+  openSettings();
+  invalidate(...ALL);
+}
+
+async function addProvider() {
+  const body = { id: $('#prov-id').value.trim(), baseUrl: $('#prov-url').value.trim(), keyless: $('#prov-keyless').checked, models: $('#prov-models').value.split(',').map((m) => m.trim()).filter(Boolean) };
+  const key = $('#prov-key').value.trim();
+  if (key) body.keyEnv = key;
+  const combos = [...document.querySelectorAll('#settings [data-prov-combo]:checked')].map((i) => i.dataset.provCombo);
+  if (combos.length) body.combos = combos;
+  try {
+    const r = await api('/api/providers', { method: 'POST', body: JSON.stringify(body) });
+    toast(r.ready ? t('settings.providerAdded', { id: r.provider }) : t('settings.providerNoKey', { id: r.provider, key: r.missingKey ?? key }), !r.ready);
+    await refreshSettings();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function removeProvider(id) {
+  try {
+    await api(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await refreshSettings();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
 // ---------- actions ----------
 
 async function startRun() {
@@ -728,7 +1023,9 @@ async function startRun() {
   if (goal.length < 4) return toast(t('start.noGoal'), true);
   try {
     $('#btn-start').disabled = true;
-    await api('/api/runs', { method: 'POST', body: JSON.stringify({ goal, approvePlan: $('#approve-plan').checked, language: getLang() }) });
+    // spec 09: the composer's files are in the run before the CEO plans it
+    const attachments = await uploadStaged('goal', (f) => `/api/uploads?name=${encodeURIComponent(f.name)}`);
+    await api('/api/runs', { method: 'POST', body: JSON.stringify({ goal, approvePlan: $('#approve-plan').checked, language: getLang(), attachments }) });
     S.view = null;
     S.openTasks.clear();
     S.filter = 'all';
@@ -749,9 +1046,11 @@ async function runAction(act) {
 
 async function answerWaiting(id, decision) {
   const text = document.querySelector(`textarea[data-wait="${id}"]`)?.value ?? '';
+  const run = shown(); // spec 09: a stopped run's question too
   try {
-    await api(`/api/runs/${S.run.id}/answer`, { method: 'POST', body: JSON.stringify({ itemId: id, text, decision }) });
-    toast(decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
+    const r = await api(`/api/runs/${run.id}/answer`, { method: 'POST', body: JSON.stringify({ itemId: id, text, decision }) });
+    toast(r.resumable ? t('wait.saved') : decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
+    if (r.resumable) await refreshView(run);
   } catch (err) {
     toast(err.message, true);
   }
@@ -772,11 +1071,25 @@ function switchTab(tab) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-act],[data-task],[data-run],[data-agent],[data-file],[data-test],[data-tab],[data-filter],[data-team],[data-focusroom],[data-skill],[data-answer],.chip');
+  const t = e.target.closest('[data-act],[data-task],[data-run],[data-agent],[data-file],[data-test],[data-tab],[data-filter],[data-team],[data-focusroom],[data-skill],[data-answer],[data-solve],[data-attach],[data-unstage],[data-isend],[data-isolve],[data-openbox],[data-prov-remove],.chip');
   if (!t) {
     if (e.target.classList.contains('modal')) e.target.classList.add('hidden');
     return;
   }
+  // spec 09: files, the box of a task, the questions of a stopped run
+  if (t.dataset.attach) {
+    S.pickZone = t.dataset.attach;
+    return $('#file-picker').click();
+  }
+  if (t.dataset.unstage !== undefined) {
+    (S.staged[t.dataset.unstage] ?? []).splice(Number(t.dataset.i), 1);
+    return renderChips(t.dataset.unstage);
+  }
+  if (t.dataset.isend) return sendBox(t.dataset.isend);
+  if (t.dataset.isolve) return sendBox(t.dataset.isolve, true);
+  if (t.dataset.solve) return solveWaiting(t.dataset.solve);
+  if (t.dataset.openbox) return openTaskBox(t.dataset.openbox);
+  if (t.dataset.provRemove) return removeProvider(t.dataset.provRemove);
   if (t.dataset.tab) return switchTab(t.dataset.tab);
   if (t.classList.contains('chip')) {
     $('#goal').value = t.textContent;
@@ -816,6 +1129,8 @@ document.addEventListener('click', async (e) => {
   const act = t.dataset.act;
   e.preventDefault();
   if (['pause', 'resume', 'stop'].includes(act)) return runAction(act);
+  if (act === 'resume-block') return resumeBlock();
+  if (act === 'prov-add') return addProvider();
   if (act === 'back') {
     S.view = null;
     invalidate(...ALL);
@@ -861,6 +1176,9 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') document.querySelectorAll('.modal').forEach((m) => m.classList.add('hidden'));
   if (e.key === 'Enter' && e.target.id === 'chat-input') sendChat();
+  // spec 09: Ctrl/Cmd+Enter sends from the box of a task or from the change box
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.dataset?.iboxText) sendBox(e.target.dataset.iboxText);
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.id === 'refine-text') sendRefine();
   if (e.key === 'Enter' && e.target.id === 'skill-q') loadSkills(e.target.value.trim());
   if (e.key === 'Enter' && e.target.id === 'brain-q') loadBrain(e.target.value.trim());
 });
@@ -873,6 +1191,11 @@ document.addEventListener('click', (e) => {
 });
 
 $('#btn-start').addEventListener('click', startRun);
+$('#file-picker').addEventListener('change', (e) => {
+  if (S.pickZone) stage(S.pickZone, e.target.files);
+  e.target.value = '';
+});
+$('#refine-send').addEventListener('click', sendRefine);
 $('#goal').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) startRun();
 });
@@ -953,6 +1276,18 @@ function handle({ type, payload }) {
       invalidate('top', 'current', 'waiting', 'board', 'comms', 'output', 'inspector', 'teams');
       break;
     }
+    case 'run.view':
+      // spec 09: a stored run changed (an answer, a file, words to a task): only its view
+      if (S.view?.id === payload.id) S.view = payload;
+      if (S.run?.id === payload.id && !isLive(S.run)) S.run = payload;
+      invalidate('current', 'waiting', 'board', 'output', 'runs');
+      break;
+    case 'attachment':
+      if (shown()?.id === payload.runId) {
+        S.files = null;
+        invalidate('output');
+      }
+      break;
     case 'task':
       if (S.run?.id === payload.runId) upsertTask(payload.task);
       world.onTask(payload);

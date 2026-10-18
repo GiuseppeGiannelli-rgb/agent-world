@@ -32,16 +32,24 @@
   <aside class="panel left" id="left">
     <section class="mission">
       <h2 data-i18n="html.newMission">New mission</h2>
-      <div class="composer">
+      <div class="composer" data-drop="goal">
         <textarea id="goal" rows="4" data-i18n-placeholder="html.goal" placeholder="What should the company do? E.g. the complete launch website for my yoga studio, with images and copy"></textarea>
         <button class="mic" id="goal-mic" title="Dictate the goal" data-i18n-title="html.dictate">🎙</button>
+        <button class="mic attach" data-attach="goal" title="Attach files (or drop / paste them here)" data-i18n-title="html.attach">📎</button>
       </div>
+      <div class="att-chips" data-chips="goal"></div>
       <div class="chips" id="examples"></div>
       <label class="check"><input type="checkbox" id="approve-plan"> <span data-i18n="html.approve">I want to approve the plan before they start</span></label>
       <button class="primary" id="btn-start">Start the company</button>
     </section>
     <section id="waiting" class="waiting hidden"></section>
     <section id="current"></section>
+    <section id="refine" class="refine hidden" data-drop="refine">
+      <h3 data-i18n="html.refineTitle">Talk to the team or ask for a change</h3>
+      <textarea id="refine-text" rows="2" placeholder="E.g. I don&#39;t like the hero: use the photo I attach and change the title to …" data-i18n-placeholder="html.refinePlaceholder"></textarea>
+      <div class="att-chips" data-chips="refine"></div>
+      <div class="row"><button class="mic attach" data-attach="refine" title="Attach files (or drop / paste them here)" data-i18n-title="html.attach">📎</button><button class="btn go" id="refine-send" data-i18n="html.refineSend">Send</button></div>
+    </section>
     <section class="history">
       <h3 data-i18n="html.history">Previous runs</h3>
       <div id="runs"></div>
@@ -74,6 +82,7 @@
   <div class="modal hidden" id="settings"><div class="sheet" id="settings-body"></div></div>
   <div class="modal hidden" id="viewer"><div class="sheet wide" id="viewer-body"></div></div>
   <div class="toasts" id="toasts"></div>
+  <input type="file" id="file-picker" multiple hidden accept=".png,.jpg,.jpeg,.webp,.svg,.gif,.pdf,.docx,.txt,.md,.csv,.json,.html,.htm,.css,.js,.mp3,.wav,.ogg">
 
   <script type="module" src="/js/main.js"></script>
 </body>
