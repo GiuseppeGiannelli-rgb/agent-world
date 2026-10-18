@@ -283,7 +283,9 @@ async def test_a_flapping_rate_limit_is_reported_once_per_agent(tmp_path, monkey
 
     upstream = Upstream(lambda provider, n: (429, {"error": {"message": "Rate limit reached for requests"}}) if provider == "alpha" else None)
     ctx = live_ctx(tmp_path, monkeypatch, upstream)
-    ctx.config.get()["router"].update({"cooldownBaseMs": 1, "cooldownMaxMs": 1})
+    # the team combo of spec 09: with spec 10's hiring on, the workers would stop
+    # hiring alpha once its health drops (test_hiring.py), and it would flap less
+    ctx.config.get()["router"].update({"cooldownBaseMs": 1, "cooldownMaxMs": 1, "hiring": {"enabled": False}})
     run = Run(goal=GOAL, ctx=ctx)
     await asyncio.wait_for(run.start(), timeout=60)
     assert run.data["status"] == "completed", run.data["error"]

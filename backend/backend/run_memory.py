@@ -34,15 +34,19 @@ class RunMemory:
         self.index.add_vectors(item["id"], local_vectors([item["text"]], self.dim), LOCAL)
         return item
 
-    def search(self, query: str, k: int = 5, *, exclude_task=None, kinds=None, min_cosine: float | None = None) -> list[dict]:
+    def cursor(self) -> int:
+        """Spec 10: the id of the newest item (-1 when empty); items come in id order."""
+        return len(self.items) - 1
+
+    def search(self, query: str, k: int = 5, *, exclude_task=None, kinds=None, min_cosine: float | None = None, only: set | None = None) -> list[dict]:
         if not self.items or k <= 0:
             return []
         self.index.min_cosine = self.min_cosine if min_cosine is None else min_cosine
         (query_vec,) = local_vectors([query], self.dim)
         out = []
-        for hit in self.index.search(query, k * 4 + 8, query_vec):
+        for hit in self.index.search(query, max(k * 4 + 8, len(only) if only is not None else 0), query_vec):
             item = self.items[hit["id"]]
-            if (exclude_task and item["taskId"] == exclude_task) or (kinds and item["kind"] not in kinds):
+            if (exclude_task and item["taskId"] == exclude_task) or (kinds and item["kind"] not in kinds) or (only is not None and item["id"] not in only):
                 continue
             out.append(item)
             if len(out) >= k:

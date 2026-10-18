@@ -129,6 +129,21 @@ function message(file) {
   return scanText(text, personalWords()).map((f) => ({ where: `commit message:${f.line}`, rule: f.rule, sample: f.sample }));
 }
 
+// A merge made from GitHub's web UI: two parents, GitHub as committer, the subject
+// "Merge pull request #N from <account>/<branch>". The account that clicked is its
+// author, and the account name is in the subject. The user chose (2026-10-18) not to
+// rewrite those merges, so --history lets that account name and the identity through
+// in such a commit only. Its body (the PR title), its files and every other commit are
+// scanned as before; the commit hooks have no exception, so a message like that typed
+// locally is still blocked when it is committed.
+const GITHUB_MERGE = /^Merge pull request #\d+ from ([A-Za-z0-9][A-Za-z0-9-]{0,38})\/\S+$/;
+const GITHUB_COMMITTER = 'GitHub <noreply@github.com>';
+export function githubMergeSubject({ parents, committer, body }) {
+  const [subject, ...rest] = (body ?? '').split('\n');
+  const m = parents === 2 && committer === GITHUB_COMMITTER ? subject.match(GITHUB_MERGE) : null;
+  return m ? [subject.replace(m[1], '<account>'), ...rest].join('\n') : null;
+}
+
 function history() {
   const words = personalWords();
   const out = [];
@@ -149,12 +164,14 @@ function history() {
     if (isBinary(buf)) continue;
     for (const f of scanText(buf.toString('utf8'), words)) out.push({ where: `${p}:${f.line} (blob ${sha.slice(0, 7)})`, rule: f.rule, sample: f.sample });
   }
-  const log = gitText(['log', '--all', '--format=%H%x00%an <%ae>%x00%cn <%ce>%x00%B%x01']);
+  const log = gitText(['log', '--all', '--format=%H%x00%P%x00%an <%ae>%x00%cn <%ce>%x00%B%x01']);
   const identities = new Map();
   for (const entry of log.split('\x01')) {
-    const [h, author, committer, body] = entry.replace(/^\n/, '').split('\x00');
+    const [h, parents, author, committer, body] = entry.replace(/^\n/, '').split('\x00');
     if (!h) continue;
-    for (const f of scanText(body ?? '', words)) out.push({ where: `commit ${h.slice(0, 7)} message`, rule: f.rule, sample: f.sample });
+    const merge = githubMergeSubject({ parents: parents.split(' ').filter(Boolean).length, committer, body });
+    for (const f of scanText(merge ?? body ?? '', words)) out.push({ where: `commit ${h.slice(0, 7)} message`, rule: f.rule, sample: f.sample });
+    if (merge !== null) continue; // a GitHub merge: its author is the account that clicked
     for (const id of new Set([author, committer])) {
       if (scanText(id ?? '', words).length) identities.set(id, (identities.get(id) ?? 0) + 1);
     }

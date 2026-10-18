@@ -26,13 +26,14 @@
 6. [Agenti, sub-agenti e utility](#agenti-sub-agenti-e-utility)
 7. [Memoria e recupero (RAG)](#memoria-e-recupero-rag)
 8. [Il router OmniRoute](#il-router-omniroute)
-9. [File, dialogo e ripresa](#file-dialogo-e-ripresa)
-10. [Tech stack](#tech-stack)
-11. [Lingue supportate](#lingue-supportate)
-12. [Configurazione](#configurazione)
-13. [Sicurezza](#sicurezza)
-14. [Test](#test)
-15. [Struttura del repository](#struttura-del-repository)
+9. [Ogni sotto-task assume il suo modello](#ogni-sotto-task-assume-il-suo-modello)
+10. [File, dialogo e ripresa](#file-dialogo-e-ripresa)
+11. [Tech stack](#tech-stack)
+12. [Lingue supportate](#lingue-supportate)
+13. [Configurazione](#configurazione)
+14. [Sicurezza](#sicurezza)
+15. [Test](#test)
+16. [Struttura del repository](#struttura-del-repository)
 
 ---
 
@@ -429,6 +430,40 @@ I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispo
 
 ---
 
+## Ogni sotto-task assume il suo modello
+
+Un worker o un sub-agente non lavora più sempre sulla combo del suo team: ogni sotto-task "assume" il modello adatto (spec 10, [`docs/specs/10-parametric-hiring-cross-rag.md`](docs/specs/10-parametric-hiring-cross-rag.md)).
+
+- **La matrice di competenza** (`router/profiler.py`), per ogni modello del catalogo (combo, alias, modelli scoperti):
+  - la taglia: `paramsB` dal nome, `sizeB` anche dalla famiglia (un flagship chiuso vale 400B);
+  - le specialità da 0 a 1: `reasoning`, `coding`, `creative`, `research`, `vision`, `toolUse` (affidabilità sul JSON delle azioni), `speed`;
+  - il costo, `costTier`: `local`, `free`, `low`, `high`;
+  - la salute della sessione, `health`: chiamate, successi, latenza, stato (`ok`, `cooling`, `benched`, `dead`, `unready`).
+- **L'assunzione** (`router/hiring.py`): titolo, descrizione, criteri, file, brief, skill, team e revisioni danno la categoria (`coding`, `creative`, `research`, `reasoning`, `general`, con parole chiave nelle cinque lingue) e il livello (`simple`, `medium`, `complex`). I modelli pronti si ordinano per affinità:
+  - un task complesso vuole 32B o più;
+  - uno semplice preferisce i gratuiti e i locali, e risparmia la quota pagata;
+  - un modello che sta fallendo nella sessione scende.
+  
+  I primi `router.hiring.chain` (6) sono la catena del sotto-task, provata prima della combo del team e della cascata. Si riassume quando il task parte e a ogni revisione.
+- **Il subentro:** se il modello assunto finisce il credito o fallisce a metà passo, nella stessa chiamata risponde il candidato successivo. Il task lo registra (`hire.replacements`) e i passi dopo partono dal sostituto.
+- **Il bus a incrocio** (`crossbus.py`): i fatti di ogni file scritto (palette, classi e id, funzioni, titoli, chiavi, file collegati) entrano subito nella memoria della run. Quando un lavoro collegato consegna, il QA lo giudica o il modello cambia, il worker riceve un blocco `[LIVE CROSS-AGENT UPDATE]` (RRF, misurato sul modello).
+- **La forma del prompt segue il modello assunto:**
+
+| Forma | Modelli | Che cosa apre il brief |
+|---|---|---|
+| piccolo | locali, gratuiti (`:free`, tier gratuiti), 14B e meno | passi atomici numerati, un esempio dalla skill, il contratto JSON in fondo e dopo ogni risultato, un validatore che ferma un'azione incompleta |
+| reasoning | r1, qwq, o1/o3/o4, reasoner, thinking, Gemini Pro | la checklist del QA, i vincoli (trappole, lavoro da cui dipende, interfacce dei file collegati), le lezioni del Brain |
+| coder | coder, DeepSeek, Claude Sonnet, GPT-5, Codestral, Devstral | l'albero esatto del progetto, le interfacce da rispettare, gli snippet di codice delle skill |
+| generale | gli altri, e il simulatore demo | il prompt di sempre |
+
+- **Nell'interfaccia:**
+  - la scheda **Task** dà a ogni sotto-task il badge 🤝 del modello (tier e specialità scelti dal matcher) e 🔀 se è subentrato un altro candidato; aperta, mostra il perché, la forma del prompt, i candidati e i subentri;
+  - la scheda **Router** mostra le assunzioni della missione e il catalogo profilato (`router.catalog` in `GET /api/state` e `GET /api/router`).
+- **In demo** non si assume nessuno: il simulatore fa tutto come prima, e il badge mostra la lettura del sotto-task.
+- **Configurazione:** `router.hiring.enabled` (vero) e `router.hiring.chain` (6).
+
+---
+
 ## File, dialogo e ripresa
 
 Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un agente non sa chiudere (spec 09, [`docs/specs/09-multimodal-interactive-recovery.md`](docs/specs/09-multimodal-interactive-recovery.md)). Il proprietario può dare i suoi file, parlare con il task bloccato, riprendere il lavoro da dove si è fermato e chiedere modifiche anche a missione finita.
@@ -501,9 +536,9 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 
 | Strumento | Versione | Uso |
 |---|---|---|
-| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 934 test del backend |
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 1013 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (255 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (261 verifiche) |
 
 ### Skill e plugin
 
@@ -678,15 +713,15 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 255 verifiche sul front-end vero (~5 min)
+npm run test:browser   # runner headless: 261 verifiche sul front-end vero (~6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (934 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
+- **`pytest` (1013 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
@@ -701,6 +736,8 @@ Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
 
 Quello che trova lo stampa oscurato.
 
+`npm run scan:secrets` controlla tutta la history con le stesse regole, più le identità di autori e committer. Un'eccezione: i merge fatti dall'interfaccia di GitHub (due genitori, GitHub come committer, oggetto `Merge pull request #N from <account>/<branch>`). In quei commit passano il nome dell'account nell'oggetto e l'autore, cioè l'account che ha cliccato. Il titolo della PR, i file e tutti gli altri commit si controllano come sempre. Gli hook di commit non hanno eccezioni.
+
 ---
 
 ## Struttura del repository
@@ -708,9 +745,9 @@ Quello che trova lo stampa oscurato.
 ```
 agent-world/
 ├─ backend/                 backend FastAPI (progetto uv)
-│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py · crossbus.py · rag_budget.py
 │  │  ├─ routes/            api_state · runs · providers · skills_brain · events (SSE) · gateway (/v1) · static
-│  │  └─ router/            index (OmniRoute) · providers · profiler · mock (demo)
+│  │  └─ router/            index (OmniRoute) · providers · profiler · hiring (spec 10) · mock (demo)
 │  ├─ tests/                pytest
 │  └─ bench/                bm25_bench.py (soglia 5×)
 ├─ crates/aw_core/          modulo nativo Rust (PyO3 + maturin)
@@ -723,4 +760,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md).

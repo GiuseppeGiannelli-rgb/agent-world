@@ -19,7 +19,8 @@
 // Spec 02: overlaps (P1-P5: the fixed UI over the matrix of inputs and states), labels
 // (E1-E7 and the N4 variants of the room labels). Spec 03: hygiene (H1-H6: probes
 // killed, interrupted and closed, and the sweep of what they leave). Spec 06: language
-// (L1-L7: the IT/EN switch, its persistence, the run payload, the voice).
+// (L1-L7: the IT/EN switch, its persistence, the run payload, the voice). Spec 10: hiring
+// (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
@@ -30,7 +31,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { close, launch, profileProcesses, sweep } from './browser/headless.js';
 import { demoEnv, spawnBackend } from './lib/backend-launcher.js';
 import { alive, hardKill, onExit, ownedDir, ownerOf, removeDir } from './lib/temp.js';
@@ -50,7 +51,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -60,6 +61,7 @@ const MISSION = 'Il sito completo per il lancio di una pizzeria napoletana a Mil
 const VIEWPORTS = [[1920, 1080], [2560, 1440], [1440, 900]];
 const LAYOUTS = { LR: [true, true], '-R': [false, true], '--': [false, false] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const TERMINAL_RUN = ['completed', 'completed_with_failures', 'failed', 'stopped'];
 
 // The checks red on purpose until their ticket: { "<criterion> <name>": "T1", ... }.
 // Another checkout (--tag prima) is only measured: no mark applies there.
@@ -93,7 +95,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -607,6 +609,96 @@ async function run(cdp) {
   report('A10', 'sub-agents work at their bay seat', p.counts.spawn > 0 && p.counts.spawn === p.counts.despawn && Object.values(p.subs).every((s) => s.workingMax <= 0.5), { spawned: p.counts.spawn, removed: p.counts.despawn, subs: p.subs });
 }
 
+// ---------- spec 10: the model hired for each subtask, the profiled catalog ----------
+
+const HIRING_MISSION = 'Una breve nota di benvenuto per il bar';
+
+// The English words of the UI, to read the badges as a user reads them
+const uiWords = async () => {
+  globalThis.document ??= { documentElement: {} }; // i18n.js sets <html lang> when the language changes
+  const { dictionaries } = await import(pathToFileURL(join(ROOT, 'public', 'js', 'i18n.js')).href);
+  return dictionaries().en;
+};
+
+// A demo hires nobody (D5): the live hires and a replacement come from the network
+// answer of a stored run, built from the demo run and shaped as router/hiring.py
+// writes it (hire(), promote()). The page's own fetch answers it, nothing else changes.
+function liveHires(run) {
+  const fx = JSON.parse(JSON.stringify(run));
+  fx.id = 'spec10-hires';
+  const sonnet = { key: 'anthropic/claude-sonnet-5-5', score: 0.74, fit: 0.8, tier: 'smart', sizeB: 120, costTier: 'low', top: 'coding', topScore: 0.95, shape: 'coder', notes: [] };
+  const groq = { key: 'groq/llama-3.1-8b-instant', score: 0.81, fit: 0.62, tier: 'fast', sizeB: 8, costTier: 'free', top: 'coding', topScore: 0.5, shape: 'small', notes: [] };
+  const at = new Date().toISOString();
+  fx.tasks[0].hire = { ...fx.tasks[0].hire, demo: false, chosen: sonnet.key, shape: 'coder', chain: [sonnet, groq], replacements: [{ from: groq.key, to: sonnet.key, reason: 'quota', at }] };
+  if (fx.tasks[1]) fx.tasks[1].hire = { ...fx.tasks[1].hire, demo: false, chosen: groq.key, shape: 'small', chain: [groq, sonnet], replacements: [] };
+  return fx;
+}
+
+async function hiring(cdp) {
+  const en = await uiWords();
+  let id = (await api('/api/runs')).find((r) => r.goal === MISSION && TERMINAL_RUN.includes(r.status))?.id;
+  if (!id) {
+    // --skip-run: a short mission of its own (not the recovery one: that phase looks its run up by goal)
+    id = (await api('/api/runs', { goal: HIRING_MISSION })).id;
+    await until(async () => TERMINAL_RUN.includes((await api(`/api/runs/${id}`)).status), 10 * 60_000, 1000);
+  }
+  const run = await api(`/api/runs/${id}`);
+  await load(cdp, VIEWPORTS[0]);
+  await layout(cdp, LAYOUTS.LR);
+
+  // 1. every card of the Tasks tab: who was hired (the simulator, in demo) and the reading of the matcher
+  await cdp.eval(`document.querySelector('[data-run="${id}"]')?.click(); document.querySelector('[data-tab="board"]').click(); true`);
+  const cards = await until(() => cdp.eval(`(() => { const c = [...document.querySelectorAll('#tab-board .task')]; return c.length === ${run.tasks.length} && c.map((t) => ({ id: t.dataset.task, hire: t.querySelector('.badge.hire')?.dataset.hire, text: t.querySelector('.badge.hire')?.textContent, why: t.querySelector('.badge.hire-why')?.textContent })); })()`), 10000, 100);
+  const want = Object.fromEntries(run.tasks.map((t) => [t.id, `${en[`hire.cat.${t.hire?.category}`]} · ${en[`hire.lvl.${t.hire?.level}`]}`]));
+  const wrong = (cards || []).filter((c) => c.hire !== 'demo' || c.text !== `🤝 ${en['hire.demo']}` || c.why !== want[c.id]);
+  report('R5', 'every subtask of the Tasks tab shows its hire and the reading of the matcher (demo: the simulator, D5)', Boolean(cards) && run.tasks.every((t) => t.hire?.demo === true) && !wrong.length, { tasks: run.tasks.length, cards: cards?.length, wrong });
+
+  // 2. an open card says why
+  const first = run.tasks[0];
+  await cdp.eval(`document.querySelector('[data-task="${first.id}"] .top').click()`);
+  const box = await until(() => cdp.eval(`document.querySelector('[data-task="${first.id}"] [data-hire-box="demo"]')?.textContent`), 5000, 100);
+  report('R5', 'an open card says who works on it and how the matcher read it', Boolean(box) && box.includes(en['hire.demoText']) && box.includes(want[first.id].split(' · ')[0]), { box });
+  await shot(cdp, 'hiring-board-demo');
+
+  // 3. a live run: the hired model with its tier and specialty, the replacement and its reason
+  const fx = liveHires(run);
+  await cdp.eval(`(() => {
+    const fx = ${JSON.stringify(fx)};
+    const real = window.fetch.bind(window);
+    window.fetch = (url, opts) => String(url).endsWith('/api/runs/${fx.id}') ? Promise.resolve(new Response(JSON.stringify(fx), { headers: { 'content-type': 'application/json' } })) : real(url, opts);
+    const item = document.createElement('div'); item.dataset.run = '${fx.id}'; document.querySelector('#runs').appendChild(item); item.click(); return true; })()`);
+  const live = await until(() => cdp.eval(`(() => {
+    const card = document.querySelector('[data-task="${first.id}"]'); const b = card?.querySelector('.badge.hire'); const s = card?.querySelector('.badge.hire-swap');
+    return b?.dataset.hire === 'anthropic/claude-sonnet-5-5' && { badge: b.textContent, shape: b.dataset.shape, swap: s?.textContent, swapTitle: s?.title, replaced: s?.dataset.replaced }; })()`), 10000, 100);
+  report('R5', 'a live hire shows the model with the tier and the specialty of the matcher, and 🔀 when another candidate took over', Boolean(live) && live.badge.includes('claude-sonnet-5-5') && live.badge.includes('smart') && live.badge.includes(`${en['spec.coding']} 0.95`) && live.shape === 'coder' && live.replaced === '1' && live.swapTitle.includes('groq/llama-3.1-8b-instant') && live.swapTitle.includes(en['reason.quota']), live || {});
+  await cdp.eval(`document.querySelector('[data-task="${first.id}"] .top').click()`);
+  const why = await until(() => cdp.eval(`(() => { const b = document.querySelector('[data-task="${first.id}"] [data-hire-box="anthropic/claude-sonnet-5-5"]'); return b && { text: b.textContent, swaps: b.querySelectorAll('[data-swap]').length }; })()`), 5000, 100);
+  report('R5', 'the open card of a live hire: why, the prompt, the candidates and the replacement', Boolean(why) && why.swaps === 1 && why.text.includes('120B') && why.text.includes(en['hire.cost.low']) && why.text.includes(en['hire.shape.coder']) && why.text.includes('llama-3.1-8b-instant'), why || {});
+  await shot(cdp, 'hiring-board-live');
+
+  // 4. the Router tab: the hires of the run shown, then every profiled model
+  const catalog = (await api('/api/state')).router.catalog;
+  await cdp.eval(`document.querySelector('[data-tab="router"]').click()`);
+  const tab = await until(() => cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('#tab-router .model')];
+    if (rows.length !== ${catalog.length}) return null;
+    const hires = [...document.querySelectorAll('#tab-router .hire-row')];
+    return {
+      hires: hires.length, swapped: hires.filter((r) => r.querySelector('.badge.hire-swap')).map((r) => r.dataset.hireRow),
+      models: rows.map((r) => ({ key: r.dataset.model, health: r.dataset.health, bars: r.querySelectorAll('.bars i').length, size: r.querySelector('.size')?.textContent, cost: r.querySelector('.cost')?.textContent, state: r.querySelector('.s')?.textContent })),
+    }; })()`), 10000, 100);
+  const byKey = Object.fromEntries(catalog.map((m) => [m.key, m]));
+  const bad = (tab?.models ?? []).filter((m) => {
+    const c = byKey[m.key];
+    const size = c?.sizeB == null ? '?' : `${c.sizeSource === 'family' ? '≈' : ''}${c.sizeB}B`;
+    return !c || m.bars !== 7 || m.size !== size || m.cost !== en[`hire.cost.${c.costTier}`] || m.health !== (c.ready ? c.health.state : 'unready') || !m.state.startsWith(en[`health.${m.health}`]);
+  });
+  report('R5', 'the Router tab lists the hires of the run, the replacement marked', Boolean(tab) && tab.hires === fx.tasks.length && tab.swapped.join() === first.id, { hires: tab?.hires, swapped: tab?.swapped });
+  report('R5', 'the Router tab lists every profiled model: size, tier, cost, specialties, health', Boolean(tab) && tab.models.length === catalog.length && catalog.length > 0 && !bad.length, { models: tab?.models.length, catalog: catalog.length, bad: bad.slice(0, 5) });
+  await cdp.eval(`document.querySelector('#tab-router .catalog-hint')?.scrollIntoView(); true`);
+  await shot(cdp, 'hiring-router');
+}
+
 // ---------- spec 09: the owner's files, the box of a task, resume, changes ----------
 
 // files built in the page, as a user's would be: a 1x1 PNG, a text file
@@ -996,6 +1088,7 @@ try {
   if (PHASES.includes('labels')) await labels(cdp);
   if (PHASES.includes('language')) await language(cdp);
   if (PHASES.includes('run')) await run(cdp);
+  if (PHASES.includes('hiring')) await hiring(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });

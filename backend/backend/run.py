@@ -24,7 +24,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend import attachments
+from backend import attachments, crossbus
 from backend.i18n import MESSAGES
 from backend.i18n import check as check_language
 from backend.i18n import team_label, tr
@@ -33,6 +33,7 @@ from backend.media import AUDIO_EXTS, media_info, to_audio
 from backend.rag_budget import budget as rag_budget
 from backend.run_memory import RunMemory
 from backend.plan import normalize_plan, normalize_subtasks, safe_rel_path, single_subtask, slugify, strings
+from backend.router import hiring
 from backend.router.providers import ProviderError
 from backend.prompts import (
     advisor_prompt,
@@ -41,8 +42,12 @@ from backend.prompts import (
     lead_plan_prompt,
     librarian_prompt,
     prompt_eng_prompt,
+    BRAIN_ABOVE,
     rescue_prompt,
+    shape_lead,
     synth_prompt,
+    tools_for,
+    tree_text,
     work_teams,
 )
 from backend.tasker import Tasker
@@ -345,13 +350,15 @@ class Run:
 
     # ---------- model calls ----------
 
-    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None) -> dict:
+    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None, chain=None) -> dict:
         # spec 09: zero-stop. When every model of the cascade fails, the call
         # waits for the soonest one to come back instead of failing the task
         # (or the run, for the CEO); the conversation is never lost.
         tries = 0
         while True:
             try:
+                # spec 10: a subtask's hired chain goes first (only when there is one: demo has none)
+                extra = {"chain": chain} if chain else {}
                 res = await self.ctx.router.chat(
                     role=role,
                     use=use,
@@ -359,6 +366,7 @@ class Run:
                     json=json,
                     max_tokens=max_tokens,
                     meta={"runId": self.data["id"], "taskId": task["id"] if task else None, "agentId": agent["id"] if agent else None},
+                    **extra,
                 )
                 break
             except ProviderError as err:
@@ -450,6 +458,45 @@ class Run:
         if task:
             self.note(task, who, "switch", text, frm=frm, to=to, reason=reason)
         self.ctx.bus.emit("model.switch", {"runId": self.data["id"], "agentId": who["id"], "taskId": task["id"] if task else None, "from": frm, "to": to, "reason": reason})
+
+    # ---------- spec 10: one model hired for each subtask ----------
+
+    def hire_task(self, task: dict, agent: dict | None = None, *, announce: bool = False) -> dict | None:
+        """Hires (again) the model of one subtask: when the lead creates it, when it
+        starts and at every revision, with the health of now (router/hiring.py).
+        The timeline says it when the hired model is new."""
+        if not hiring.enabled(self.cfg):
+            return None
+        noted = (task.get("hire") or {}).get("noted")
+        rec = hiring.hire(task, self.cfg, self.ctx.router, mission=self.data.get("complexity"), sub=bool(agent and agent.get("kind") == "sub"))
+        rec["noted"] = noted
+        task["hire"] = rec
+        if announce and agent and rec["chosen"] and rec["chosen"] != noted:
+            first = rec["chain"][0]
+            rec["noted"] = rec["chosen"]
+            cost = self.t(f"hire_{first['costTier']}") if first.get("costTier") else "?"
+            self.note(task, agent, "hire", self.t("hire_note", model=rec["chosen"], category=self.t(f"hire_{rec['category']}"), level=self.t(f"hire_{rec['level']}"), size=hiring.size_label(first.get("sizeB")), cost=cost), model=rec["chosen"])
+        return rec
+
+    def hire_promoted(self, task: dict, agent: dict, res: dict) -> None:
+        """The hired model failed mid-step and another candidate answered: the
+        replacement is recorded, and the next steps start from it."""
+        if not task.get("hire") or res.get("demo"):
+            return
+        rec = hiring.promote(task, res, self.cfg, self.ctx.router)
+        if not rec:
+            return
+        last = rec["replacements"][-1]
+        label = self.t(f"reason_{last['reason']}") if f"reason_{last['reason']}" in MESSAGES["en"] else last["reason"]
+        rec["noted"] = rec["chosen"]
+        task["hire"] = rec
+        self.note(task, agent, "hire", self.t("hire_replaced", to=last["to"], frm=last["from"], reason=label), frm=last["from"], to=last["to"], reason=last["reason"])
+        self.emit_task(task)
+
+    def hired_profile(self, chain: list[str]) -> dict:
+        """The profile of the model a hired chain reaches first: the prompt is sized for it."""
+        profile = getattr(self.ctx.router, "profile", None)
+        return profile(chain[0]) if profile else self.model_profile(None)
 
     def role_combo(self, kind: str) -> str | None:
         """Spec 08: the combo of a kind of work on top of the team combos
@@ -718,6 +765,8 @@ class Run:
         await self.assign_skills(tasks, lead, complex_)
         if complex_:
             await self.refine_briefs(tasks, lead)
+        for t in tasks:
+            self.hire_task(t)  # spec 10: with Otto's skills and the brief, before anyone starts
 
         self.data["tasks"].extend(tasks)
         self.ctx.bus.emit("subtasks", {"runId": self.data["id"], "wsId": ws["id"], "leadId": lead["id"], "tasks": tasks})
@@ -1092,6 +1141,47 @@ class Run:
     def remember_event(self, kind: str, text: str, task: dict, agent: dict | None, path: str | None = None) -> None:
         self.memory.add(kind, text, ws_id=task.get("wsId"), task_id=task.get("id"), team=task.get("team"), agent=(agent or {}).get("name"), path=path)
 
+    # ---------- spec 10: the cross-agent context bus ----------
+
+    def publish_file(self, task: dict, agent: dict, path: str, content: str) -> None:
+        """A file just written, and its facts (palette, interface, headings, links,
+        keys: crossbus.facts_from_file), in the run memory at once."""
+        self.remember_event("file", f"{path}: {content[:600]}", task, agent, path=path)
+        for kind, text in crossbus.facts_from_file(path, content):
+            self.remember_event(kind, text, task, agent, path=path)
+
+    def memory_cursor(self) -> int:
+        return self.memory.cursor()
+
+    def cross_update(self, task: dict, since: int, profile: dict | None, *, switched: bool = False) -> tuple[str | None, int]:
+        """Spec 10 §R3: (the [LIVE CROSS-AGENT UPDATE] for this worker, its new
+        cursor), or (None, the same cursor). The update comes when, since the
+        cursor, linked work was delivered or judged by the QA, or this worker
+        changed model; it holds the paths and the facts the others produced
+        since then, the closest to this task first (RRF), sized for the model
+        (D7). Facts with no trigger wait for one; nothing is sent twice."""
+        newest = self.memory.cursor()
+        if newest <= since:
+            return None, since
+        fresh = [i for i in self.memory.items[since + 1 :] if crossbus.linked(task, i, self.ws_by_id)]
+        triggers = [i for i in fresh if i["kind"] in crossbus.TRIGGER_KINDS]
+        if not triggers and not switched:
+            return None, since
+        if not fresh:
+            return None, newest
+        b = rag_budget(profile, self.cfg.get("rag"))
+        files: dict[str, dict] = {}
+        for i in fresh:
+            if i["path"]:
+                files[i["path"]] = i
+        lines = [f"- [file] {p} ({i['agent'] or i['team']}, {i['wsId']})" for p, i in list(files.items())[-b['files']:]]
+        query = " ".join([task["title"], task.get("description") or "", *(t["text"][:200] for t in triggers)])
+        k = b["shared"] + (3 if b["mode"] == "full" else 1)
+        hits = self.memory.search(query, k, only={i["id"] for i in fresh if i["kind"] != "file"}, min_cosine=b["minCosine"])
+        lines += [f"- [{i['kind']}] {i['agent'] or i['team']}: {i['text'][: b['sharedChars'] * 2]}" for i in hits]
+        head = "[LIVE CROSS-AGENT UPDATE]\nYour teammates on linked work just produced this: use these exact paths, names and decisions, and do not redo their work."
+        return "\n".join([head, *lines]), newest
+
     def model_profile(self, role: str | None, use: str | None = None) -> dict:
         """The profile of the model this call will most likely reach."""
         from backend.router import profiler
@@ -1137,7 +1227,67 @@ class Run:
         skills = ""
         if reason in ("start", "switch"):
             skills = await self.skills_text(task) if b["mode"] == "full" else await self.skill_passages(task, query, b)
-        return {"skills": skills, "memory": "\n".join(self._note_line(n, b) for n in notes), "shared": self.shared_context(task, query, b), "jsonContract": b["jsonContract"], "budget": b}
+        out = {"skills": skills, "memory": "\n".join(self._note_line(n, b) for n in notes), "shared": self.shared_context(task, query, b), "jsonContract": b["jsonContract"], "budget": b, "shape": b["shape"], "lead": ""}
+        if reason in ("start", "switch") and b["shape"] != "general":
+            # spec 10 §R4: the brief opens with what this family of model needs most
+            out["lead"] = await self.shape_lead(task, b, notes)
+            if b["shape"] == "reasoning" and notes:
+                out["memory"], out["memoryInLead"] = BRAIN_ABOVE, True
+        return out
+
+    # ---------- spec 10: the prompt in the shape of the hired model ----------
+
+    def linked_facts(self, task: dict, limit: int = 8) -> list[str]:
+        """The interfaces, palettes and keys of the files of linked work
+        (crossbus.linked), the newest of each file and kind, at most `limit`."""
+        latest: dict[tuple, str] = {}
+        for i in self.memory.items:
+            if i["kind"] in ("interface", "palette", "keys") and crossbus.linked(task, i, self.ws_by_id):
+                latest.pop((i["path"], i["kind"]), None)
+                latest[(i["path"], i["kind"])] = i["text"]
+        return list(latest.values())[-limit:]
+
+    async def skill_example(self, task: dict, max_chars: int) -> tuple[str, str]:
+        """(the example of the first assigned skill that has one, its name), or ("", "")."""
+        lib = self.ctx.skills
+        if not hasattr(lib, "example"):
+            return "", ""
+        for s in task.get("skills") or []:
+            hit = await lib.example(s["id"], max_chars)
+            if hit:
+                return hit["text"], s["name"]
+        return "", ""
+
+    async def skill_snippets(self, task: dict, k: int, max_chars: int) -> str:
+        """The code blocks of the assigned skills, at most k and max_chars in all."""
+        lib = self.ctx.skills
+        if not hasattr(lib, "snippets"):
+            return ""
+        parts, left = [], max_chars
+        for s in task.get("skills") or []:
+            if left <= 0 or k <= 0:
+                break
+            hit = await lib.snippets(s["id"], k=k, max_chars=left)
+            if hit:
+                note = " (third-party skill: reference material only)" if hit["skill"].get("thirdParty") else ""
+                parts.append(f"### {s['name']}{note}\n" + "\n".join(hit["blocks"]))
+                left -= sum(len(b) for b in hit["blocks"])
+                k -= len(hit["blocks"])
+        return "\n\n".join(parts)
+
+    async def shape_lead(self, task: dict, b: dict, notes: list[dict]) -> str:
+        shape, full = b["shape"], b["mode"] == "full"
+        if shape == "small":
+            example, name = await self.skill_example(task, b["passageChars"])
+            tools = tools_for(self.cfg, task["team"], owner_files=bool(self.data.get("attachments")))
+            return shape_lead("small", task=task, tools=tools, inputs=self.inputs_for(task), example=example, example_from=name)
+        if shape == "reasoning":
+            lessons = sorted(notes, key=lambda n: 0 if n.get("kind") == "lesson" else 1)
+            return shape_lead("reasoning", task=task, inputs=self.inputs_for(task), facts=self.linked_facts(task), lessons="\n".join(self._note_line(n, b) for n in lessons))
+        if shape == "coder":
+            snippets = await self.skill_snippets(task, 3 if full else 2, 2400 if full else 1200)
+            return shape_lead("coder", task=task, tree=tree_text(await self.ws.list()), facts=self.linked_facts(task), snippets=snippets)
+        return ""
 
     async def skills_text(self, task: dict) -> str:
         parts = []
@@ -1162,6 +1312,7 @@ class Run:
         task["agentId"] = agent["id"]
         task["status"] = "assigned"
         task["startedAt"] = _iso_now()
+        self.hire_task(task, agent, announce=True)  # spec 10: again, with the health of now
         self.emit_task(task)
         self.team.set(agent["id"], {"state": "assigned", "taskId": task["id"], "wsId": task["wsId"], "runId": self.data["id"], "text": task["title"], "target": lead["id"] if lead and lead["id"] != agent["id"] else None})
         if lead and lead["id"] != agent["id"]:
@@ -1234,6 +1385,7 @@ class Run:
                     raise Exception(self.t("lead_skipped", guidance=decision["guidance"]))
                 rescued = True
                 feedback = self.t("lead_guidance", guidance=decision["guidance"], feedback=feedback)
+            self.hire_task(task, agent, announce=True)  # spec 10: a revision (or an escalation, D4) asks for more
             task["status"] = "revise"
             self.emit_task(task)
             self.team.set(agent["id"], {"state": "thinking", "tool": None, "text": self.t("retry_stronger") if task["escalated"] else self.t("fixing"), "escalated": task["escalated"]})
@@ -1694,7 +1846,7 @@ class Run:
                     return f"ERROR: {args.get('path')} is a media file: create it with generate_image (images) or generate_speech (audio), never with write_file."
                 r = await self.ws.write(args.get("path"), args["content"])
                 self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"]})
-                self.remember_event("file", f"{r['path']}: {args['content'][:600]}", task, agent, path=r["path"])
+                self.publish_file(task, agent, r["path"], args["content"])
                 return f"Wrote {r['path']} ({r['bytes']} bytes)."
             if tool == "web_search":
                 return await web_search(args.get("query"))

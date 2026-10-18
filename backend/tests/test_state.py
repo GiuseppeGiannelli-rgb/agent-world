@@ -37,8 +37,14 @@ async def test_api_state_has_stub_and_real_fields(client):
         assert any(a["id"] == "ada" and a["kind"] == "ceo" for a in body["agents"])
         assert body["run"] is None
         assert body["runs"] == []
-        # P3 replaced the router stub with Router.snapshot() -- same shape, real data.
-        assert set(body["router"].keys()) == {"mode", "providers", "combos", "recent"}
+        # P3 replaced the router stub with Router.snapshot(); spec 10 adds the profiled catalog
+        assert set(body["router"].keys()) == {"mode", "providers", "combos", "recent", "catalog"}
+        cat = {m["key"]: m for m in body["router"]["catalog"]}
+        assert "anthropic/claude-opus-5-5" in cat and not any(k.startswith(("mock/", "typesafe/")) for k in cat)
+        opus = cat["anthropic/claude-opus-5-5"]
+        assert (opus["sizeB"], opus["tier"], opus["costTier"]) == (400, "frontier", "high")
+        assert set(opus["specialties"]) == {"reasoning", "coding", "creative", "research", "vision", "toolUse", "speed"}
+        assert opus["health"]["state"] in ("ok", "unready") and "frontier" in opus["combos"]
         # P5 replaced the media stub with Media.status().
         assert set(body["media"].keys()) == {"image", "speech", "providers"}
         # P4 replaced the skills stub with SkillLibrary.summary() -- real

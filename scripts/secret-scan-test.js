@@ -136,5 +136,66 @@ try {
   await removeDir(repo);
 }
 
+// The merges GitHub makes from its web UI ("Merge pull request #N from owner/branch"):
+// GitHub commits, the account that clicked is the author, its name is in the subject.
+// --history lets those three through in such a commit only; the PR title in its body,
+// the files, and every commit that only looks like one are still scanned. A repo of its
+// own, so the findings above do not mix in.
+const gh = ownedDir('secrets');
+let r;
+try {
+  const g = (env, ...args) => execFileSync('git', ['-c', 'core.hooksPath=', ...args], { cwd: gh, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } }).toString().trim();
+  const scanGh = () => {
+    const s = spawnSync(process.execPath, [SCAN, '--history'], { cwd: gh, encoding: 'utf8' });
+    return { code: s.status, out: `${s.stdout}${s.stderr}` };
+  };
+  const me = { GIT_AUTHOR_NAME: 'agent-world-dev', GIT_AUTHOR_EMAIL: 'dev@agent-world.invalid', GIT_COMMITTER_NAME: 'agent-world-dev', GIT_COMMITTER_EMAIL: 'dev@agent-world.invalid' };
+  const owner = 'Marmellatone-dev';
+  const clicker = { GIT_AUTHOR_NAME: 'Marmellatone Rossi', GIT_AUTHOR_EMAIL: 'marmellatone@example.invalid' };
+  const github = { ...clicker, GIT_COMMITTER_NAME: 'GitHub', GIT_COMMITTER_EMAIL: 'noreply@github.com' };
+  g(me, 'init', '-q', '-b', 'main');
+  writeFileSync(join(gh, '.git', 'info', 'personal-words'), 'marmellatone\n');
+  writeFileSync(join(gh, 'a.md'), 'start\n');
+  g(me, 'add', 'a.md');
+  g(me, 'commit', '-q', '-m', 'start');
+  // one feature branch per merge: a merge of an already merged branch would be refused
+  const branch = (name, file, text) => {
+    g(me, 'switch', '-q', '-c', name, 'main');
+    writeFileSync(join(gh, file), text);
+    g(me, 'add', file);
+    g(me, 'commit', '-q', '-m', `add ${file}`);
+    g(me, 'switch', '-q', 'main');
+  };
+  const merge = (env, name, msg) => {
+    g(env, 'merge', '-q', '--no-ff', '-m', msg, name);
+    return g(me, 'rev-parse', '--short=7', 'HEAD');
+  };
+  branch('feat/clean', 'clean.md', 'nothing personal\n');
+  const clean = merge(github, 'feat/clean', `Merge pull request #7 from ${owner}/feat/clean\n\nAdd the clean page`);
+  r = scanGh();
+  check('a standard GitHub merge passes: the account in its subject, the clicker as author, GitHub as committer', r.code === 0, r);
+
+  branch('feat/title', 'title.md', 'nothing personal\n');
+  const titled = merge(github, 'feat/title', `Merge pull request #8 from ${owner}/feat/title\n\nNotes for Marmellatone`);
+  branch('feat/file', 'leak.md', 'Marmellatone was here\n');
+  merge(github, 'feat/file', `Merge pull request #9 from ${owner}/feat/file\n\nAdd a page`);
+  branch('feat/local', 'local.md', 'nothing personal\n');
+  const local = merge({ ...clicker, GIT_COMMITTER_NAME: 'Marmellatone Rossi', GIT_COMMITTER_EMAIL: 'marmellatone@example.invalid' }, 'feat/local', `Merge pull request #10 from ${owner}/feat/local`);
+  writeFileSync(join(gh, 'single.md'), 'nothing personal\n');
+  g(me, 'add', 'single.md');
+  g(github, 'commit', '-q', '-m', `Merge pull request #11 from ${owner}/feat/single`);
+  const single = g(me, 'rev-parse', '--short=7', 'HEAD');
+  r = scanGh();
+  const lines = r.out.split('\n');
+  check('the PR title in the body of a GitHub merge is still scanned', lines.some((l) => l.startsWith(`commit ${titled} message: personal word`)), r);
+  check('a file brought in by a GitHub merge is still scanned', lines.some((l) => l.startsWith('leak.md:1') && /personal word/.test(l)), r);
+  check('a merge with that subject but not committed by GitHub is not exempt', lines.some((l) => l.startsWith(`commit ${local} message: personal word`)), r);
+  check('a single-parent commit with that subject is not exempt', lines.some((l) => l.startsWith(`commit ${single} message: personal word`)), r);
+  check('outside the standard merges the clicker is still a personal identity', lines.some((l) => /commits: personal identity in author\/committer \(Marm/.test(l)), r);
+  check('the standard merges themselves stay out of the findings', !lines.some((l) => l.startsWith(`commit ${clean} `)), r);
+} finally {
+  await removeDir(gh);
+}
+
 console.log(failures ? `${failures} FAILED` : 'ALL OK');
 process.exit(failures ? 1 : 0);

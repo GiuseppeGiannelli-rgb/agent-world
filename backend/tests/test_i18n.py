@@ -364,8 +364,9 @@ DATA_LITERALS = {
     "router/providers.py": ("per ?minute",),
     "search.py": ("the and for with", "Più cose per una pizza", "ricetta della tradizione", "il la di un per"),
 }
-# the language tables themselves, and the demo's goal keywords in five languages
-TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py"}
+# the language tables themselves, the demo's goal keywords and (spec 10) the
+# hiring matcher's subtask keywords, both in five languages
+TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py", "router/hiring.py"}
 LOG_WORDS = re.compile(r"\b(riprovo|risposta|porta|indicizzat\w*|scaricat\w*|predefinit\w*|valutat\w*|approvat\w*|fallit\w*|giro|spent[io]|ignorat\w*)\b", re.IGNORECASE)
 
 

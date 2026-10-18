@@ -4,6 +4,8 @@
 messages -- so the exact wording of GOAL:, TASK ID:, OUTPUTS: etc. is a
 hard contract, not prose."""
 
+import re
+
 from backend.i18n import LANGUAGES, check
 
 # D2: with no language chosen, agents follow the GOAL (the pre-spec-06 rule).
@@ -220,10 +222,118 @@ def output_contract(tools: list[str]) -> str:
     )
 
 
-def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str, language: str | None = None, json_contract: bool = False) -> str:
+def contract_reminder(tools: list[str]) -> str:
+    """Spec 10 §R4: the contract again after every result, for a small model."""
+    return f'NEXT: reply with ONE JSON object only, {{"thought": "...", "tool": "one of {", ".join(tools)}", "args": {{...}}}}, for the next of your STEPS.'
+
+
+# ---------- spec 10: the shape of the prompt for the hired model ----------
+
+SHAPE_RULES = {
+    "small": "Work in small steps: follow the STEPS of the brief in order, one tool each turn, and copy the shape of the EXAMPLE. Never skip the check before finish.",
+    "reasoning": 'Before every action, check it against the QA CHECKLIST and the CONSTRAINTS of the brief. Think as long as you need, but "thought" stays one short sentence and your answer is only the JSON object.',
+    "coder": "Build on the PROJECT TREE and the INTERFACES TO RESPECT of the brief: reuse their exact paths, classes, ids and function names, and adapt the SKILL SNIPPETS instead of inventing new conventions.",
+}
+MEDIA_IMAGE_RE = re.compile(r"\.(png|jpe?g|webp|gif|svg)$", re.IGNORECASE)
+MEDIA_AUDIO_RE = re.compile(r"\.(mp3|wav|ogg)$", re.IGNORECASE)
+BRAIN_ABOVE = "- (see LESSONS FROM THE BRAIN above)"
+
+
+def _media(path: str) -> bool:
+    return bool(MEDIA_IMAGE_RE.search(path) or MEDIA_AUDIO_RE.search(path))
+
+
+def atomic_steps(task: dict, tools: list[str], inputs: list[dict]) -> list[str]:
+    """Spec 10 §R4, small models: the task as numbered atomic steps, one tool each:
+    look, read the teammates' files, write each file, check, finish."""
+    outputs = list(task.get("outputs") or [])
+    steps = ['list_files {"path": "."}: see what is already in the project folder.']
+    for path in [f for i in inputs for f in i.get("files") or [] if not _media(f)][:3]:
+        steps.append(f'read_file {{"path": "{path}"}}: read your teammate\'s file before building on it.')
+    for out in outputs:
+        if MEDIA_IMAGE_RE.search(out) and "generate_image" in tools:
+            alt = " (or use_attachment with the owner's photo)" if "use_attachment" in tools else ""
+            steps.append(f'generate_image {{"prompt": "subject, style, light, palette", "path": "{out}"}}: make {out}{alt}.')
+        elif MEDIA_AUDIO_RE.search(out) and "generate_speech" in tools:
+            steps.append(f'generate_speech {{"text": "...", "path": "{out}"}}: make {out}.')
+        else:
+            steps.append(f'write_file {{"path": "{out}", "content": "<the whole file>"}}: write {out} complete, no placeholders.')
+    text_out = [o for o in outputs if not _media(o)]
+    if text_out:
+        steps.append(f'read_file {{"path": "{text_out[-1]}"}}: check it against every ACCEPTANCE point; if one is missing, write the file again.')
+    files = ", ".join(f'"{o}"' for o in outputs)
+    steps.append(f'finish {{"summary": "what you delivered and how you checked it", "files": [{files}]}}: only when every point is met.')
+    return [f"{n}. {s}" for n, s in enumerate(steps, 1)]
+
+
+def one_turn_example(task: dict) -> str:
+    """The example of a small model whose skills have none: one good turn."""
+    out = next((o for o in task.get("outputs") or [] if not _media(o)), "notes.md")
+    return f'{{"thought": "I write {out} in full now", "tool": "write_file", "args": {{"path": "{out}", "content": "<the whole file, complete>"}}}}'
+
+
+def tree_text(files: list[dict], limit: int = 80) -> str:
+    """The exact tree of the project folder, folders first, two spaces a level.
+    The lines are indented, so nobody reads them as the PROJECT FILES list."""
+    if not files:
+        return "(empty folder: every file is yours to create)"
+    root: dict = {}
+    for f in files[:limit]:
+        node = root
+        *dirs, name = f["path"].split("/")
+        for d in dirs:
+            node = node.setdefault(d + "/", {})
+        node[name] = f.get("size")
+    lines = ["./"]
+
+    def walk(node: dict, depth: int) -> None:
+        for d in sorted(k for k, v in node.items() if isinstance(v, dict)):
+            lines.append("  " * depth + d)
+            walk(node[d], depth + 1)
+        for name in sorted(k for k, v in node.items() if not isinstance(v, dict)):
+            lines.append("  " * depth + (f"{name} ({node[name]} B)" if node[name] is not None else name))
+
+    walk(root, 1)
+    if len(files) > limit:
+        lines.append(f"  … {len(files) - limit} more")
+    return "\n".join(lines)
+
+
+def shape_lead(shape: str, *, task: dict, tools: list[str] | None = None, inputs: list[dict] | None = None, example: str = "", example_from: str = "", lessons: str = "", facts: list[str] | None = None, tree: str = "", snippets: str = "") -> str:
+    """The blocks that open the brief of a hired model (spec 10 §R4), or "" for
+    the general shape. Field names the demo simulator reads (GOAL:, TASK:,
+    OUTPUTS: ...) never start a line here."""
+    inputs, facts = inputs or [], facts or []
+    if shape == "small":
+        steps = "\n".join(atomic_steps(task, tools or [], inputs))
+        head = f"EXAMPLE FROM YOUR SKILL ({example_from}; imitate its shape, not its words):" if example else "EXAMPLE OF ONE GOOD TURN:"
+        return f"STEPS (one tool each turn, in this order):\n{steps}\n\n{head}\n{example or one_turn_example(task)}"
+    if shape == "reasoning":
+        checks = "\n".join(f"[ ] {a}" for a in task.get("acceptance") or []) or "[ ] every expected file exists and is complete"
+        rules = [f"- pitfall: {p}" for p in task.get("pitfalls") or []]
+        rules += [f"- builds on {i['id']} \"{i['title']}\" by {i['agent']}" + (f" -> {', '.join(i['files'])}" if i.get("files") else "") for i in inputs]
+        rules += [f"- {f}" for f in facts]
+        parts = [f"QA CHECKLIST (the reviewer checks exactly these; tick each one before finish):\n{checks}"]
+        if rules:
+            parts.append("CONSTRAINTS (respect every one):\n" + "\n".join(rules))
+        if lessons:
+            parts.append(f"LESSONS FROM THE BRAIN (they come first):\n{lessons}")
+        return "\n\n".join(parts)
+    if shape == "coder":
+        parts = [f"PROJECT TREE (exact; build on these paths):\n{tree}"]
+        if facts:
+            parts.append("INTERFACES TO RESPECT (from the linked files: reuse these names):\n" + "\n".join(f"- {f}" for f in facts))
+        if snippets:
+            parts.append(f"SKILL SNIPPETS (from your skills; adapt them):\n{snippets}")
+        return "\n\n".join(parts)
+    return ""
+
+
+def tasker_system(*, agent: dict, team_cfg: dict, lead: dict | None, tools: list[str], skills_text: str, language: str | None = None, json_contract: bool = False, shape: str = "general") -> str:
     role = f"a sub-agent spawned by {(lead or {}).get('name', 'the lead')}" if agent["kind"] == "sub" else f"a {team_cfg['title']}"
     skills_block = f"\n\nASSIGNED SKILLS (follow them):\n{skills_text}" if skills_text else ""
     contract = f"\n\n{output_contract(tools)}" if json_contract else ""
+    shape_rule = f"\n{SHAPE_RULES[shape]}" if shape in SHAPE_RULES else ""
     return f"""[[role:tasker:{agent['team']}]]
 You are {agent['name']}, {role} in the {team_cfg['label']} team of an autonomous AI company. {team_cfg['brief']}
 You work in an engineering loop: each turn you choose ONE tool, you see its result, and you keep going until the task is complete and you have checked it yourself.
@@ -234,17 +344,17 @@ Answer with ONLY one JSON object, no prose, no code fences:
 Tools:
 {chr(10).join(f'- {TOOL_DOCS[t]}' for t in tools)}
 
-Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{skills_block}{contract}"""
+Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{shape_rule}{skills_block}{contract}"""
 
 
-def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str, shared: str = "", owner_files: str = "") -> str:
+def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str, shared: str = "", owner_files: str = "", lead: str = "") -> str:
     input_lines = [f"{i['id']} \"{i['title']}\" by {i['agent']}: {i['summary'] or '(no summary)'}" + (f"\n  files: {', '.join(i['files'])}" if i["files"] else "") for i in inputs]
     brief = f"\nBRIEF FROM THE PROMPT LAB:\n{task['brief']}" if task.get("brief") else ""
     pitfalls = f"\nPITFALLS:\n{bullet_list(task['pitfalls'])}" if task.get("pitfalls") else ""
     skills = ", ".join(s["name"] for s in task.get("skills") or []) or "none"
     return f"""GOAL: {goal}
 
-WORKSTREAM: {ws['title']} — {ws['objective']}
+{f"{lead}{chr(10)}{chr(10)}" if lead else ""}WORKSTREAM: {ws['title']} — {ws['objective']}
 TASK ID: {task['id']}
 TEAM: {task['team']}
 TASK: {task['title']}

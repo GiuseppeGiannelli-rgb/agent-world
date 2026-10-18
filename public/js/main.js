@@ -402,6 +402,81 @@ function renderRuns() {
     .join('');
 }
 
+// ---------- spec 10: the model hired for each subtask ----------
+
+const SPECIALTIES = ['reasoning', 'coding', 'creative', 'research', 'vision', 'toolUse', 'speed'];
+const shortModel = (key) => String(key ?? '').split('/').slice(1).join('/') || String(key ?? '');
+const fixed = (n) => (typeof n === 'number' ? n.toFixed(2) : '?');
+// a reason of the router (a failure kind, or the reason of a bench) in words; unknown ones stay as they are
+const reasonLabel = (kind) => {
+  const key = `reason.${kind === 'quota_exhausted' ? 'quota' : kind}`;
+  const s = tr(key);
+  return s === key ? kind : s;
+};
+const swapText = (r) => tr('hire.swap', { from: r.from, to: r.to, reason: reasonLabel(r.reason) });
+
+// the badges of a card: the hired model with the tier and the specialty the matcher
+// weighed most, the reading of the subtask, and 🔀 when another candidate took over
+function hireBadges(t) {
+  const h = t.hire;
+  if (!h) return '';
+  const reading = `<span class="badge hire-why">${esc(tr(`hire.cat.${h.category}`))} · ${esc(tr(`hire.lvl.${h.level}`))}</span>`;
+  if (h.demo || !h.chosen) return `<span class="badge hire demo" data-hire="demo">🤝 ${tr('hire.demo')}</span>${reading}`;
+  const c = h.chain?.[0] ?? {};
+  const swaps = h.replacements ?? [];
+  const spec = c.top ? ` · ${esc(tr(`spec.${c.top}`))} ${fixed(c.topScore)}` : '';
+  const swap = swaps.length ? `<span class="badge hire-swap" data-replaced="${swaps.length}" title="${esc(swapText(swaps.at(-1)))}">🔀 ${tr('hire.replaced')}${swaps.length > 1 ? ` ×${swaps.length}` : ''}</span>` : '';
+  return `<span class="badge hire" data-hire="${esc(h.chosen)}" data-shape="${esc(h.shape ?? 'general')}" title="${esc(h.chosen)}">🤝 ${esc(shortModel(h.chosen))}${c.tier ? ` · ${esc(c.tier)}` : ''}${spec}</span>${reading}${swap}`;
+}
+
+// the open card: why this model, the prompt it gets, the candidates, the replacements
+function hireDetail(t) {
+  const h = t.hire;
+  if (!h) return '';
+  const reading = tr('hire.reading', { category: tr(`hire.cat.${h.category}`), level: tr(`hire.lvl.${h.level}`), n: fixed(h.complexity) });
+  if (h.demo || !h.chosen) return `<div class="hire-box demo" data-hire-box="demo"><b>${tr('hire.title')}</b> ${tr('hire.demoText')} ${esc(reading)}.</div>`;
+  const c = h.chain?.[0] ?? {};
+  const why = tr('hire.why', { spec: c.top ? tr(`spec.${c.top}`) : '?', score: fixed(c.topScore), size: c.sizeB == null ? '?' : `${c.sizeB}B`, tier: c.tier ?? '?', cost: c.costTier ? tr(`hire.cost.${c.costTier}`) : '?' });
+  const chain = (h.chain ?? []).map((x) => `<code title="${esc(x.key)} · ${x.score ?? '?'}">${esc(shortModel(x.key))}</code>`).join(' → ');
+  const swaps = (h.replacements ?? []).map((r) => `<div class="swap" data-swap="${esc(r.to)}">🔀 ${esc(swapText(r))}</div>`).join('');
+  return `<div class="hire-box" data-hire-box="${esc(h.chosen)}"><b>${tr('hire.title')}</b> <code>${esc(h.chosen)}</code>
+    <div>${esc(reading)} · ${esc(tr('hire.prompt', { shape: tr(`hire.shape.${h.shape ?? 'general'}`) }))}</div>
+    <div class="muted">${esc(why)}</div>
+    <div class="muted">${tr('hire.chain')} ${chain}</div>${swaps}</div>`;
+}
+
+// the Router tab: who works on which model in the run shown
+function hiresList() {
+  const tasks = (shown()?.tasks ?? []).filter((x) => x.hire);
+  if (!tasks.length) return `<div class="muted" style="padding:6px">${t('router.noHires')}</div>`;
+  return tasks
+    .map((x) => {
+      const h = x.hire;
+      const last = (h.replacements ?? []).at(-1);
+      return `<div class="hire-row" data-hire-row="${esc(x.id)}"><span class="id">${esc(x.id)}</span><span class="tt">${esc(x.title)}</span><code title="${esc(h.chosen ?? '')}">${h.chosen ? esc(shortModel(h.chosen)) : t('hire.demo')}</code><span class="muted">${esc(tr(`hire.cat.${h.category}`))} · ${esc(tr(`hire.lvl.${h.level}`))}</span>${last ? `<span class="badge hire-swap" data-replaced="${h.replacements.length}" title="${esc(swapText(last))}">🔀 ${esc(shortModel(last.from))} → ${esc(shortModel(last.to))}</span>` : ''}</div>`;
+    })
+    .join('');
+}
+
+// the Router tab: every profiled model, ready ones first, with its size, tier,
+// cost, specialties (bars, in the order of SPECIALTIES) and the health of the session
+function catalogList(catalog) {
+  const models = [...catalog].sort((a, b) => Number(b.ready) - Number(a.ready));
+  return models
+    .map((m) => {
+      const h = m.health ?? {};
+      const state = m.ready ? h.state ?? 'ok' : 'unready';
+      const size = m.sizeB == null ? '?' : `${m.sizeSource === 'family' ? '≈' : ''}${m.sizeB}B`;
+      const calls = h.calls ? ` · ${tr('router.calls', { ok: h.ok, calls: h.calls, ms: h.avgMs ?? 0 })}` : '';
+      const why = h.reason ? ` title="${esc(reasonLabel(h.reason))}"` : '';
+      const bars = SPECIALTIES.map((s) => `<i title="${esc(tr(`spec.${s}`))} ${fixed(m.specialties?.[s])}" style="--v:${m.specialties?.[s] ?? 0}"></i>`).join('');
+      return `<div class="model${m.ready ? '' : ' off'}" data-model="${esc(m.key)}" data-health="${state}">
+        <div class="l1"><span class="dot ${{ ok: 'on', cooling: 'cool' }[state] ?? ''}"></span><span class="k">${esc(m.key)}</span><span class="s"${why}>${tr(`health.${state}`)}${calls}</span></div>
+        <div class="l2"><span class="size">${size}</span><span>${esc(m.tier ?? '?')}</span><span class="cost">${tr(`hire.cost.${m.costTier}`)}</span><span class="bars">${bars}</span></div></div>`;
+    })
+    .join('');
+}
+
 // ---------- board ----------
 
 function progressOf(t) {
@@ -431,6 +506,7 @@ function taskCard(t) {
       ${t.outputs.length ? `<div>${tr('card.files')} ${t.outputs.map((o) => `<code>${esc(o)}</code>`).join(' ')}</div>` : ''}
       ${t.skills?.length ? `<div>${tr('card.skills')} ${t.skills.map((s) => `<code>${esc(s.name)}</code>`).join(' ')}</div>` : ''}
       ${t.dependsOn.length ? `<div>${tr('card.after')} ${t.dependsOn.map((d) => `<code>${d}</code>`).join(' ')}</div>` : ''}
+      ${hireDetail(t)}
       ${t.summary ? `<div style="margin-top:6px"><b>${tr('card.delivery')}</b> ${esc(t.summary)}</div>` : ''}
       ${t.error ? `<div class="verdict revise">${esc(t.error)}</div>` : ''}
       ${verdicts}
@@ -442,7 +518,7 @@ function taskCard(t) {
   }
   return `<div class="task" style="--team:${teamColor(t.team)}" data-task="${t.id}">
     <div class="top"><span class="ring${t.status === 'done' ? ' done' : ''}" style="--p:${progressOf(t)}"></span><span class="title">${esc(t.title)}</span><span class="id">${t.id}</span></div>
-    <div class="sub"><span class="team-chip">${esc(teamLabel(t.team))}</span>${agent ? `<span>${esc(agent.name)}${agent.kind === 'sub' ? tr('card.sub') : ''}</span>` : ''}<span>${label('task', t.status)}</span>${t.revisions ? `<span class="badge rev">${tr('card.rev', { n: t.revisions })}</span>` : ''}${t.escalated ? '<span class="badge esc">⬆️ frontier</span>' : ''}</div>
+    <div class="sub"><span class="team-chip">${esc(teamLabel(t.team))}</span>${agent ? `<span>${esc(agent.name)}${agent.kind === 'sub' ? tr('card.sub') : ''}</span>` : ''}<span>${label('task', t.status)}</span>${t.revisions ? `<span class="badge rev">${tr('card.rev', { n: t.revisions })}</span>` : ''}${t.escalated ? '<span class="badge esc">⬆️ frontier</span>' : ''}${hireBadges(t)}</div>
     ${detail}
   </div>`;
 }
@@ -717,6 +793,9 @@ function renderRouter() {
     ${m ? `<div class="kv" style="margin:0 4px"><span>${t('router.images')}</span><b>${esc(m.image.join(' → '))}</b><span>${t('router.voice')}</span><b>${esc(m.speech.join(' → '))}</b></div>${m.providers.map((p) => `<div class="prov"><span class="dot ${p.ready ? 'on' : ''}"></span><b>${esc(p.id)}</b><span class="muted">${p.ready ? t('router.ready') : p.enabled ? t('router.missing', { key: esc(p.keyEnv ?? '') }) : t('router.off')}</span></div>`).join('')}` : ''}
     <div class="col-title"><span>${t('router.teams')}</span></div><div class="kv" style="margin:0 4px">${roles}</div>
     <div class="col-title"><span>${t('router.combos')}</span></div>${combos}
+    <div class="col-title"><span>${t('router.hires')}</span></div><div class="hires">${hiresList()}</div>
+    <div class="col-title"><span>${t('router.catalog', { n: (r.catalog ?? []).length })}</span></div>
+    <div class="muted catalog-hint">${t('router.catalogHint', { legend: SPECIALTIES.map((s) => t(`spec.${s}`)).join(' · ') })}</div><div class="catalog">${catalogList(r.catalog ?? [])}</div>
     <div class="col-title"><span>${t('router.recent')}</span></div>${calls || `<div class="muted" style="padding:6px">${t('router.noCalls')}</div>`}
     <div class="muted" style="margin:10px 4px">${t('router.gateway', { origin: location.origin })}</div>`;
 }
@@ -1291,7 +1370,7 @@ function handle({ type, payload }) {
     case 'task':
       if (S.run?.id === payload.runId) upsertTask(payload.task);
       world.onTask(payload);
-      invalidate('board', 'current', 'inspector');
+      invalidate('board', 'current', 'inspector', 'router'); // spec 10: the hires of the Router tab
       break;
     case 'workstream':
       world.onWorkstream(payload);
