@@ -7,7 +7,7 @@
 - Il prompt cambia forma secondo la famiglia e la taglia del modello assunto: reasoning, coder o piccolo/locale/free.
 - La scheda Router e la scheda Task mostrano chi è stato assunto e perché; `GET /api/state` espone il catalogo profilato.
 
-**Stato:** in lavorazione (il riepilogo delle verifiche è in fondo, alla chiusura).
+**Stato:** chiusa il 18/10/2026, in due parti: parte 1 (`354f9a7`: R1–R3), parte 2 (`be1c96e` R4, `bee15ca` R5, più i documenti). Le decisioni D1–D9 sono confermate dall'utente; D10–D12 sono nate nella parte 2. Verifiche e deviazioni nei §6 e §7.
 
 ## 1. Il punto di partenza (misurato sul codice di `937673a`)
 
@@ -90,7 +90,7 @@ La forma si decide dal profilo del modello assunto, in quest'ordine:
 
 ## 4. Decisioni
 
-Prese da me per portare avanti il lavoro; l'utente può ribaltarle.
+D1–D9 prese da me per portare avanti il lavoro e confermate dall'utente il 18/10/2026 (compreso il camelCase di `costTier` e `health`). D10–D12 vengono dalla parte 2: l'utente può ribaltarle.
 
 | # | Decisione | Perché |
 |---|---|---|
@@ -103,11 +103,62 @@ Prese da me per portare avanti il lavoro; l'utente può ribaltarle.
 | D7 | Un solo blocco live per passo, misurato sul budget del modello (spec 08) | un aggiornamento che si allunga a ogni passo riempirebbe la finestra dei modelli piccoli |
 | D8 | Nessun tipo di evento SSE nuovo: l'assunzione viaggia nel task, il catalogo nella fotografia del router | i client di oggi restano compatibili |
 | D9 | La salute vale per la sessione del server (dall'avvio) e non si salva | è "le ultime chiamate della sessione"; dopo un riavvio i modelli ripartono alla pari |
+| D10 | Se una revisione assume un altro modello, il `MODEL SWITCH` (nella forma del modello nuovo) arriva prima del suo primo passo, non dopo la prima risposta | altrimenti il primo passo del modello nuovo parte con la forma vecchia: visto nel test live, dove un 8B gratuito alla revisione lascia il posto a Claude Sonnet |
+| D11 | L'esempio di una skill è la sezione "Example" (cinque lingue) solo se la parola apre il titolo, al più dopo un'altra parola, e il titolo non parla di cosa evitare; poi il primo blocco di codice; senza skill, un turno d'esempio costruito dal task | "Bad examples" o "Esempi sbagliati" sono proprio quello che un modello piccolo non deve imitare (il test lo ha trovato al primo giro) |
+| D12 | Nel runner del browser le assunzioni live e il subentro arrivano dalla risposta di rete di una run salvata, costruita dalla run demo nella forma che scrive `hiring.py` | la demo non assume nessuno (D5), e il runner gira solo in demo; il resto della pagina (rendering, clic, schede, i18n) è quello vero |
 
 ## 5. Verifiche (test scritti prima del codice, visti rossi)
 
 - `test_hiring.py`: la matrice di competenza su modelli tipici (locale 7B, `:free` da 70B, flagship, coder); l'analisi nelle cinque lingue; la catena (un task complesso di codice assume un modello grande, uno semplice un modello free o locale, i bersagli non sani escono o scendono); la promozione; una run live con provider finti, in cui un credito finito a metà passo fa subentrare il candidato successivo e la run arriva in fondo; la demo che resta com'era.
 - `test_crossbus.py`: i fatti dei file; il blocco live dopo una consegna collegata, e nessun blocco per un workstream non collegato; il blocco dopo un cambio di modello; mai lo stesso elemento due volte; l'ordine RRF.
-- `test_prompt_shape.py`: le quattro forme; per i modelli piccoli i passi atomici, l'esempio della skill e il validatore che ferma un'azione incompleta.
+- `test_hiring.py`, sezione R4 (al posto di un `test_prompt_shape.py`: l'utente ha chiesto i test in `test_hiring.py`): le quattro forme su 18 modelli tipici; per un piccolo i passi atomici, l'esempio della skill e il contratto in fondo; per un reasoning checklist, vincoli e lezioni prima della descrizione; per un coder albero, interfacce e snippet; generale e demo come prima; un failover verso un piccolo che porta la sua forma; il validatore (piccolo sì, generale no); l'esempio di una skill in cinque lingue; una run live su un mercato misto.
 - `test_state.py`: `router.catalog` in `/api/state`.
-- Runner del browser: la scheda Task e la scheda Router mostrano l'assunzione dopo la missione demo.
+- Runner del browser, fase `hiring` (R5, 6 controlli): la scheda Task e la scheda Router dopo la missione demo, più una run con assunzioni live e un subentro (D12).
+
+## 6. Come è fatta la parte 2, e le deviazioni
+
+**R4, la forma del prompt.**
+- `rag_budget.shape(profile)`, nell'ordine di D6:
+  - **piccolo**: locale, gratuito (`:free`, i tier gratuiti) o 14B e meno (`sizeB`, o `paramsB`);
+  - **reasoning**: la famiglia reasoning del profiler, più `gemini-*-pro`;
+  - **coder**: la famiglia coder, più DeepSeek, Claude Sonnet, GPT-5, Codestral, Devstral;
+  - **generale**: il resto, e il simulatore sempre.
+  
+  `budget()` porta la forma; un piccolo ha sempre il contratto JSON.
+- `Run.rag_context` aggiunge `lead`, i blocchi che aprono il brief (`prompts.shape_lead`), solo all'avvio e a un cambio di modello:
+  - piccolo: `STEPS` numerati (guarda la cartella, leggi i file dei compagni, scrivi ogni file, controlla, `finish`), poi `EXAMPLE FROM YOUR SKILL` o `EXAMPLE OF ONE GOOD TURN`;
+  - reasoning: `QA CHECKLIST` (`[ ]` per ogni criterio), `CONSTRAINTS` (trappole, il lavoro da cui dipende, palette e interfacce dei file collegati), `LESSONS FROM THE BRAIN` (le lezioni per prime; più sotto `FROM THE BRAIN` rimanda in alto);
+  - coder: `PROJECT TREE` (cartelle prima, righe rientrate così nessuno le legge come la lista `PROJECT FILES`), `INTERFACES TO RESPECT`, `SKILL SNIPPETS` (i blocchi di codice delle skill: 3 e 2400 caratteri con il contesto pieno, 2 e 1200 con quello compatto).
+  
+  Nessuna riga dei blocchi comincia con un campo che il simulatore legge (`GOAL:`, `TASK:`, `OUTPUTS:`…): i test live passano con le risposte del simulatore.
+- `tasker_system` aggiunge una regola per forma; il contratto resta l'ultima cosa del system prompt.
+- Il Tasker tiene `shape` (all'avvio, alla ripresa, a ogni cambio). Per un piccolo:
+  - il **validatore** (`tasker.missing_args`, `REQUIRED_ARGS`): un'azione a cui manca un argomento obbligatorio, o che lo ha vuoto, riceve un `FORMAT ERROR` con l'argomento e la riga del tool, e non arriva al tool;
+  - dopo ogni `RESULT` una riga `NEXT: reply with ONE JSON object only…`: il contratto a ogni turno.
+- Il record dell'assunzione dice la forma (`hire.shape`, e `shape` in ogni candidato).
+
+**R5, l'interfaccia.**
+- Scheda Task: il badge 🤝 con il modello, il tier e la specialità più pesata dal matcher (`top`, `topScore`); la lettura (categoria · livello); `🔀 replaced` con il motivo nel titolo. La scheda aperta: il perché, la forma del prompt, i candidati, ogni subentro. In demo: `demo · simulator` e la lettura.
+- Scheda Router: "Hires in this run" (la run mostrata, subentri segnati) e "Profiled catalog" (taglia, con ≈ quando viene dalla famiglia; tier; costo; sette barre di specialità; salute della sessione; prima i modelli pronti). Si ridisegna anche a ogni evento `task`.
+- 52 chiavi nuove in `i18n.js`, nelle cinque lingue.
+
+**Deviazioni dalla spec.**
+- I test della R4 stanno in `test_hiring.py`, non in `test_prompt_shape.py` (richiesta dell'utente).
+- `skills.py`: oltre a `example()` e `snippets()` (metodi di `SkillLibrary`) ci sono le funzioni pure `example_of()` e `code_blocks()`, che i test usano senza libreria.
+- D10, D11 e D12 non erano nella spec.
+- Durante lo sviluppo il server di anteprima, avviato nello stesso worktree, ha scritto in `data/` e `skills/vendor/` mentre girava pytest, e la guardia N15 lo ha segnalato. Erano file dell'anteprima, non dei test: cancellati, e la suite finale è girata senza anteprima.
+
+**Limiti noti.**
+- Claude Opus, GPT-4o e i Llama a pagamento hanno la forma generale: non sono nelle famiglie della R4.
+- Un modello gratuito ha la forma piccola qualunque sia la taglia (`groq/openai/gpt-oss-120b`, un 70B `:free`): è la definizione della richiesta.
+- Le interfacce arrivano dai fatti dei file del lavoro collegato (R3); i file del proprietario non ne hanno.
+- Tutto è provato con server finti, nessuna chiamata vera.
+
+## 7. Chiusura: le verifiche (18–19/10/2026, Windows 11)
+
+- **Test prima del codice, visti rossi:** parte 1 `test_hiring.py` (R1–R3) e `test_crossbus.py`; parte 2 i 26 test della sezione R4 di `test_hiring.py`, più 8 sull'esempio di una skill. Il test live su un mercato misto ha trovato D10, quello sull'esempio D11; una mutazione (senza il cambio anticipato alla revisione) fa rosso il test live.
+- **`npm test`** verde in 7 min 45 s: **pytest 1013 passati e 3 saltati** (la parità Rust ×2 senza il modulo compilato, ffmpeg assente). Prima della spec 10: 934 passati.
+- **`npm run test:browser`: 261 verifiche su 261, ALL OK** in 6 min 2 s, a 55,7 fps, con `known-red.json` vuoto: le 255 di prima più i 6 controlli della fase `hiring` (R5).
+- **`npm run scan:secrets`:** pulito.
+- **QA visivo** a 1920×1080 dagli screenshot del runner (`--shots`): la scheda Task in demo e con un subentro, la scheda Router con il catalogo.
+- **Non verificato:** nessuna chiamata a un modello vero; la prima run LIVE con chiavi dirà se le forme del prompt aiutano davvero i modelli piccoli (è in "Da verificare" di `HANDOFF.md`).

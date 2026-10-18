@@ -1,13 +1,10 @@
 # HANDOFF — Agent World
 
-*Aggiornato il 2026-10-18, sera. In breve:*
-- *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/tech-debt-i18n-browser-docs-519081`, sopra `67f98c7` (PR #6, spec 09). Le spec 01–09 sono chiuse (la 03 congelata dopo T2).*
-- *Il branch ha chiuso il debito tecnico rimasto:*
-  - *N13 e N17 chiusi: gli errori HTTP seguono la lingua dell'app, la nota del tasker quella della run, i log di avvio sono in inglese;*
-  - *i rossi di `views` e `input` del runner del browser venivano dalle attese a tempo fisso: ora contano i frame;*
-  - *questo file e il README descrivono il sistema di oggi.*
-- *Da decidere per l'utente: `npm run scan:secrets` trova l'identità vera nei 5 commit di merge che GitHub ha creato per le PR (sezione 1).*
-- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 18/10/2026, sera".*
+*Aggiornato il 2026-10-18, notte. In breve:*
+- *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
+- *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
+- *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
+- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 18/10/2026, notte".*
 
 ## 1. Stato
 
@@ -27,12 +24,13 @@
   - 06 lingue;
   - 07 sicurezza;
   - 08 router, RAG e media;
-  - 09 file del proprietario, dialogo, ripresa e failover.
-- **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. I 3 test saltati di pytest sono la parità Rust.
+  - 09 file del proprietario, dialogo, ripresa e failover;
+  - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt.
+- **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 3 test saltati di pytest, 2 sono la parità Rust e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
   - il backup della riscrittura della history (`agent-world-before-scrub.bundle`, accanto alla cartella del repo, con i dati personali) è **nel Cestino** dal 18/10: per toglierlo davvero va svuotato il Cestino;
-  - **`npm run scan:secrets` non è pulito (18/10): 11 rilievi, tutti nei 5 commit di merge che GitHub ha creato per le PR #1, #3, #4, #5 e #6** (`def76ca`, `2e91b97`, `2e55864`, `6ca7919`, `67f98c7`). Il messaggio "Merge pull request #N from …" porta il nome dell'account, e autore e committer hanno l'identità vera. Sono già su `origin/main`. Per le PR future: "Squash and merge" o "Rebase and merge", oppure il merge in locale con l'identità `agent-world-dev`. Per quelle già fatte serve una nuova riscrittura della history con force push: decide l'utente.
+  - i 5 commit di merge che GitHub ha creato per le PR #1, #3, #4, #5 e #6 (`def76ca`, `2e91b97`, `2e55864`, `6ca7919`, `67f98c7`) portano il nome dell'account e l'identità vera. L'utente ha scelto di non riscriverli: da `71c46c6` `npm run scan:secrets` li riconosce (due genitori, GitHub come committer, oggetto "Merge pull request #N from …") e lascia passare solo quei campi. Per il lavoro futuro: il merge in locale con l'identità `agent-world-dev`, come per il debito tecnico del 18/10 e per la spec 10.
 - **Questo file è tracciato su `main`** (dal 16/10, decisione dell'utente). `scripts/secret-scan.js` ne scansiona il contenuto come per ogni altro file: chiavi, percorsi assoluti, parole personali.
 - **Push su Windows:** `git push` apre la finestra "Select an account" di Git Credential Manager. Va scelto l'account proprietario del repo (quello nell'indirizzo di `origin`); con l'altro GitHub risponde 403. Il push si lancia in background e si avvisa l'utente.
 
@@ -50,7 +48,8 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
   - Un messaggio chiaro quando la porta è occupata.
 - **15/10:** spec 06 (cinque lingue, inglese di default) e spec 07 (CSRF, DNS rebinding, sandbox dell'anteprima, SSRF, clickjacking). Chiuso A10 (N12).
 - **16/10:** chiusi N14 (la demo parla la lingua della run), N15 (i test non toccano i file dell'utente) e N16 (test uguali su ogni sistema). Spec 08 (router, cascata, profiler, RAG su misura del modello, media sempre reali in LIVE). Da qui questo file è tracciato.
-- **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico in fondo a questo file.
+- **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
+- **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -59,8 +58,8 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-1. **I commit di merge di GitHub con l'identità vera** (sezione 1): se riscrivere la history di `main`. Decide l'utente. D'ora in poi i branch si uniscono in locale con `git merge --no-ff` e l'identità `agent-world-dev`, come il 18/10, poi `git push origin main`.
-2. **Le verifiche su Windows o con chiavi vere** (in fondo, "Da verificare").
+1. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
+2. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
 4. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
 
@@ -118,6 +117,7 @@ Lezioni del porting ancora valide:
 7. Questo file tiene stato, decisioni, prossimi passi e regole; la storia sta nei documenti della spec.
 8. Profondità proporzionata al rischio, e un riassunto di 5 righe in testa ai documenti lunghi.
 9. **Un'attesa in un test conta i frame o aspetta una condizione, mai i millisecondi** (18/10): il mondo avanza al massimo 0,05 s per frame, e un browser senza GPU ne disegna 1–2 al secondo.
+10. **Mai un server di anteprima nello stesso worktree mentre gira pytest** (18/10, spec 10): l'app scrive in `data/` e lo Skiller scarica in `skills/vendor/`, e la guardia N15 di `conftest.py` fa fallire la sessione. Prima della suite: anteprima chiusa, e le due cartelle tolte se le ha create lei.
 
 ## 6. Contesto tecnico
 
@@ -142,9 +142,10 @@ Lezioni del porting ancora valide:
   - `run.py` (missione, scheduler a tick, review, report, ripresa);
   - `tasker.py` (il loop di un worker);
   - `team.py`, `bus.py`, `tools.py` + `paths.py` (una regola dei percorsi per ogni sistema);
-  - `run_memory.py`, `rag_budget.py`, `json_repair.py`;
+  - `run_memory.py`, `rag_budget.py` (misura del contesto e, spec 10, forma del prompt), `json_repair.py`;
+  - `crossbus.py` (spec 10: i fatti dei file e i legami tra lavori, per `[LIVE CROSS-AGENT UPDATE]`);
   - `arbiter.py` (TypeSafe), `attachments.py`;
-- `router/`: `index.py` (combo, cascata, cooldown, blacklist), `providers.py`, `profiler.py`, `mock.py` + `mock_texts.py` (la demo, nella lingua della run);
+- `router/`: `index.py` (combo, cascata, cooldown, blacklist; spec 10: `catalog()`, `health()`, `chat(chain=…)`), `providers.py`, `profiler.py` (spec 10: taglia, specialità, costo), `hiring.py` (spec 10: analisi del sotto-task, catena, subentro), `mock.py` + `mock_texts.py` (la demo, nella lingua della run);
 - memoria: `brain.py`, `skills.py`, `skiller.py` + `downloads.py`, `embed.py`, `search.py` (BM25 e coseno, Rust se compilato);
 - `media.py` (voce: cloud, poi edge-tts, poi la voce del sistema; immagini: cloud, poi il generatore locale), `store.py`;
 - lingue: `i18n.py`.
@@ -188,7 +189,7 @@ Lezioni del porting ancora valide:
 npm start                                    # il server (cd backend && uv run python -m backend)
 npm test                                     # mondo 3D, dizionari, launcher, avvio, pytest, smoke, flussi, secret-scan, temp (~7 min)
 npm run test:backend                         # avvio del backend e pytest
-npm run test:browser                         # runner headless completo, missione inclusa
+npm run test:browser                         # runner headless completo, missione inclusa (261 verifiche, ~6 min)
 node scripts/browser-test.js --only views,input
 node scripts/browser-test.js --skip-run      # senza la missione
 node scripts/browser-test.js --shots DIR --json FILE --port N
@@ -200,7 +201,7 @@ npm run screenshots                          # gli screenshot del README
 
 **Runner del browser** (`scripts/browser-test.js`):
 - avvia un server demo proprio sulla porta 4397 e Edge o Chrome headless via DevTools. Il browser viene da `scripts/browser/headless.js`, le cartelle (home `agent-world-browser-<pid>-*`, profilo `agent-world-profile-<pid>-*`) da `scripts/lib/temp.js`;
-- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `recovery`;
+- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `hiring` (spec 10: le assunzioni live e il subentro vengono dalla risposta di rete di una run salvata, perché la demo non assume nessuno), `recovery`;
 - script lato pagina in `scripts/browser/`, con `lib.js` per primo; i rossi attesi in `known-red.json` (oggi vuoto);
 - a fine suite fallisce se restano processi del browser con il suo profilo, o le sue cartelle;
 - **stampa quanti frame al secondo disegna il browser.** Le attese della camera contano i frame (`__t.still()`: nessun movimento in corso e l'immagine ferma su 8 frame). Un controllo di `views` è verde solo a camera ferma;
@@ -237,68 +238,41 @@ npm run screenshots                          # gli screenshot del README
 - **claude-mem** può non avere le sessioni più recenti: fa fede questo file.
 
 
-## Stato al 18/10/2026, sera
+## Stato al 18/10/2026, notte
 
-- `main` = `67f98c7`: PR #6 (spec 09) unita. Prima erano entrate la PR #5 (spec 08) e le #1–#4 (spec 06, N14, N15, N16).
-- Branch `claude/tech-debt-i18n-browser-docs-519081`, da `main`, cinque commit:
-  - `ce33dcd` fix(secret-scan): un worktree legge le parole personali del repository;
-  - `daf66d5` test(attachments): id corti per i byte dei file, Windows li rifiutava;
-  - `72158a2` fix(i18n): gli errori HTTP nella lingua dell'app (N13);
-  - `5729fbc` fix(browser-test): le attese della camera contano i frame;
-  - `b94bc9b` docs: HANDOFF e README;
-  - `cbb435c` fix(i18n): gli ultimi testi del backend in una lingua sola (N17);
-  - il commit di questo aggiornamento di HANDOFF.
-- Unito in `main` in locale con `git merge --no-ff` e l'identità `agent-world-dev` (nessun merge dall'interfaccia di GitHub), poi `git push origin main` su richiesta dell'utente. Nessuna PR aperta. Su `origin` il branch è fermo a `b94bc9b`: il resto arriva con `main`.
-
-### Completate
-- **N13, gli errori HTTP nella lingua dell'app** (dettagli: `docs/specs/06-language.md` §5):
-  - `i18n.HTTP_ERRORS`: 50 chiavi nelle cinque lingue;
-  - `ui_language(cfg)`: `ui.language`, oppure l'inglese se manca o non è valida;
-  - `http_error(lang, key, **vars)`, che non alza mai eccezioni;
-  - `Refusal` per i livelli sotto le route.
+- `main` = il merge `--no-ff` in locale (identità `agent-world-dev`) di `claude/spec10-parametric-hiring`, sopra `937673a`. I commit del branch:
+  - `71c46c6` fix(secret-scan): la scansione della history lascia passare i merge che GitHub ha fatto per le PR;
+  - `354f9a7` spec 10, parte 1: matrice di competenza, assunzione per sotto-task, subentro, bus a incrocio (R1–R3);
+  - `be1c96e` spec 10, parte 2: il prompt nella forma del modello assunto (R4);
+  - `bee15ca` spec 10, parte 2: il badge nella scheda Task, il catalogo nella scheda Router, la fase `hiring` del runner (R5);
+  - il commit dei documenti: README, spec 10 e questo file.
   
-  Le route (`runs`, `providers`, `api_state`, `skills_brain`, `static`) e i 403 di `security.py` scrivono solo chiavi; `attachments.py` e `skills.add_repo` alzano `Refusal`. La lingua è quella dell'app e non quella della run: gli errori compaiono in un toast della UI. `Accept-Language` non si usa, perché è la lingua del browser.
-  - Test scritti prima, visti rossi (131 su 146 in `test_i18n.py`):
-    - tabelle allineate e tradotte;
-    - 21 rifiuti di ogni tipo di route nelle cinque lingue, più i tre 403;
-    - il cambio di lingua che vale subito;
-    - un errore su una run italiana con l'app in tedesco, che esce in tedesco;
-    - un controllo AST dei sorgenti, che fallisce se una route torna a scrivere un errore in italiano.
-    
-    Una mutazione (il middleware senza `language`) fa 4 rossi. Le asserzioni in italiano di `test_runs.py`, `test_state.py` e `test_providers_api.py` ora usano le chiavi (inglese di default).
-- **I rossi di `views` e `input` del runner** (dettagli: `docs/specs/09-multimodal-interactive-recovery.md`, "Limiti noti"):
-  - **Causa:** il ritmo dei frame, non `framing.js` né `world.js`. Il runner aspettava tempi fissi (900 ms dopo un pannello, 600 ms dopo un resize, controlli ogni 250 ms). Il mondo invece avanza al massimo 0,05 s per frame, quindi una riinquadratura di 0,35 s dura 7 frame: con il WebGL software di un container (1–2 fps) le misure cadevano a metà movimento.
-  - **Riprodotto su Windows** con `BROWSER_FLAGS=--disable-gpu` e `BROWSER_CPU_THROTTLE`:
+  La parte 2 è nata nel worktree `claude/spec10-parametric-hiring-p2-…` ed è arrivata su `claude/spec10-parametric-hiring` con un fast-forward. Poi `git push origin main`.
+- Il debito tecnico del branch precedente (N13, N17, le attese del runner in frame) è descritto in `docs/specs/06-language.md` §5 e `docs/specs/09-multimodal-interactive-recovery.md`, "Limiti noti".
 
-    | fps | rossi |
-    |---|---|
-    | 9,8 o più | 0 |
-    | 2,1 | 3 (`views` 2560×1440 LR e 1440×900 LR, `input` drag) |
-    | 0,8 | 4 (in più `views` 1440×900 -R) |
-
-    Anche i verdi lenti misuravano larghezze sbagliate: 1098 o 1207 px invece di 1419. I 6 rossi del container erano lo stesso effetto, a un ritmo ancora diverso.
-  - **Correzione:** `__t.still()` in `scripts/browser/lib.js` aspetta la camera ferma contando i frame, e lo usano `viewport()`, `layout()` e `settleView()`. `views` richiede la camera ferma; il runner stampa gli fps. Dopo: 14 controlli su 14 verdi a 2,4 e a 0,4 fps, con le stesse larghezze dell'ufficio della macchina veloce.
-- **Test con id troppo lunghi su Windows:** `test_real_files_pass[v.wav-…]` dava errore, perché l'id con i byte del WAV superava i 32767 caratteri di `PYTEST_CURRENT_TEST`. Ora gli id sono il nome del file e la dimensione.
-- **`secret-scan.js` nei worktree:** il hook di commit bloccava ogni commit da un worktree che nominava agenti o mondo. `personalWords()` cercava `info/personal-words` sotto `--git-dir`, che in un worktree è `.git/worktrees/<nome>`, un percorso assoluto incollato da `join()` e senza `info/`. Così valeva l'identità `agent-world-dev`. Ora legge la cartella comune. Due controlli nuovi in `secret-scan-test.js`, con un worktree vero; il primo era rosso prima della correzione.
-- **N17, gli ultimi testi in una lingua sola** (dettagli: `docs/specs/06-language.md` §5): la nota del tasker "Risposta non valida, riprovo" è la chiave `invalid_answer` nella lingua della run; il messaggio di porta occupata di `npm start` è `port_busy` nella lingua dell'app; i 7 log di avvio di `app.py`, `skills.py` e `skiller.py` sono in inglese. Test scritti prima e visti rossi (8): la nota nelle cinque lingue, la porta con l'app in tedesco, e la guardia di N13 estesa a tutto il backend, con l'elenco esplicito dei letterali che sono dati.
-- **Il backup del 14/10** (`agent-world-before-scrub.bundle`, 5 MB, i ref di prima della riscrittura) è stato spostato nel Cestino, non cancellato: va svuotato il Cestino.
-- **Documenti:** questo file riordinato (la storia del 13–14/10 riassunta nella sezione 2; sezioni 1, 3 e 6 sul sistema di oggi). Nel README:
-  - via la nota su N13;
-  - pytest a 934 test;
-  - i 403 nella lingua dell'app;
-  - come provare il runner su una macchina lenta.
+### Completate (spec 10, parte 2)
+- **R4, la forma del prompt** (dettagli: spec 10 §6):
+  - `rag_budget.shape()`: piccolo (locale, gratuito, 14B e meno), reasoning, coder, generale, in quest'ordine (D6);
+  - piccolo: passi atomici numerati, un esempio dalla skill, il contratto in fondo e dopo ogni risultato, il validatore che ferma un'azione a cui manca un argomento;
+  - reasoning: checklist del QA, vincoli, lezioni del Brain, tutto prima della descrizione;
+  - coder: albero esatto del progetto, interfacce dei file collegati, snippet delle skill;
+  - generale e demo: il prompt di prima.
+- **R5, l'interfaccia:** il badge 🤝 (modello, tier, specialità) e 🔀 nella scheda Task; le assunzioni e il catalogo profilato nella scheda Router; 52 chiavi nelle cinque lingue.
+- **Due difetti trovati dai test, corretti** (D10, D11):
+  - alla revisione che assume un altro modello, il primo passo del modello nuovo partiva con la forma vecchia: ora il `MODEL SWITCH` arriva prima del passo. Una mutazione (senza il cambio anticipato) fa rosso il test live;
+  - un titolo come "Bad examples" veniva preso come l'esempio da imitare.
 
 ### Verifiche (Windows 11)
-- `npm test` verde in 5 min 50 s: mondo 3D, dizionari, launcher, avvio, **pytest 934 passati e 3 saltati** (la parità Rust), smoke, flussi, secret-scan (19 controlli), cartelle temporanee. Prima di N17 erano 927.
-- **`npm run test:browser`: 255 verifiche su 255, ALL OK** in 4 min 53 s, a 106,8 fps, con `known-red.json` vuoto (prima di N17, che non tocca il front-end). Il README ne contava 254 (246 più le 8 della spec 09): nessun controllo nuovo in questo branch.
-- `--only views,input` con WebGL software e CPU rallentata: 14 su 14 a 2,4 e a 0,4 fps; prima della correzione 3 rossi a 2,1 fps e 4 a 0,8.
-- **`npm run scan:secrets`: 11 rilievi, tutti nei 5 commit di merge di GitHub** (sezione 1, "Da fare per l'utente"); i commit di questo branch e il merge sono puliti, e il hook li ha scansionati uno per uno.
+- `npm test` verde in 7 min 45 s: mondo 3D, dizionari, launcher, avvio, **pytest 1013 passati e 3 saltati** (la parità Rust ×2, ffmpeg assente), smoke, flussi, secret-scan, cartelle temporanee. Prima della spec 10 erano 934 passati.
+- **`npm run test:browser`: 261 verifiche su 261, ALL OK** in 6 min 2 s, a 55,7 fps, con `known-red.json` vuoto. I 6 controlli nuovi sono la fase `hiring` (R5).
+- **`npm run scan:secrets`: pulito.**
+- QA visivo a 1920×1080 dagli screenshot del runner (`--shots`): scheda Task in demo e con un subentro, scheda Router con il catalogo.
 
 ### Ticket aperti
-- I merge di GitHub con l'identità vera (sezione 1): da decidere per l'utente.
-- N8, N10 e il backlog della spec 03 (sezione 4). N13 e N17 sono chiusi.
+- N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
+- **Spec 10 con chiavi vere:** una run LIVE con modelli di famiglie diverse (un locale o `:free`, un reasoning, un coder) per vedere le quattro forme del prompt e un subentro vero per credito finito. Finora solo server finti.
 - La voce in una run LIVE senza credito OpenAI ed ElevenLabs: deve parlare edge-tts, senza `uv add`. Senza rete, o con `media.providers.edgetts.enabled: false`, la voce di sistema (SAPI).
 - La scoperta dei modelli con Ollama o LM Studio attivi.
 - Una chiamata vera a TypeSafe con `TYPESAFE_API_KEY`.
@@ -307,6 +281,5 @@ npm run screenshots                          # gli screenshot del README
 
 ### Prossimi passi
 1. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
-2. La decisione sui merge di GitHub già fatti (sezione 1).
-3. Le verifiche qui sopra.
-4. Il prossimo ciclo SDD, dal backlog.
+2. Le verifiche qui sopra, a partire dalla run LIVE della spec 10.
+3. Il prossimo ciclo SDD, dal backlog.
