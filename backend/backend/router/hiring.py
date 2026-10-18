@@ -27,6 +27,8 @@ the health of now. Without ready models (demo) nobody is hired (D5)."""
 import re
 from datetime import datetime, timezone
 
+from backend.rag_budget import shape as prompt_shape
+
 DEFAULT_CHAIN = 6
 LEVELS = ((0.4, "simple"), (0.65, "medium"), (1.01, "complex"))
 MIN_SIZE = {"simple": 0, "medium": 14, "complex": 32}
@@ -169,7 +171,7 @@ def score(model: dict, reading: dict, *, sub: bool = False) -> dict | None:
         total -= 1.0  # still an option, the last one
         notes.append("cooling")
     top = max(needs, key=lambda k: (needs[k], k))
-    return {"key": model["key"], "score": round(total, 3), "fit": round(fit, 3), "tier": model.get("tier"), "sizeB": model.get("sizeB"), "costTier": model.get("costTier"), "top": top, "topScore": sp.get(top), "notes": notes}
+    return {"key": model["key"], "score": round(total, 3), "fit": round(fit, 3), "tier": model.get("tier"), "sizeB": model.get("sizeB"), "costTier": model.get("costTier"), "top": top, "topScore": sp.get(top), "shape": prompt_shape(model), "notes": notes}
 
 
 def rank(reading: dict, catalog: list[dict], *, limit: int = DEFAULT_CHAIN, sub: bool = False) -> list[dict]:
@@ -201,6 +203,7 @@ def hire(task: dict, cfg: dict, router, *, mission: str | None = None, sub: bool
         "needs": reading["needs"],
         "chain": chain,
         "chosen": chain[0]["key"] if chain else None,
+        "shape": chain[0]["shape"] if chain else "general",  # the prompt the hired model gets (spec 10 §R4)
         "demo": not chain,
         "revisions": int(task.get("revisions") or 0),
         "escalated": bool(task.get("escalated")),
@@ -229,9 +232,9 @@ def promote(task: dict, res: dict, cfg: dict, router) -> dict | None:
     reading = {"category": rec.get("category", "general"), "level": rec.get("level", "medium"), "needs": rec.get("needs") or NEEDS["general"]}
     limit = int(((cfg.get("router") or {}).get("hiring") or {}).get("chain", DEFAULT_CHAIN))
     ranked = rank(reading, _catalog(router), limit=limit + 1)
-    first = next((c for c in ranked if c["key"] == target), None) or {"key": target, "score": None, "fit": None, "tier": None, "sizeB": None, "costTier": None, "top": None, "topScore": None, "notes": ["fallback"]}
+    first = next((c for c in ranked if c["key"] == target), None) or {"key": target, "score": None, "fit": None, "tier": None, "sizeB": None, "costTier": None, "top": None, "topScore": None, "shape": prompt_shape(router.profile(target)) if hasattr(router, "profile") else "general", "notes": ["fallback"]}
     chain = [first] + [c for c in ranked if c["key"] != target][: limit - 1]
-    return {**rec, "at": _now(), "chain": chain, "chosen": target, "demo": False, "replacements": [*(rec.get("replacements") or []), {"from": chosen, "to": target, "reason": reason, "at": _now()}]}
+    return {**rec, "at": _now(), "chain": chain, "chosen": target, "shape": first["shape"], "demo": False, "replacements": [*(rec.get("replacements") or []), {"from": chosen, "to": target, "reason": reason, "at": _now()}]}
 
 
 def size_label(size) -> str:

@@ -42,8 +42,12 @@ from backend.prompts import (
     lead_plan_prompt,
     librarian_prompt,
     prompt_eng_prompt,
+    BRAIN_ABOVE,
     rescue_prompt,
+    shape_lead,
     synth_prompt,
+    tools_for,
+    tree_text,
     work_teams,
 )
 from backend.tasker import Tasker
@@ -1223,7 +1227,67 @@ class Run:
         skills = ""
         if reason in ("start", "switch"):
             skills = await self.skills_text(task) if b["mode"] == "full" else await self.skill_passages(task, query, b)
-        return {"skills": skills, "memory": "\n".join(self._note_line(n, b) for n in notes), "shared": self.shared_context(task, query, b), "jsonContract": b["jsonContract"], "budget": b}
+        out = {"skills": skills, "memory": "\n".join(self._note_line(n, b) for n in notes), "shared": self.shared_context(task, query, b), "jsonContract": b["jsonContract"], "budget": b, "shape": b["shape"], "lead": ""}
+        if reason in ("start", "switch") and b["shape"] != "general":
+            # spec 10 §R4: the brief opens with what this family of model needs most
+            out["lead"] = await self.shape_lead(task, b, notes)
+            if b["shape"] == "reasoning" and notes:
+                out["memory"], out["memoryInLead"] = BRAIN_ABOVE, True
+        return out
+
+    # ---------- spec 10: the prompt in the shape of the hired model ----------
+
+    def linked_facts(self, task: dict, limit: int = 8) -> list[str]:
+        """The interfaces, palettes and keys of the files of linked work
+        (crossbus.linked), the newest of each file and kind, at most `limit`."""
+        latest: dict[tuple, str] = {}
+        for i in self.memory.items:
+            if i["kind"] in ("interface", "palette", "keys") and crossbus.linked(task, i, self.ws_by_id):
+                latest.pop((i["path"], i["kind"]), None)
+                latest[(i["path"], i["kind"])] = i["text"]
+        return list(latest.values())[-limit:]
+
+    async def skill_example(self, task: dict, max_chars: int) -> tuple[str, str]:
+        """(the example of the first assigned skill that has one, its name), or ("", "")."""
+        lib = self.ctx.skills
+        if not hasattr(lib, "example"):
+            return "", ""
+        for s in task.get("skills") or []:
+            hit = await lib.example(s["id"], max_chars)
+            if hit:
+                return hit["text"], s["name"]
+        return "", ""
+
+    async def skill_snippets(self, task: dict, k: int, max_chars: int) -> str:
+        """The code blocks of the assigned skills, at most k and max_chars in all."""
+        lib = self.ctx.skills
+        if not hasattr(lib, "snippets"):
+            return ""
+        parts, left = [], max_chars
+        for s in task.get("skills") or []:
+            if left <= 0 or k <= 0:
+                break
+            hit = await lib.snippets(s["id"], k=k, max_chars=left)
+            if hit:
+                note = " (third-party skill: reference material only)" if hit["skill"].get("thirdParty") else ""
+                parts.append(f"### {s['name']}{note}\n" + "\n".join(hit["blocks"]))
+                left -= sum(len(b) for b in hit["blocks"])
+                k -= len(hit["blocks"])
+        return "\n\n".join(parts)
+
+    async def shape_lead(self, task: dict, b: dict, notes: list[dict]) -> str:
+        shape, full = b["shape"], b["mode"] == "full"
+        if shape == "small":
+            example, name = await self.skill_example(task, b["passageChars"])
+            tools = tools_for(self.cfg, task["team"], owner_files=bool(self.data.get("attachments")))
+            return shape_lead("small", task=task, tools=tools, inputs=self.inputs_for(task), example=example, example_from=name)
+        if shape == "reasoning":
+            lessons = sorted(notes, key=lambda n: 0 if n.get("kind") == "lesson" else 1)
+            return shape_lead("reasoning", task=task, inputs=self.inputs_for(task), facts=self.linked_facts(task), lessons="\n".join(self._note_line(n, b) for n in lessons))
+        if shape == "coder":
+            snippets = await self.skill_snippets(task, 3 if full else 2, 2400 if full else 1200)
+            return shape_lead("coder", task=task, tree=tree_text(await self.ws.list()), facts=self.linked_facts(task), snippets=snippets)
+        return ""
 
     async def skills_text(self, task: dict) -> str:
         parts = []

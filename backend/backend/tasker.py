@@ -8,7 +8,8 @@ import json
 import re
 
 from backend.json_repair import extract_json
-from backend.prompts import OWNER_TOOLS, TOOL_DOCS, output_contract, tasker_brief, tasker_system, tools_for
+from backend.prompts import OWNER_TOOLS, TOOL_DOCS, contract_reminder, output_contract, tasker_brief, tasker_system, tools_for
+from backend.rag_budget import shape as shape_of
 from backend.router.hiring import chain_keys
 
 KEEP_RECENT = 16
@@ -63,6 +64,32 @@ def compact(messages: list[dict]) -> list[dict]:
 
 
 ACTION_KEYS = {"thought", "reasoning", "tool", "name", "action", "args", "arguments", "parameters", "function"}
+# spec 10 §R4: what an action of a small model must carry before it reaches its tool
+REQUIRED_ARGS = {
+    "read_file": ("path",),
+    "write_file": ("path", "content"),
+    "web_search": ("query",),
+    "web_fetch": ("url",),
+    "run_command": ("cmd",),
+    "generate_image": ("prompt", "path"),
+    "generate_speech": ("text", "path"),
+    "search_skills": ("query",),
+    "read_skill": ("name",),
+    "remember": ("title", "text"),
+    "recall": ("query",),
+    "ask_lead": ("question",),
+    "ask_user": ("question",),
+    "finish": ("summary",),
+    "use_attachment": ("from", "path"),
+    "read_document": ("path",),
+    "inspect_image": ("path",),
+}
+
+
+def missing_args(action: dict) -> list[str]:
+    """The required arguments an action lacks (absent, null or blank text)."""
+    args = action.get("args") or {}
+    return [k for k in REQUIRED_ARGS.get(action["tool"], ()) if args.get(k) is None or (isinstance(args.get(k), str) and not args[k].strip())]
 
 
 def tool_name(raw) -> str | None:
@@ -130,6 +157,7 @@ class Tasker:
         self.pending: dict | None = None  # a context refresh, sent before the next step
         self.cross_cursor: int | None = None  # spec 10: the newest run-memory item this worker has seen
         self.switched = False  # spec 10: its model changed since the last step
+        self.shape = "general"  # spec 10 §R4: the shape of the prompt, from the hired model
 
     def _use(self) -> str | None:
         """The combo of this worker's calls: the escalation, or router.roles.sub
@@ -155,14 +183,15 @@ class Tasker:
         # spec 08: the context is sized for the model the call will most likely reach (spec 10: the hired one)
         self.profile = self._profile()
         self.model_key = self.profile["key"]
+        self.shape = shape_of(self.profile)
         ctx = await run.rag_context(task, agent, self.profile)
         owner = ""
         if hasattr(run, "take_attachments"):
             run.take_attachments(task)  # the brief lists them all: nothing is "new" at the start
             owner = run.owner_files_text(task)
         self.messages = [
-            {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=ctx["skills"], language=run.data.get("language"), json_contract=ctx["jsonContract"])},
-            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=ctx["memory"], shared=ctx["shared"], owner_files=owner)},
+            {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=ctx["skills"], language=run.data.get("language"), json_contract=ctx["jsonContract"], shape=self.shape)},
+            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=ctx["memory"], shared=ctx["shared"], owner_files=owner, lead=ctx.get("lead") or "")},
         ]
 
     def restore(self, session: dict) -> None:
@@ -171,6 +200,7 @@ class Tasker:
         run, task = self.run, self.task
         self.messages = list(session.get("messages") or [])
         self.profile = self._profile()
+        self.shape = shape_of(self.profile)
         self.model_key = session.get("model") or self.profile["key"]
         if any(isinstance(m.get("content"), str) and "FILES FROM THE OWNER" in m["content"] for m in self.messages):
             self.tools = tools_for(run.cfg, task["team"], owner_files=True)
@@ -187,11 +217,14 @@ class Tasker:
             return
         if self.model_key and key != self.model_key:
             self.profile = res.get("profile") or self._profile()
+            self.shape = shape_of(self.profile)
             ctx = await self.run.rag_context(self.task, self.agent, self.profile, reason="switch")
             parts = [f"MODEL SWITCH: you now run on {key} ({self.profile.get('tier', '?')}). Keep working on the same task; what you need from this run:"]
+            if ctx.get("lead"):
+                parts.append(ctx["lead"])  # spec 10: the shape of the new model
             if ctx["shared"]:
                 parts.append(f"FROM THE TEAM (this run):\n{ctx['shared']}")
-            if ctx["memory"]:
+            if ctx["memory"] and not ctx.get("memoryInLead"):
                 parts.append(f"FROM THE BRAIN:\n{ctx['memory']}")
             if ctx["skills"]:
                 parts.append(f"SKILLS:\n{ctx['skills']}")
@@ -206,6 +239,10 @@ class Tasker:
         if self.messages is None:
             await self.init()
         if feedback:
+            fresh = self._profile()
+            if self.model_key and fresh["key"] != self.model_key:
+                # spec 10: the revision hired another model; it gets its own shape from its first step
+                await self._switched({"target": fresh["key"], "profile": fresh})
             # spec 08: the QA lessons and the run context for this kind of task and error
             ctx = await run.rag_context(task, agent, self.profile, reason="revision", extra=feedback)
             shared = f"\n\nFROM THE TEAM (this run):\n{ctx['shared']}" if ctx["shared"] else ""
@@ -251,6 +288,14 @@ class Tasker:
                 self.messages.append({"role": "user", "content": f'FORMAT ERROR: reply with exactly one JSON object {{"thought": "...", "tool": "one of {", ".join(self.tools)}", "args": {{...}}}} and nothing else.'})
                 run.note(task, agent, "error", run.t("invalid_answer"))
                 continue
+            missing = missing_args(action) if self.shape == "small" else []
+            if missing:
+                # spec 10 §R4: the validator of a small model; the tool never sees the incomplete action
+                self.messages.append({"role": "assistant", "content": _dumps(action)})
+                needs = ", ".join(f'"{k}"' for k in missing)
+                self.messages.append({"role": "user", "content": f"FORMAT ERROR: {action['tool']} needs {needs}. {TOOL_DOCS[action['tool']]}\nReply again with the complete JSON object."})
+                run.note(task, agent, "error", run.t("invalid_answer"))
+                continue
             self.messages.append({"role": "assistant", "content": _dumps(action)})
             run.step(task, agent, action)
 
@@ -262,5 +307,6 @@ class Tasker:
                 files = action["args"].get("files")
                 return {"summary": str(action["args"].get("summary") or "")[:2000], "files": [str(f) for f in files] if isinstance(files, list) else task["outputs"]}
             observation = await run.exec_tool(task, agent, action)
-            self.messages.append({"role": "user", "content": f"RESULT of {action['tool']}:\n{observation}"})
+            reminder = f"\n\n{contract_reminder(self.tools)}" if self.shape == "small" else ""  # spec 10: the contract at every turn
+            self.messages.append({"role": "user", "content": f"RESULT of {action['tool']}:\n{observation}{reminder}"})
         return {"stepLimit": True}

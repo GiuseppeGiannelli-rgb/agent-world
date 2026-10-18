@@ -52,6 +52,34 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     return meta, body
 
 
+# spec 10 §R4: what a small model imitates, what a coder copies
+CODE_BLOCK_RE = re.compile(r"^```[^\n`]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# the word opens the heading, at most after one word ("Worked example"), and the
+# heading is not about what to avoid ("Bad examples")
+EXAMPLE_HEAD_RE = re.compile(r"^(#{1,4})[ \t]+(?:[\w-]+[ \t]+)?(?:examples?|esempi[oi]?|ejemplos?|exemples?|beispiele?)\b(.*)$", re.MULTILINE | re.IGNORECASE)
+NOT_EXAMPLE_RE = re.compile(r"\b(?:bad|wrong|avoid|anti|not|don'?t|sbagliat\w*|cattiv\w*|evita\w*|mal[oa]s?|incorrect\w*|mauvais\w*|schlecht\w*|falsch\w*)\b", re.IGNORECASE)
+
+
+def code_blocks(body: str) -> list[str]:
+    """The fenced code blocks of a skill, fences included, in order."""
+    return [m.group(0).strip() for m in CODE_BLOCK_RE.finditer(body) if m.group(1).strip()]
+
+
+def example_of(body: str, max_chars: int = 1200) -> str:
+    """The example of a skill: its "Example" section (in five languages), or
+    its first code block, or "" when it has neither."""
+    m = next((h for h in EXAMPLE_HEAD_RE.finditer(body) if not NOT_EXAMPLE_RE.search(h.group(0))), None)
+    if m:
+        level = len(m.group(1))
+        rest = body[m.end() :]
+        end = re.search(rf"^#{{1,{level}}}\s", rest, re.MULTILINE)
+        section = rest[: end.start() if end else len(rest)].strip()
+        if section:
+            return section[:max_chars]
+    blocks = code_blocks(body)
+    return blocks[0][:max_chars] if blocks else ""
+
+
 async def _head(path: Path, n: int = 6000) -> str:
     def read():
         with open(path, "rb") as f:
@@ -241,6 +269,34 @@ class SkillLibrary:
             index.add_vectors(i, [vec], LOCAL)
         (query_vec,) = local_vectors([query])
         return [{"skill": chunks[h["id"]][0], "text": chunks[h["id"]][1], "score": h["score"]} for h in index.search(query, k, query_vec)]
+
+    async def _body(self, id_or_name) -> tuple[dict | None, str]:
+        s = self.find(id_or_name)
+        if not s:
+            return None, ""
+        try:
+            text = await asyncio.to_thread(Path(s["path"]).read_text, encoding="utf-8")
+        except OSError:
+            return s, ""
+        return s, parse_frontmatter(text)[1]
+
+    async def example(self, id_or_name, max_chars: int = 1200) -> dict | None:
+        """Spec 10: the example of one skill, for a small model ({skill, text}), or None."""
+        s, body = await self._body(id_or_name)
+        text = example_of(body, max_chars) if s else ""
+        return {"skill": s, "text": text} if text else None
+
+    async def snippets(self, id_or_name, k: int = 3, max_chars: int = 2400) -> dict | None:
+        """Spec 10: the code blocks of one skill, for a coder ({skill, blocks}), at
+        most k of them and max_chars in all, or None."""
+        s, body = await self._body(id_or_name)
+        out, used = [], 0
+        for block in code_blocks(body) if s else []:
+            if len(out) >= k or used + len(block) > max_chars:
+                break
+            out.append(block)
+            used += len(block)
+        return {"skill": s, "blocks": out} if out else None
 
     async def read(self, id_or_name, max: int = 12000) -> dict:
         s = self.find(id_or_name)

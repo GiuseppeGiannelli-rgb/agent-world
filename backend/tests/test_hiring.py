@@ -356,18 +356,19 @@ MARKET = {
 }
 
 
-def market_ctx(tmp_path, monkeypatch, upstream):
+def market_ctx(tmp_path, monkeypatch, upstream, market=None):
     """The failover tests' live context (fake servers answering like the simulator),
     with a market of real-looking model names instead of alpha/m1 and beta/m2."""
+    market = market or MARKET
     from test_failover import live_ctx  # tests/ is on sys.path
 
     ctx = live_ctx(tmp_path, monkeypatch, upstream, limits={"maxParallel": 2})
     cfg = ctx.config.get()
-    for p in MARKET:
+    for p in market:
         monkeypatch.setenv(f"{p.upper()}_TEST_KEY", "k")
         cfg["providers"][p] = {"kind": "openai", "baseUrl": f"http://{p}/v1", "keyEnv": f"{p.upper()}_TEST_KEY"}
     del cfg["providers"]["alpha"], cfg["providers"]["beta"]
-    every = [f"{p}/{m}" for p, models in MARKET.items() for m in models]
+    every = [f"{p}/{m}" for p, models in market.items() for m in models]
     for combo in cfg["combos"].values():
         combo["models"] = list(every)
     cfg["router"]["aliases"] = {}
@@ -484,3 +485,301 @@ async def test_a_demo_run_hires_nobody_and_works_as_before(demo_ctx):
     assert d["status"] in ("completed", "completed_with_failures"), d["error"]
     assert d["tasks"] and all(t["hire"]["demo"] is True and t["hire"]["chosen"] is None for t in d["tasks"])
     assert all(t["hire"]["category"] and t["hire"]["level"] for t in d["tasks"])
+
+
+# ---------- R4: the prompt takes the shape of the hired model ----------
+#
+# small (local, :free, 14B or less): atomic steps from the task, one example from
+# the skill, the JSON contract and a validator at every turn; reasoning: the QA
+# checklist, the constraints and the Brain lessons first; coder: the snippets of
+# the skills, the exact tree of the project and the interfaces to respect;
+# general: the prompt of before (the demo simulator stays here). D6: in this order.
+
+SHAPES = [
+    ("ollama/qwen2.5-coder:7b", "small"),  # D6: a 7B coder needs atomic steps more than snippets
+    ("openrouter/meta-llama/llama-3.3-70b-instruct:free", "small"),
+    ("gemini/gemini-2.5-flash", "small"),
+    ("groq/llama-3.1-8b-instant", "small"),
+    ("together/Qwen/Qwen2.5-14B-Instruct", "small"),  # 14B and less
+    ("openai/o3", "reasoning"),
+    ("deepseek/deepseek-reasoner", "reasoning"),
+    ("openrouter/deepseek/deepseek-r1", "reasoning"),
+    ("gemini/gemini-2.5-pro", "reasoning"),
+    ("anthropic/claude-sonnet-5-5", "coder"),
+    ("deepseek/deepseek-chat", "coder"),
+    ("openai/gpt-5", "coder"),
+    ("mistral/codestral-latest", "coder"),
+    ("mistral/devstral-medium-latest", "coder"),
+    ("anthropic/claude-opus-5-5", "general"),
+    ("openai/gpt-4o", "general"),
+    ("together/meta-llama/Llama-3.3-70B-Instruct-Turbo", "general"),
+    ("mock/mock-dev", "general"),  # the demo keeps its prompt
+]
+
+
+@pytest.mark.parametrize("key,shape", SHAPES)
+def test_the_prompt_shape_follows_the_family_and_the_size(key, shape):
+    from backend.rag_budget import budget
+    from backend.rag_budget import shape as shape_of
+
+    p = profiler.profile(key)
+    assert shape_of(p) == shape, p
+    assert budget(p, {})["shape"] == shape
+    if shape == "small":
+        assert budget(p, {})["jsonContract"] is True  # the contract comes with every small model
+
+
+SKILL_MD = """---
+name: landing-page
+description: how to build a landing page that converts
+---
+# Landing page
+
+Keep the hero above the fold, with one call to action.
+
+## Example
+
+```html
+<section class="hero"><h1>Da Gino</h1><a class="cta" href="#menu">Prenota</a></section>
+```
+
+## Layout
+
+```css
+.hero { display: grid; place-items: center; min-height: 80vh; }
+```
+
+Use the brand palette of the stylesheet.
+"""
+CSS = ":root { --primary: #c0392b; }\n.hero { color: var(--primary); }\n.cta { background: var(--primary); }\n"
+MARKERS = {
+    "small": ["STEPS (", "EXAMPLE FROM YOUR SKILL"],
+    "reasoning": ["QA CHECKLIST", "CONSTRAINTS", "LESSONS FROM THE BRAIN"],
+    "coder": ["PROJECT TREE", "INTERFACES TO RESPECT", "SKILL SNIPPETS"],
+}
+
+
+@pytest.mark.parametrize("head", ["Example", "Examples", "Worked example", "Esempio", "Ejemplo", "Exemple", "Beispiel"])
+def test_the_example_of_a_skill_is_its_example_section(head):
+    from backend.skills import example_of
+
+    body = f"# Skill\n\nIntro.\n\n```css\n.a {{}}\n```\n\n## {head}\n\nThe hero, then the menu.\n\n### Detail\n\nStill the example.\n\n## Next\n\nNot the example."
+    assert example_of(body) == "The hero, then the menu.\n\n### Detail\n\nStill the example."  # down to the next heading of its level
+
+
+def test_without_an_example_section_the_first_code_block_and_otherwise_nothing():
+    from backend.skills import code_blocks, example_of
+
+    body = "# Skill\n\n## Counterexamples are not examples\n\n```html\n<p>one</p>\n```\n\ntext\n\n```js\ntwo()\n```\n"
+    assert code_blocks(body) == ["```html\n<p>one</p>\n```", "```js\ntwo()\n```"]
+    assert example_of(body) == "```html\n<p>one</p>\n```"
+    assert example_of("# Skill\n\nOnly words.") == ""
+    assert example_of("## Bad examples\n\nwrong\n\n## Esempi sbagliati\n\nwrong\n\n## Example\n\nright") == "right"  # what to avoid is no model
+    assert len(example_of("## Example\n\n" + "x" * 5000, max_chars=300)) == 300
+
+
+async def shaped_tasker(demo_ctx, tmp_path, key):
+    """A worker of w2 (dev) building on w1 (design, delivered css/style.css), with
+    a skill that has an example, a Brain lesson and its subtask hired on `key`."""
+    from backend.plan import new_task
+    from backend.run import Run
+    from backend.skills import SkillLibrary
+    from backend.tasker import Tasker
+
+    class Cfg:
+        def get(self):
+            return {"skills": {"sources": ["skills"], "repos": []}, "rag": {"chunk": {"maxChars": 1200}}}
+
+    root = tmp_path / "lib"
+    (root / "skills" / "landing-page").mkdir(parents=True)
+    (root / "skills" / "landing-page" / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+    lib = SkillLibrary(root, Cfg(), None)
+    await lib.reindex()
+    demo_ctx.skills = lib
+    demo_ctx.brain.add(title="Il pulsante sopra la piega", text="Nella pagina del menu il pulsante di prenotazione va sopra la piega: il QA lo ha chiesto due volte.", team="dev", kind="lesson")
+    run = Run(goal="Il sito della pizzeria", ctx=demo_ctx)
+    ws = lambda i, deps=(): {"id": i, "team": "dev", "title": i, "objective": "o", "deliverables": [], "acceptance": [], "dependsOn": list(deps), "status": "running", "summary": ""}  # noqa: E731
+    run.data["workstreams"] = [ws("w1"), ws("w2", ["w1"])]
+    design = new_task({"id": "w1.1", "wsId": "w1", "team": "design", "title": "Palette e stile", "description": "La palette del brand", "acceptance": [], "outputs": ["css/style.css"], "dependsOn": []})
+    design.update(status="done", files=["css/style.css"], summary="La palette del brand in css/style.css")
+    page = new_task(
+        {
+            "id": "w2.1",
+            "wsId": "w2",
+            "team": "dev",
+            "title": "Pagina del menu",
+            "description": "Costruisci la pagina del menu con i colori del brand e il pulsante di prenotazione.",
+            "acceptance": ["La pagina usa le variabili della palette", "Il pulsante di prenotazione sta sopra la piega"],
+            "outputs": ["menu.html", "js/menu.js"],
+            "dependsOn": [],
+        }
+    )
+    page["pitfalls"] = ["Non ridefinire i colori: usa var(--primary)"]
+    page["skills"] = [{"id": lib.skills[0]["id"], "name": "landing-page"}]
+    page["hire"] = {"chain": [{"key": key}], "chosen": key}
+    run.data["tasks"] = [design, page]
+    await run.ws.write("css/style.css", CSS)
+    await run.ws.write("index.html", "<main id='app'></main>")
+    run.publish_file(design, {"id": "ugo", "name": "Ugo"}, "css/style.css", CSS)
+    tasker = Tasker(run, page, {"id": "nina", "name": "Nina", "team": "dev", "kind": "worker"})
+    await tasker.init()
+    return tasker
+
+
+@pytest.mark.asyncio
+async def test_a_small_model_gets_atomic_steps_an_example_from_its_skill_and_the_contract(demo_ctx, tmp_path):
+    t = await shaped_tasker(demo_ctx, tmp_path, "ollama/qwen2.5-coder:7b")
+    system, brief = t.messages[0]["content"], t.messages[1]["content"]
+    assert t.shape == "small"
+    steps = brief.split("STEPS (", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+    numbered = [s for s in steps if s[:1].isdigit()]
+    assert numbered[0].startswith("1. list_files")
+    assert any("read_file" in s and "css/style.css" in s for s in numbered)  # the teammate's file, before building on it
+    assert [s for s in numbered if "write_file" in s and "menu.html" in s] and [s for s in numbered if "write_file" in s and "js/menu.js" in s]  # one step per file
+    assert "read_file" in numbered[-2] and "finish" in numbered[-1]  # the check, then finish
+    example = brief.split("EXAMPLE FROM YOUR SKILL", 1)[1]
+    assert '<section class="hero">' in example  # the "Example" section of the skill
+    assert system.rsplit("\n\n", 1)[1].startswith("OUTPUT CONTRACT")  # the contract, last
+    assert "QA CHECKLIST" not in brief and "PROJECT TREE" not in brief
+    for field in ("GOAL:", "TASK ID: w2.1", "OUTPUTS: menu.html, js/menu.js", "PROJECT FILES:"):
+        assert field in brief  # the fields the demo simulator and the tests read stay
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_model_gets_the_checklist_the_constraints_and_the_lessons_first(demo_ctx, tmp_path):
+    t = await shaped_tasker(demo_ctx, tmp_path, "openai/o3")
+    brief = t.messages[1]["content"]
+    assert t.shape == "reasoning"
+    head = brief.split("\nDESCRIPTION:", 1)[0]  # what comes before the task itself
+    assert "QA CHECKLIST" in head and "[ ] La pagina usa le variabili della palette" in head and "[ ] Il pulsante di prenotazione sta sopra la piega" in head
+    constraints = head.split("CONSTRAINTS", 1)[1]
+    assert "var(--primary)" in constraints  # the pitfall
+    assert "w1.1" in constraints and "css/style.css" in constraints  # the work it builds on
+    assert ".hero" in constraints and "--primary #c0392b" in constraints  # the interface of the linked file
+    lessons = head.split("LESSONS FROM THE BRAIN", 1)[1]
+    assert "sopra la piega" in lessons
+    assert "STEPS (" not in brief and "SKILL SNIPPETS" not in brief
+
+
+@pytest.mark.asyncio
+async def test_a_coder_model_gets_the_snippets_the_tree_and_the_interfaces(demo_ctx, tmp_path):
+    t = await shaped_tasker(demo_ctx, tmp_path, "anthropic/claude-sonnet-5-5")
+    brief = t.messages[1]["content"]
+    assert t.shape == "coder"
+    tree = brief.split("PROJECT TREE", 1)[1].split("\n\n", 1)[0]
+    assert "\n  css/\n    style.css" in tree and "\n  index.html" in tree  # the exact tree, folders first
+    interfaces = brief.split("INTERFACES TO RESPECT", 1)[1].split("\n\n", 1)[0]
+    assert "css/style.css" in interfaces and ".hero" in interfaces and ".cta" in interfaces
+    snippets = brief.split("SKILL SNIPPETS", 1)[1]
+    assert ".hero { display: grid;" in snippets and '<section class="hero">' in snippets  # the code blocks of the skill
+    assert brief.index("PROJECT TREE") < brief.index("\nDESCRIPTION:")  # first
+    assert "QA CHECKLIST" not in brief and "STEPS (" not in brief
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["anthropic/claude-opus-5-5", None])
+async def test_a_general_model_and_the_demo_keep_the_prompt_of_before(demo_ctx, tmp_path, key):
+    t = await shaped_tasker(demo_ctx, tmp_path, key or "x/y")
+    if key is None:
+        t.task["hire"] = {"chain": [], "chosen": None, "demo": True}  # D5: nobody hired, the simulator
+        t.messages = None
+        await t.init()
+    brief, system = t.messages[1]["content"], t.messages[0]["content"]
+    assert t.shape == "general"
+    assert not [m for markers in MARKERS.values() for m in markers if m in brief], brief
+    assert brief.startswith("GOAL: Il sito della pizzeria\n\nWORKSTREAM:")  # the brief of before, field by field
+    assert "OUTPUT CONTRACT" not in system
+
+
+@pytest.mark.asyncio
+async def test_a_switch_to_a_small_model_brings_its_shape(demo_ctx, tmp_path):
+    """A failover from a coder to a small model: the next step gets the steps and the contract."""
+    t = await shaped_tasker(demo_ctx, tmp_path, "anthropic/claude-sonnet-5-5")
+    await t._switched({"target": "groq/llama-3.1-8b-instant", "profile": profiler.profile("groq/llama-3.1-8b-instant")})
+    assert t.shape == "small"
+    switch = t.pending["content"]
+    assert switch.startswith("MODEL SWITCH") and "STEPS (" in switch and "OUTPUT CONTRACT" in switch
+
+
+def small_run(replies, key):
+    """test_tasker's duck of a run, its model profiled as `key`, its tool calls recorded."""
+    from test_tasker import FakeRun
+
+    run = FakeRun(replies)
+    run.cfg["limits"]["maxSteps"] = 6
+    run.model_profile = lambda role, use=None: profiler.profile(key)
+
+    async def exec_tool(task, agent, action):
+        run.tool_calls.append((action["tool"], dict(action["args"])))
+        return "done"
+
+    run.exec_tool = exec_tool
+    return run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key,stopped", [("groq/llama-3.1-8b-instant", True), ("anthropic/claude-opus-5-5", False)])
+async def test_the_validator_stops_an_incomplete_action_of_a_small_model(key, stopped):
+    """write_file without content: for a small model a FORMAT ERROR that names the
+    missing argument, at every turn, instead of reaching the tool."""
+    import json
+
+    from test_tasker import AGENT, TASK
+
+    from backend.tasker import Tasker
+
+    run = small_run(
+        [
+            json.dumps({"thought": "write", "tool": "write_file", "args": {"path": "out.md"}}),
+            json.dumps({"thought": "write", "tool": "write_file", "args": {"path": "out.md", "content": "# Out"}}),
+            json.dumps({"thought": "deliver", "tool": "finish", "args": {"summary": "Done", "files": ["out.md"]}}),
+        ],
+        key,
+    )
+    t = Tasker(run, dict(TASK, history=[]), AGENT)
+    out = await t.work()
+    assert out["summary"] == "Done"
+    errors = [m["content"] for m in t.messages if m["role"] == "user" and m["content"].startswith("FORMAT ERROR")]
+    if stopped:
+        assert run.tool_calls == [("write_file", {"path": "out.md", "content": "# Out"})]  # the incomplete one never reached the tool
+        assert len(errors) == 1 and "write_file" in errors[0] and '"content"' in errors[0]
+        results = [m["content"] for m in t.messages if m["role"] == "user" and m["content"].startswith("RESULT of")]
+        assert results and all("ONE JSON object" in r for r in results)  # the contract, at every turn
+    else:
+        assert [c[0] for c in run.tool_calls] == ["write_file", "write_file"] and not errors  # the prompt of before
+
+
+@pytest.mark.asyncio
+async def test_every_hired_model_of_a_live_run_gets_the_prompt_of_its_family(tmp_path, monkeypatch):
+    """The market of the live tests: the worker of each subtask writes to its hired
+    model in the shape of that model, and the run still arrives at the end."""
+    import asyncio
+
+    from test_failover import GOAL, Upstream
+
+    from backend.rag_budget import shape as shape_of
+    from backend.run import Run
+
+    upstream = Upstream()
+    mixed = {"anthropic": ["claude-opus-5-5", "claude-sonnet-5-5"], "openai": ["o3", "gpt-4o"], "groq": ["llama-3.1-8b-instant"]}  # paid families and one free
+    run = Run(goal=GOAL, ctx=market_ctx(tmp_path, monkeypatch, upstream, mixed))
+    await asyncio.wait_for(run.start(), timeout=60)
+    d = run.data
+    assert d["status"] == "completed", d["error"]
+    seen, rehired = set(), 0
+    for t in d["tasks"]:
+        calls = [c for c in upstream.calls if c["marker"] == "tasker" and _task_of(c) == t["id"]]
+        shapes = [shape_of(profiler.profile(f"{c['provider']}/{c['model']}")) for c in calls]
+        brief = calls[0]["messages"][1]["content"]
+        for name, markers in MARKERS.items():
+            assert (markers[0] in brief) is (name == shapes[0]), (t["id"], calls[0]["model"], name)  # no skills here: the first block of each shape
+        for prev, c, shape in zip(calls, calls[1:], shapes[1:]):
+            if c["model"] != prev["model"]:
+                # a revision hired another model: the switch, in its shape, is there from its first step
+                rehired += 1
+                switch = [m["content"] for m in c["messages"] if m["role"] == "user" and m["content"].startswith(f"MODEL SWITCH: you now run on {c['provider']}/{c['model']}")]
+                assert switch and (shape == "general" or MARKERS[shape][0] in switch[-1]), (t["id"], c["model"], shape)
+        assert t["hire"]["shape"] == shapes[-1]  # the record says which prompt the hired model got
+        seen.update(shapes)
+    assert len(seen) >= 2, seen  # the market hires more than one family
+    assert rehired >= 1  # and a revision hires a bigger one for the same subtask
