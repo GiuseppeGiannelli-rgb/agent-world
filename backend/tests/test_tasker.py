@@ -240,3 +240,19 @@ class TestTaskerWork:
         assert mock.field(user, "TASK ID") == "w1.1"
         assert mock.field(user, "GOAL") == "obiettivo demo"
         assert mock.csv(mock.field(user, "OUTPUTS")) == ["out.md"]
+
+
+def test_compaction_never_drops_what_the_owner_said_or_gave():
+    """Spec 09: the owner's words to a task and the files they added stay valid
+    after compaction, like a revision request."""
+    from backend.tasker import KEEP_RECENT, compact
+
+    head = [{"role": "system", "content": "[[role:tasker:dev]]"}, {"role": "user", "content": "GOAL: g"}]
+    early = [
+        {"role": "user", "content": "MESSAGE FROM THE OWNER about this task: use my photo for the hero"},
+        {"role": "user", "content": "FILES FROM THE OWNER (just added; ...):\n- attachments/hero.jpg (image jpeg 1600x900)"},
+    ]
+    steps = [m for i in range(KEEP_RECENT) for m in ({"role": "assistant", "content": '{"tool": "list_files", "args": {}}'}, {"role": "user", "content": f"RESULT of list_files:\n{i}"})]
+    out = compact(head + early + steps)
+    assert "use my photo for the hero" in out[1]["content"] and "attachments/hero.jpg (image jpeg 1600x900)" in out[1]["content"]
+    assert len(out) < len(head + early + steps)

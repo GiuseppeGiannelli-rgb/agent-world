@@ -261,6 +261,40 @@ PROJECT FILES:
 {files or '(empty folder)'}"""
 
 
+# ---------- spec 09: deciding for the owner, changes after the end ----------
+
+
+def arbiter_prompt(*, responder: dict, goal: str, task: dict, asker: str, question: str, progress: str, owner_files: str = "", language: str | None = None) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:arbiter]]
+You are {responder['name']}. {asker} asked the owner of the project a question, and the owner did not answer in time (or asked the team to decide). Decide for them, so the work never waits: write 2 to 4 concrete options that need nothing more from the owner, each with why, and pick the best technical one. Prefer what is reversible, consistent with the goal and with what the team already delivered, and uses the owner's files when there are some. {language_rule(language)}
+Answer with ONLY this JSON object: {{"options": [{{"id": "a", "solution": "...", "why": "..."}}], "pick": "a"}}""",
+        },
+        {
+            "role": "user",
+            "content": f"GOAL: {goal}\nTASK ID: {task['id']}\nTASK: {task['title']}\nDESCRIPTION: {task['description']}\nQUESTION FROM {asker}:\n{question}\nPROGRESS:\n{progress}" + (f"\nOWNER FILES ({OWNER_NOTE}):\n{owner_files}" if owner_files else ""),
+        },
+    ]
+
+
+def refiner_prompt(*, ceo: dict, goal: str, directive: str, files: str, tasks: list[dict], language: str | None = None) -> list[dict]:
+    lines = "\n".join(f"- {t['id']} | {t['title']} | team {t['team']} | files: {', '.join(t.get('files') or t.get('outputs') or []) or 'none'}" for t in tasks)
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:refiner]]
+You are {ceo['name']}, the CEO. The owner asks for a change to what the company delivered. Name the delivered tasks that must be redone for it (1 to 3: the one that owns the part to change, and the one that integrates it when the change must show in the result), each with a precise instruction for its worker. {language_rule(language)}
+Answer with ONLY this JSON object: {{"targets": [{{"taskId": "...", "instruction": "..."}}]}}""",
+        },
+        {
+            "role": "user",
+            "content": f"GOAL: {goal}\nDIRECTIVE: {directive}" + (f"\nOWNER FILES ({OWNER_NOTE}):\n{files}" if files else "") + f"\nDONE TASKS:\n{lines}",
+        },
+    ]
+
+
 # ---------- spec 09: what an image shows ----------
 
 

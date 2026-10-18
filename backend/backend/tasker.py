@@ -11,6 +11,7 @@ from backend.json_repair import extract_json
 from backend.prompts import OWNER_TOOLS, TOOL_DOCS, output_contract, tasker_brief, tasker_system, tools_for
 
 KEEP_RECENT = 16
+KEPT_PREFIXES = ("REVISION REQUESTED", "MESSAGE FROM THE USER", "MESSAGE FROM THE OWNER", "FILES FROM THE OWNER")
 ALL_TOOLS = list(TOOL_DOCS.keys())
 
 
@@ -53,7 +54,8 @@ def compact(messages: list[dict]) -> list[dict]:
     ]
     if dropped:
         log = [describe_step(m["content"]) for m in dropped if m["role"] == "assistant"]
-        keep = [m["content"][:1500] for m in dropped if m["role"] == "user" and (m["content"].startswith("REVISION REQUESTED") or m["content"].startswith("MESSAGE FROM THE USER"))]
+        # spec 09: what the owner told this task and the files they added stay valid too
+        keep = [m["content"][:1500] for m in dropped if m["role"] == "user" and isinstance(m["content"], str) and m["content"].startswith(KEPT_PREFIXES)]
         extra = f"\n\nEARLIER INSTRUCTIONS STILL VALID:\n{'\n---\n'.join(keep)}" if keep else ""
         head[1] = {"role": "user", "content": f"{head[1]['content']}\n\nEARLIER STEPS (compacted):\n{chr(10).join(log)}{extra}"}
     return [*head, *tail]

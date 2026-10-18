@@ -1386,10 +1386,154 @@ class Run:
         answer = await self.wait_answer(item, self.cfg["limits"]["askUserTimeoutMs"])
         if self._abort.is_set():
             raise RunStopped("Stopped by the user")
+        if not answer and self.cfg["limits"].get("autoAnswer", True):
+            # spec 09: no bottleneck: the lead (or the CEO, TypeSafe as arbiter) decides for the owner
+            decision = await self.auto_answer(task, agent, question)
+            answer = self._auto_close(item, decision)
         self.team.set(agent["id"], {"state": "thinking", "text": self.t("got_answer") if answer else self.t("no_answer")})
+        if answer and answer.get("auto"):
+            return f"{answer['byName']} decided for you (the owner did not answer, or asked the team to decide): {answer['text']}. Why: {answer.get('why') or '-'}. Go on with it and state the choice in your summary."
         if answer and answer.get("text"):
             return f"The owner answers: {answer['text']}"
         return "No answer from the owner in time: make the most reasonable decision yourself and state it in your summary."
+
+    # ---------- spec 09: deciding for the owner ----------
+
+    async def auto_answer(self, task: dict, asker: dict, question: str) -> dict:
+        """The lead of the task's team (the CEO when the lead is the one asking)
+        writes 2-4 options and picks one; TypeSafe's Jev, when configured, picks
+        among them, and its pick wins at router.arbiter.minConfidence or above."""
+        from backend.arbiter import typesafe_choose
+        from backend.prompts import arbiter_prompt
+
+        lead = self.team.lead(task["team"])
+        responder = self.ceo if not lead or lead["id"] == asker.get("id") or asker.get("kind") == "ceo" else lead
+        ceo = responder["kind"] == "ceo"
+        obj = await self.chat_json(
+            {"role": "ceo" if ceo else task["team"], "use": None if ceo else self.role_combo("lead"), "messages": arbiter_prompt(responder=responder, goal=self.data["goal"], task=task, asker=asker.get("name") or asker.get("id") or "?", question=question, progress=self.progress_text(task["team"]), owner_files=self.owner_files_text(task), language=self.lang), "max_tokens": 900, "agent": responder, "task": task},
+            lambda o: isinstance(o.get("options"), list) and len(o["options"]) > 0,
+        )
+        options = []
+        for i, o in enumerate((obj or {}).get("options") or []):
+            o = o if isinstance(o, dict) else {"solution": str(o)}
+            solution = str(o.get("solution") or o.get("text") or "").strip()
+            if solution:
+                options.append({"id": str(o.get("id") or chr(97 + i))[:8], "solution": solution[:600], "why": str(o.get("why") or "")[:300]})
+            if len(options) >= 4:
+                break
+        if not options:
+            options = [{"id": "a", "solution": self.t("auto_fallback"), "why": ""}]
+        ids = [o["id"] for o in options]
+        pick = str((obj or {}).get("pick") or "") if str((obj or {}).get("pick") or "") in ids else ids[0]
+        arbiter, confidence = ("lead" if not ceo else "ceo"), None
+        state = {"goal": self.data["goal"][:2000], "task": f"{task['id']} {task['title']}: {task['description'][:800]}", "question": question[:1500], "asked_by": asker.get("name") or "", "progress": self.progress_text(task["team"])[:2000]}
+        jev = await typesafe_choose(self.ctx.router, state, options)
+        min_conf = float(((self.cfg.get("router") or {}).get("arbiter") or {}).get("minConfidence", 0.55))
+        if jev and jev["choice"] in ids and jev["confidence"] >= min_conf:
+            pick, arbiter, confidence = jev["choice"], "typesafe", jev["confidence"]
+        chosen = next(o for o in options if o["id"] == pick)
+        by = self.t("arbiter_typesafe", c=f"{confidence:.2f}") if arbiter == "typesafe" else ""
+        text = self.t("auto_decision", name=responder["name"], by=by, solution=chosen["solution"], why=chosen["why"] or "-")
+        self.message(responder["id"], asker.get("id") or "*", "decision", text)
+        self.note(task, responder, "decision", text)
+        return {"pick": pick, "solution": chosen["solution"], "why": chosen["why"], "options": options, "by": responder["id"], "byName": responder["name"], "arbiter": arbiter, "confidence": confidence, "text": text}
+
+    def _auto_close(self, item: dict, decision: dict) -> dict:
+        item["status"] = "auto"
+        item["answer"] = {"text": decision["solution"], "why": decision["why"], "decision": None, "at": _now_ms(), "auto": True, "by": decision["by"], "byName": decision["byName"], "arbiter": decision["arbiter"], "confidence": decision["confidence"]}
+        self.ctx.bus.emit("waiting", {"runId": self.data["id"], "item": item})
+        self.emit_run(True)
+        return item["answer"]
+
+    def _question_parts(self, id: str, statuses: tuple):
+        item = next((w for w in self.data["waiting"] if w["id"] == id and w.get("kind") == "question" and w["status"] in statuses), None)
+        if item is None:
+            return None, None, None
+        task = self.task_by_id(item.get("taskId") or "")
+        asker = self.team.get(item["from"]) or {"id": item["from"], "name": item["from"], "kind": "worker"}
+        return item, task, asker
+
+    async def solve(self, id: str) -> dict | None:
+        """"Find a solution yourself" on an open question of a live run."""
+        item, task, asker = self._question_parts(id, ("open",))
+        if item is None or task is None:
+            return None
+        decision = await self.auto_answer(task, asker, item["text"])
+        if item["status"] != "open":
+            return decision  # the owner answered while the team was deciding: their words win
+        answer = self._auto_close(item, decision)
+        done = self.answer_waiters.get(id)
+        if done is not None:
+            done(answer)
+        return decision
+
+    async def solve_pending(self, id: str) -> dict | None:
+        """The same on a stopped run's question: the decision reaches the task on resume."""
+        item, task, asker = self._question_parts(id, ("pending", "open"))
+        if item is None or task is None:
+            return None
+        decision = await self.auto_answer(task, asker, item["text"])
+        self._auto_close(item, decision)
+        self.add_interaction(task, "user", f"{decision['solution']} ({decision['byName']} decided for you; why: {decision['why'] or '-'})", answers=item["id"], question=item["text"][:300], by=decision["by"])
+        self.emit_run(True)
+        return decision
+
+    # ---------- spec 09: changes after the end ----------
+
+    async def refine_targets(self, text: str, attachment_ids=()) -> list[dict]:
+        """The delivered tasks a change touches, named by the CEO; an id that does
+        not exist is dropped, and with no usable answer the task that owns the
+        page (or the last one done) takes the change."""
+        from backend.prompts import refiner_prompt
+
+        done = [t for t in self.data["tasks"] if t["status"] == "done"]
+        if not done:
+            return []
+        files = "\n".join(line for line in self.owner_files_text().split("\n") if any(a["path"] in line for a in self.data.get("attachments") or [] if a["id"] in attachment_ids))
+        obj = await self.chat_json(
+            {"role": "ceo", "messages": refiner_prompt(ceo=self.ceo, goal=self.data["goal"], directive=text, files=files, tasks=done, language=self.lang), "max_tokens": 1200, "agent": self.ceo},
+            lambda o: isinstance(o.get("targets"), list),
+        )
+        ids = {t["id"] for t in done}
+        out: list[dict] = []
+        for x in (obj or {}).get("targets") or []:
+            tid = str((x or {}).get("taskId") or "") if isinstance(x, dict) else ""
+            if tid in ids and tid not in [o["taskId"] for o in out]:
+                out.append({"taskId": tid, "instruction": str(x.get("instruction") or text).strip()[:2000] or text})
+            if len(out) >= 3:
+                break
+        if not out:
+            page = next((t for t in reversed(done) if "index.html" in (t.get("files") or [])), None) or done[-1]
+            out = [{"taskId": page["id"], "instruction": text}]
+        return out
+
+    def reopen_done(self, task: dict) -> None:
+        """A delivered task goes back in the queue for a change; in a live run its
+        worker goes on from its conversation."""
+        task.update(status="queued", error=None, agentId=None, finishedAt=None, revisions=0, stopped=False)
+        task["rounds"] = task.get("rounds", 0) + 1
+        ws = self.ws_by_id(task["wsId"])
+        if ws and ws["status"] != "running":
+            ws.update(status="running", error=None, finishedAt=None)
+        self.emit_task(task)
+
+    async def refine(self, text: str, attachment_ids=(), task_id: str | None = None) -> dict:
+        """Spec 09 §4: the owner's change goes to the tasks it touches (the CEO names
+        them; from a delivered task's own box, that task), with the files."""
+        targets = [{"taskId": task_id, "instruction": text}] if task_id else await self.refine_targets(text, attachment_ids)
+        paths = [a["path"] for a in self.data.get("attachments") or [] if a["id"] in attachment_ids]
+        for tg in targets:
+            task = self.task_by_id(tg["taskId"])
+            self.add_interaction(task, "user", tg["instruction"] + (f"\nFiles: {', '.join(paths)}" if paths else ""), attachments=list(attachment_ids), refine=True)
+            self.reopen_done(task)
+        if targets:
+            self.data.setdefault("refinements", []).append({"at": _now_ms(), "text": text[:2000], "attachments": list(attachment_ids), "targets": [t["taskId"] for t in targets]})
+            self.message("user", self.ceo["id"], "refine", text)
+            self.message(self.ceo["id"], "*", "system", self.t("refine_started", n=len(targets), ids=", ".join(t["taskId"] for t in targets)))
+            if not self.detached:
+                self.tick()
+        self.emit_run(True)
+        return {"ok": True, "targets": targets}
 
     async def rescue(self, task: dict, agent: dict, feedback: str) -> dict:
         lead = self.team.lead(task["team"]) or self.ceo

@@ -11,6 +11,8 @@ os.environ["AGENT_WORLD_SKILLER"] = "0"
 os.environ["AGENT_WORLD_SKILL_REPOS"] = "0"
 # Spec 08: nor ask the providers (or a local Ollama) which models they have.
 os.environ["AGENT_WORLD_DISCOVER"] = "0"
+# Spec 09: registering a provider reads .env again: never the developer's real one in a test.
+os.environ["AGENT_WORLD_ENV_FILE"] = str(Path(__file__).resolve().parent / "no-such-dotenv")
 
 
 @pytest.fixture(autouse=True)

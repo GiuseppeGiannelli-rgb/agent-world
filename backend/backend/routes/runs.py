@@ -272,10 +272,20 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
         if data is None:
             return _err(404, "Run non trovato")
         body = await _body(request)
+        item_id = str(body.get("itemId") or "")
+        if body.get("solve"):
+            # spec 09: "Find a solution yourself": the lead (or the CEO, TypeSafe as arbiter) decides
+            target = run if run is not None else Run.from_data(data, ctx)
+            decision = await (target.solve(item_id) if run is not None else target.solve_pending(item_id))
+            if decision is None:
+                return _err(409, "Questa richiesta non è più aperta")
+            if run is None:
+                store.save(data, True)
+            return {"ok": True, "decision": decision["text"], "by": decision["by"], "arbiter": decision["arbiter"], **({"resumable": True} if run is None else {})}
         if run is None:
             # spec 09: a question of a stopped run is answered now and reaches its task on resume
             stored = Run.from_data(data, ctx)
-            if not stored.answer_pending(str(body.get("itemId") or ""), str(body.get("text") or "")):
+            if not stored.answer_pending(item_id, str(body.get("text") or "")):
                 return _err(409, "Questa richiesta non è più aperta")
             store.save(data, True)
             return {"ok": True, "resumable": True}
@@ -317,6 +327,39 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
                 if refused is not None:
                     return refused
                 out["resumed"] = True
+        return out
+
+    @app.post("/api/runs/{run_id}/refine")
+    async def api_run_refine(run_id: str, request: Request):
+        """Spec 09 §4: a change to what was delivered, during the run or after it."""
+        run = live.get(run_id)
+        data = run.data if run is not None else store.get(run_id)
+        if data is None:
+            return _err(404, "Run non trovato")
+        body = await _body(request)
+        text = str(body.get("text") or "").strip()[:4000]
+        ids = body.get("attachments") or []
+        if not isinstance(ids, list) or any(i not in {a["id"] for a in data.get("attachments") or []} for i in ids):
+            return _err(400, "Uno degli allegati non è di questo run: caricalo prima con /attachments.")
+        if not text:
+            return _err(400, "Scrivi che cosa cambiare.")
+        if run is not None and run.data["status"] not in ("running",):
+            return _err(409, "Il run sta pianificando o scrivendo il report: riprova tra poco.")
+        if run is None and active_run() is not None:
+            return _err(409, "La squadra sta già lavorando a un run. Fermalo o aspetta che finisca.")
+        target = run if run is not None else Run.from_data(data, ctx)
+        task_id = body.get("taskId")
+        if task_id is not None and (target.task_by_id(str(task_id)) or {}).get("status") != "done":
+            return _err(404, "Task consegnato non trovato: scrivigli dal suo box se è ancora al lavoro.")
+        out = await target.refine(text, ids, task_id=str(task_id) if task_id else None)
+        if not out["targets"]:
+            return _err(409, "Non c'è ancora niente di consegnato da modificare.")
+        if run is None:
+            store.save(data, True)
+            refused = resume_stored(run_id, data)
+            if refused is not None:
+                return refused
+            out["resumed"] = True
         return out
 
     @app.post("/api/runs/{run_id}/{action}")

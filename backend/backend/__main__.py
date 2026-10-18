@@ -7,7 +7,7 @@ import threading
 
 import uvicorn
 
-from backend.app import ROOT, create_app
+from backend.app import ROOT, create_app, env_file
 from backend.config import Config
 from backend.env import load_env
 
@@ -87,7 +87,7 @@ def main() -> None:
         # quietly bringing the orphan servers back
         print(f"{EXIT_WITH_PARENT}=1 needs stdin to be a pipe from the script that starts the server (spawnBackend in scripts/lib/backend-launcher.js).", file=sys.stderr, flush=True)
         sys.exit(1)
-    load_env(ROOT / ".env")
+    load_env(env_file())  # ROOT/.env, or AGENT_WORLD_ENV_FILE (spec 09: the test servers read none)
     server = Config(ROOT / "config").get()["server"]
     host, port = server["host"], server["port"]
     if _port_in_use(host, port):

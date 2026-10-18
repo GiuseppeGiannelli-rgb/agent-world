@@ -227,7 +227,8 @@ def page_images(files: list[str]) -> tuple[str | None, list[str]]:
     """The hero and the gallery of the page: the images the team put in assets/
     (whatever their format: spec 09, the owner's .jpg), or else the owner's own."""
     images = [f for f in files if IMG_RE.search(f)]
-    hero = next((f for f in images if re.match(r"^assets/hero\.", f)), None)
+    # spec 09: a photo the owner gave with a change request takes the hero's place
+    hero = next((f for f in images if re.match(r"^assets/hero-owner\.", f)), None) or next((f for f in images if re.match(r"^assets/hero\.", f)), None)
     gallery = [f for f in images if re.match(r"^assets/gallery-\d+\.", f)]
     if not hero and not gallery:
         owner = [f for f in images if f.startswith("attachments/")]
@@ -352,6 +353,12 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
             steps.append({"thought": say["read_doc"].format(file=owner_docs[0]), "tool": "read_document", "args": {"path": owner_docs[0]}})
         if owner_images and (team in ("genai", "design") or any(IMG_RE.search(o) for o in outputs)):
             steps.append({"thought": say["inspect"].format(file=owner_images[0]), "tool": "inspect_image", "args": {"path": owner_images[0]}})
+    asked = any(m["role"] == "user" and "MESSAGE FROM THE OWNER about this task" in str(m["content"]) for m in messages)  # also kept by compact()
+    if asked and owner_images and any(o.endswith(".html") for o in outputs) and "assets/hero-owner" not in " ".join(files):
+        # spec 09: "use this photo instead": the newest owner photo becomes the hero, then the page is written again
+        src = owner_images[-1]
+        steps.append({"thought": say["use_file"].format(src=src, file="assets/hero-owner"), "tool": "use_attachment", "args": {"from": src, "path": f"assets/hero-owner{src[src.rfind('.'):]}"}})
+        files = [*files, f"assets/hero-owner{src[src.rfind('.'):]}"]
     for out in outputs:
         if IMG_RE.search(out) and owner_images:
             src = _owner_pick(out, owner_images)
@@ -438,10 +445,29 @@ def chat_reply(messages: list[dict], lang: str = DEFAULT) -> str:
     return (c["question"] if str(last).strip().endswith("?") else c["ack"]).format(name=name)
 
 
+def refine_targets(text: str) -> dict:
+    """The tasks a change names: those whose title shares a word with the
+    directive, or else the one that owns the page, or else the last one."""
+    directive = field(text, "DIRECTIVE")
+    words = {w.lower() for w in re.findall(r"[\w']{5,}", directive)}
+    rows = [r.split(" | ") for r in re.findall(r"^- (.+)$", block(text, "DONE TASKS") or text.split("DONE TASKS:", 1)[-1], re.MULTILINE)]
+    rows = [r for r in rows if len(r) >= 4]
+    picked = [r[0] for r in rows if words & {w.lower() for w in re.findall(r"[\w']{5,}", r[1])}]
+    if not picked:
+        page = [r[0] for r in rows if "index.html" in r[3]]
+        picked = page[-1:] or [r[0] for r in rows[-1:]]
+    return {"targets": [{"taskId": tid, "instruction": directive} for tid in picked[:3]]}
+
+
 def answer(kind: str, messages: list[dict], team: str) -> str:
     system = messages[0]["content"] if messages else ""
     lang = language_of(system) or DEFAULT
     t = _texts(lang)
+    if kind == "arbiter":
+        a = t["arbiter"]
+        return json.dumps({"options": [{"id": "a", "solution": a["a"], "why": a["why_a"]}, {"id": "b", "solution": a["b"], "why": a["why_b"]}], "pick": "a"})
+    if kind == "refiner":
+        return json.dumps(refine_targets(messages[1]["content"] if len(messages) > 1 else ""))
     if kind == "vision":
         content = messages[1]["content"] if len(messages) > 1 else ""
         text = "".join(p if isinstance(p, str) else (p or {}).get("text", "") for p in content) if isinstance(content, list) else str(content)

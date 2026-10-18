@@ -74,7 +74,8 @@ export function demoEnv(root, overrides = {}) {
   if (!home) throw new Error('demoEnv needs AGENT_WORLD_HOME (a temp folder): without it the server would use the user files');
   // AGENT_WORLD_SKILLER=0: no background scouting of GitHub during tests (Spec 05)
   // AGENT_WORLD_DISCOVER=0: no /models asked of the providers or of a local Ollama (spec 08)
-  const env = { ...process.env, AGENT_WORLD_SKILLER: '0', AGENT_WORLD_SKILL_REPOS: '0', AGENT_WORLD_DISCOVER: '0', AGENT_WORLD_LOCAL_CONFIG: join(home, 'local.json'), ...overrides };
+  // AGENT_WORLD_ENV_FILE: the developer's .env is never read, not even when a provider is registered (spec 09)
+  const env = { ...process.env, AGENT_WORLD_SKILLER: '0', AGENT_WORLD_SKILL_REPOS: '0', AGENT_WORLD_DISCOVER: '0', AGENT_WORLD_LOCAL_CONFIG: join(home, 'local.json'), AGENT_WORLD_ENV_FILE: join(home, 'no-dotenv'), ...overrides };
   for (const k of Object.keys(env)) if (k.endsWith('_KEY')) env[k] = '';
   for (const k of keyEnvNames(root)) env[k] = '';
   return env;

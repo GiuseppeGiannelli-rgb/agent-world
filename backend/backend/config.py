@@ -67,6 +67,15 @@ class Config:
     def get(self) -> dict:
         return self.value
 
+    def remove_local(self, key: str, name: str) -> None:
+        """Spec 09: takes one entry out of a preference (a provider the owner added)."""
+        section = self.local.get(key)
+        if isinstance(section, dict) and name in section:
+            del section[name]
+            self.local_file.parent.mkdir(parents=True, exist_ok=True)
+            self.local_file.write_text(json.dumps(self.local, indent=2), encoding="utf-8")
+            self.reload()
+
     def update(self, patch: dict) -> None:
         for key in EDITABLE:
             if key not in patch:
