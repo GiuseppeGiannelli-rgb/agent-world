@@ -63,11 +63,36 @@ def _classify(status: int, body) -> ProviderError:
     return ProviderError(message, status=status, kind="bad_request")
 
 
+# Spec 09: a URL may name a part of itself by variable (Cloudflare's account id).
+# Only names that are never secrets: a "${OPENAI_API_KEY}" in a URL written
+# through /api/config would send the key to whoever owns that URL.
+PLACEHOLDER_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+SAFE_PLACEHOLDER_RE = re.compile(r"^[A-Z][A-Z0-9_]*_(?:ACCOUNT_ID|PROJECT_ID|REGION|HOST)$")
+
+
+def _fill(url: str) -> str:
+    def value(m):
+        name = m.group(1)
+        v = os.environ.get(name, "").strip() if SAFE_PLACEHOLDER_RE.match(name) else ""
+        return v if v and "/" not in v and "?" not in v and "#" not in v else m.group(0)
+
+    return PLACEHOLDER_RE.sub(value, url)
+
+
 def base_url(provider: dict) -> str:
-    """baseUrl, or the URL in the environment variable baseUrlEnv (spec 08: a
-    local OpenAI-compatible server, vLLM, llama.cpp or Jan, at LOCAL_OPENAI_URL)."""
-    url = provider.get("baseUrl") or (os.environ.get(provider["baseUrlEnv"], "") if provider.get("baseUrlEnv") else "")
-    return url.strip().rstrip("/")
+    """The URL in the environment variable baseUrlEnv when it is set (spec 08: a
+    local OpenAI-compatible server at LOCAL_OPENAI_URL; spec 09: TypeSafe moved
+    by TYPESAFE_BASE_URL), otherwise baseUrl, with its ${..._ACCOUNT_ID}-style
+    placeholders filled in. A placeholder left unfilled stays in the URL: the
+    router never calls it (Router.provider_ready)."""
+    env = os.environ.get(provider["baseUrlEnv"], "").strip() if provider.get("baseUrlEnv") else ""
+    url = env or provider.get("baseUrl") or ""
+    return _fill(url.strip()).rstrip("/")
+
+
+def unfilled(provider: dict) -> bool:
+    """True when the provider's URL still names a variable that is not set."""
+    return bool(PLACEHOLDER_RE.search(base_url(provider)))
 
 
 def strip_thinking(text) -> str:
@@ -128,19 +153,45 @@ async def openai_chat(provider: dict, provider_id: str, model: str, req: dict, c
     return {"text": text, "model": data.get("model", model), "usage": {"in": usage.get("prompt_tokens", 0), "out": usage.get("completion_tokens", 0)}}
 
 
+DATA_URL_RE = re.compile(r"^data:(image/[a-z0-9+.\-]+);base64,(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def _anthropic_content(content):
+    """Spec 09: OpenAI image parts become Anthropic image blocks (inspect_image);
+    a message without images stays a plain string, as before."""
+    if not (isinstance(content, list) and any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)):
+        return parts_to_text(content)
+    blocks = []
+    for p in content:
+        if isinstance(p, str):
+            blocks.append({"type": "text", "text": p})
+        elif p.get("type") == "text":
+            blocks.append({"type": "text", "text": p.get("text", "")})
+        elif p.get("type") == "image_url":
+            m = DATA_URL_RE.match(str((p.get("image_url") or {}).get("url") or ""))
+            if m:
+                blocks.append({"type": "image", "source": {"type": "base64", "media_type": m.group(1).lower(), "data": m.group(2)}})
+    return blocks
+
+
 def to_anthropic_messages(messages: list[dict]):
     system = []
     out = []
     for m in messages:
-        text = parts_to_text(m.get("content"))
         if m["role"] == "system":
-            system.append(text)
+            system.append(parts_to_text(m.get("content")))
             continue
+        content = _anthropic_content(m.get("content"))
         role = "assistant" if m["role"] == "assistant" else "user"
         if out and out[-1]["role"] == role:
-            out[-1]["content"] += f"\n\n{text}"
+            prev = out[-1]["content"]
+            if isinstance(prev, str) and isinstance(content, str):
+                out[-1]["content"] = f"{prev}\n\n{content}"
+            else:
+                as_blocks = lambda c: c if isinstance(c, list) else [{"type": "text", "text": c}]  # noqa: E731
+                out[-1]["content"] = as_blocks(prev) + as_blocks(content)
         else:
-            out.append({"role": role, "content": text})
+            out.append({"role": role, "content": content})
     if not out or out[0]["role"] != "user":
         out.insert(0, {"role": "user", "content": "(start)"})
     return "\n\n".join(system), out

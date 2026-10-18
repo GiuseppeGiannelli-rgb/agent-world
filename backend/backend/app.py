@@ -108,7 +108,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
     api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)
-    runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx)
+    runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx, uploads_dir=home / "uploads")
     skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller)
     events.mount(app, bus=bus, shutdown=shutdown)
     gateway.mount(app, config=config, router=router)
@@ -132,5 +132,6 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     app.state.ctx = ctx
     app.state.live = live
     app.state.chats = chats
+    app.state.uploads_dir = home / "uploads"
     app.state.shutdown = shutdown
     return app

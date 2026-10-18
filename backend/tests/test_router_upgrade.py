@@ -330,3 +330,39 @@ async def test_the_routes_ask_what_they_need(tmp_path, monkeypatch):
         assert calls[-1].get("cascade") is False and calls[-1].get("emergency") is False
         await c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]})
         assert calls[-1].get("emergency") is False and calls[-1].get("cascade") is not False
+
+
+# ---------- spec 09: images reach a vision model ----------
+
+
+def test_images_reach_anthropic_as_image_blocks():
+    from backend.router.providers import to_anthropic_messages
+
+    png = "iVBORw0KGgo="
+    system, out = to_anthropic_messages(
+        [
+            {"role": "system", "content": "[[role:vision]] describe"},
+            {"role": "user", "content": [{"type": "text", "text": "What is in this photo?"}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}}]},
+        ]
+    )
+    assert system == "[[role:vision]] describe"
+    assert out == [{"role": "user", "content": [{"type": "text", "text": "What is in this photo?"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png}}]}]
+
+
+def test_text_only_messages_stay_plain_strings_for_anthropic():
+    from backend.router.providers import to_anthropic_messages
+
+    _, out = to_anthropic_messages([{"role": "user", "content": "a"}, {"role": "user", "content": "b"}])
+    assert out == [{"role": "user", "content": "a\n\nb"}]
+
+
+@pytest.mark.asyncio
+async def test_a_vision_combo_that_fails_does_not_cascade(transport, tmp_path, seen):
+    """A model without vision would fail on the image: the vision combo keeps its own error."""
+    from backend.router.providers import ProviderError
+
+    router = make_router(transport, tmp_path, combos={"vision": ["down/gpt-5-mini"], "frontier": ["good/big"], "smart": ["good/mid"], "fast": ["good/small"]})
+    router.config.value["combos"]["vision"]["cascade"] = False
+    with pytest.raises(ProviderError):
+        await router.chat(use="vision", messages=MESSAGES, emergency=False)
+    assert [s["path"].split("/")[1] for s in seen] == ["down"]

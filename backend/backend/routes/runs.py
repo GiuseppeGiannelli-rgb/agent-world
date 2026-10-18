@@ -4,12 +4,18 @@ handlers in server/index.js: POST/GET /api/runs..., answer/pause/resume/stop,
 describeAgent() helpers."""
 
 import asyncio
+import json
+import re
+import shutil
 import time
 import traceback
+import uuid
+from pathlib import Path
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from backend import attachments
 from backend.i18n import LANGUAGES
 from backend.prompts import chat_prompt
 from backend.run import Run
@@ -78,9 +84,117 @@ def _err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def mount(app, *, config, store, bus, router, team, media, live: dict, chats: dict, ctx) -> None:
+class TooBig(Exception):
+    pass
+
+
+async def _read_capped(request: Request, max_bytes: int) -> bytes:
+    """Spec 09: the raw body of an upload, refused while it arrives once it passes
+    max_bytes (a declared Content-Length over it is refused before reading)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > max_bytes:
+        raise TooBig()
+    parts, total = [], 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise TooBig()
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+UPLOAD_TTL_S = 24 * 3600
+
+
+def _clean_uploads(root: Path) -> None:
+    """Uploads never used by a mission leave after a day."""
+    now = time.time()
+    for d in root.glob("*"):
+        try:
+            if d.is_dir() and now - d.stat().st_mtime > UPLOAD_TTL_S:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def mount(app, *, config, store, bus, router, team, media, live: dict, chats: dict, ctx, uploads_dir: Path | None = None) -> None:
+    uploads = Path(uploads_dir) if uploads_dir is not None else Path(ctx.workspace_root).parent / "uploads"
+
     def active_run():
         return next(iter(live.values()), None)
+
+    def max_bytes() -> int:
+        return int(float(config.get()["limits"].get("maxUploadMB", 25)) * 1024 * 1024)
+
+    async def read_upload(request: Request):
+        """(name, bytes) of an upload, or the JSONResponse that refuses it."""
+        name = str(request.query_params.get("name") or "").strip()
+        if not name:
+            return _err(400, "Manca il nome del file (?name=...).")
+        try:
+            data = await _read_capped(request, max_bytes())
+        except TooBig:
+            return _err(413, f"Il file supera i {config.get()['limits'].get('maxUploadMB', 25):g} MB.")
+        try:
+            attachments.check(name, data, max_mb=float(config.get()["limits"].get("maxUploadMB", 25)))
+        except attachments.AttachmentError as err:
+            return _err(400, str(err))
+        return name, data
+
+    def staged(upload_id: str):
+        """(meta, bytes) of an upload in the staging folder, or None."""
+        if not UPLOAD_ID_RE.match(str(upload_id)):
+            return None
+        d = uploads / upload_id
+        try:
+            meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            return meta, (d / "blob").read_bytes()
+        except (OSError, ValueError):
+            return None
+
+    # ----- spec 09: the owner's files -----
+
+    @app.post("/api/uploads")
+    async def api_upload(request: Request):
+        """A file chosen in the composer, before its mission exists: kept for a day
+        in data/uploads/, then moved into the run that names it."""
+        got = await read_upload(request)
+        if isinstance(got, JSONResponse):
+            return got
+        name, data = got
+        uploads.mkdir(parents=True, exist_ok=True)
+        _clean_uploads(uploads)
+        upload_id = uuid.uuid4().hex[:12]
+        d = uploads / upload_id
+        d.mkdir()
+        original = re.split(r"[\\/]", name)[-1][:120]
+        meta = {"id": upload_id, "name": original, "kind": attachments.kind_of(name), "size": len(data), "at": int(time.time() * 1000)}
+        (d / "blob").write_bytes(data)
+        (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return JSONResponse(meta, status_code=201)
+
+    @app.post("/api/runs/{run_id}/attachments")
+    async def api_run_attachment(run_id: str, request: Request):
+        run = live.get(run_id)
+        data = run.data if run is not None else store.get(run_id)
+        if data is None:
+            return _err(404, "Run non trovato")
+        got = await read_upload(request)
+        if isinstance(got, JSONResponse):
+            return got
+        name, raw = got
+        target = run if run is not None else Run.from_data(data, ctx)
+        task_id = request.query_params.get("taskId") or None
+        if task_id and target.task_by_id(task_id) is None:
+            return _err(404, "Task non trovato")
+        try:
+            rec = await target.add_attachment(name, raw, task_id=task_id, note=str(request.query_params.get("note") or ""))
+        except attachments.AttachmentError as err:
+            return _err(400, str(err))
+        if run is None:
+            store.save(data, True)
+        return JSONResponse(rec, status_code=201)
 
     @app.post("/api/runs")
     async def api_runs_create(request: Request):
@@ -95,11 +209,25 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
             language = config.get()["ui"]["language"]
         elif not isinstance(language, str) or language not in LANGUAGES:
             return _err(400, f"Lingua non supportata: {language!r}. Scegli fra {', '.join(LANGUAGES)}.")
+        ids = body.get("attachments") or []
+        if not isinstance(ids, list) or len(ids) > int(config.get()["limits"].get("maxAttachments", 60)):
+            return _err(400, "attachments deve essere una lista di id di upload.")
+        files = [staged(i) for i in ids]
+        if any(f is None for f in files):
+            return _err(400, "Uno dei file allegati non esiste più: caricalo di nuovo.")
         team.load(config.get()["staff"])
         options = {"approvePlan": body["approvePlan"]} if "approvePlan" in body else {}
         options["language"] = language  # D1: frozen for the whole run
         run = Run(goal=goal[:4000], ctx=ctx, options=options)
         live[run.data["id"]] = run
+        # spec 09: the composer's files are in the run before the CEO plans it
+        try:
+            for upload_id, (meta, raw) in zip(ids, files):
+                await run.add_attachment(meta["name"], raw, announce=False)
+                shutil.rmtree(uploads / upload_id, ignore_errors=True)
+        except attachments.AttachmentError as err:
+            live.pop(run.data["id"], None)
+            return _err(400, str(err))
         run.emit_run(True)
 
         async def _start(r=run):
