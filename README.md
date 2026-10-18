@@ -501,9 +501,9 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 
 | Strumento | Versione | Uso |
 |---|---|---|
-| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 796 test del backend |
+| [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 927 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (254 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (255 verifiche) |
 
 ### Skill e plugin
 
@@ -589,8 +589,9 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
   - Cambia la lingua degli agenti: ogni prompt (CEO, lead, worker, sub-agenti, QA, Skill Hub, Prompt Lab, chat) impone di ragionare, scrivere i log e rispondere nella lingua scelta.
   - Cambia i messaggi del backend: quelli del run nel pannello Messaggi e i fumetti.
   - Cambia anche la demo: il simulatore legge la lingua dalla regola del system prompt e scrive piani, pensieri, file e report in quella lingua. Senza una lingua scelta risponde in inglese.
+  - Cambiano gli errori delle API (400, 404, 409 e i 403 della sicurezza): seguono la lingua dell'app, non quella della run, perché compaiono nell'interfaccia.
 
-  Ogni run riceve la lingua quando parte e la tiene fino alla fine. Restano in italiano solo gli errori HTTP (ticket N13).
+  Ogni run riceve la lingua quando parte e la tiene fino alla fine.
 - **La voce generata dagli agenti** (`generate_speech`) usa OpenAI TTS o ElevenLabs `eleven_multilingual_v2`, che sono multilingua.
 - **La ricerca BM25** toglie le stopword italiane e inglesi e gli accenti (`più` → `piu`). Funziona bene con le lingue in alfabeto latino. Le scritture non latine (cirillico, greco, cinese…) oggi non producono token, perché il tokenizer tiene solo `a-z` e `0-9` dopo aver tolto gli accenti.
 
@@ -651,7 +652,7 @@ Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine w
 **Da sapere:**
 - **Anteprima dei siti generati.** Nella sandbox i loro script girano, ma non hanno `localStorage` né cookie. Se un sito ne ha bisogno, aprilo dalla cartella del run.
 - **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve.
-- **I 403 di queste regole** hanno il messaggio "Richiesta rifiutata: …".
+- **I 403 di queste regole** hanno il messaggio "Request refused: …", nella lingua dell'app ("Richiesta rifiutata: …" in italiano).
 
 ### Usarlo in LAN
 
@@ -665,7 +666,7 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
    ```sh
    AGENT_WORLD_ALLOWED_HOSTS=192.168.1.20,studio.lan
    ```
-   Senza questa riga ogni richiesta con un altro `Host` riceve 403 "Host non ammesso".
+   Senza questa riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed" (nella lingua dell'app).
 3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo.
 
 > **Attenzione: `/api` non ha login.** Chi raggiunge il server dalla rete ne ha il controllo completo: avvia missioni, legge i file dei run e cambia la configurazione, compresi gli URL dei provider a cui il router manda le tue chiavi. Fallo solo su una rete di cui ti fidi. `AGENT_WORLD_API_KEY` protegge solo il gateway `/v1`.
@@ -677,15 +678,16 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 254 verifiche sul front-end vero (~5 min)
+npm run test:browser   # runner headless: 255 verifiche sul front-end vero (~5 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (796 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
+- **`pytest` (927 test):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
 - **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
 
