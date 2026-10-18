@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
+from backend.i18n import DEFAULT, http_error, ui_language
 from backend.paths import PathRefused, inside
 
 router = APIRouter()
@@ -62,7 +63,7 @@ def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache", sandbox
     return FileResponse(target, media_type=media_type, headers=headers)
 
 
-def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None, live=None) -> None:
+def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None, live=None, config=None) -> None:
     @app.get("/vendor/three/{path:path}")
     async def vendor_three(path: str):
         return serve_from(three_build, path)
@@ -84,7 +85,7 @@ def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, stor
             active = live.get(run_id)
             run = active.data if active is not None else None
         if run is None:
-            return PlainTextResponse("Run non trovato", status_code=404)
+            return PlainTextResponse(http_error(ui_language(config.get()) if config is not None else DEFAULT, "run_not_found"), status_code=404)
         return serve_from(Path(run["workspace"]), rest, sandbox=True)
 
     @app.get("/{path:path}")

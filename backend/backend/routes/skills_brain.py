@@ -5,10 +5,16 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from backend.downloads import DownloadError
+from backend.i18n import DEFAULT, Refusal, http_error, ui_language
 from backend.plan import nz
 
 
-def mount(app, *, skills, brain, skiller=None) -> None:
+def mount(app, *, skills, brain, skiller=None, config=None) -> None:
+    def _err(status: int, key: str, **vars) -> JSONResponse:
+        """N13: the error in the language of the app, read at every request."""
+        lang = ui_language(config.get()) if config is not None else DEFAULT
+        return JSONResponse({"error": http_error(lang, key, **vars)}, status_code=status)
+
     @app.get("/api/skills")
     async def api_skills(q: str | None = None):
         results = await skills.search(q, 40) if q else skills.skills[:400]
@@ -35,25 +41,27 @@ def mount(app, *, skills, brain, skiller=None) -> None:
         body = await request.json()
         try:
             return await skills.add_repo(body.get("url"))
+        except Refusal as err:
+            return _err(400, err.key, **err.vars)
         except ValueError as err:
             return JSONResponse({"error": str(err)}, status_code=400)
 
     @app.get("/api/skills/skiller")
     async def api_skiller():
         if skiller is None:
-            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+            return _err(404, "skiller_off")
         return skiller.report()
 
     @app.post("/api/skills/skiller/run")
     async def api_skiller_run():
         if skiller is None:
-            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+            return _err(404, "skiller_off")
         return {**await skiller.run_once(), "report": skiller.report()}
 
     @app.post("/api/skills/skiller/approve")
     async def api_skiller_approve(request: Request):
         if skiller is None:
-            return JSONResponse({"error": "Skiller non attivo"}, status_code=404)
+            return _err(404, "skiller_off")
         body = await request.json()
         try:
             return {"slug": body.get("slug"), "install": await skiller.approve(str(body.get("slug") or ""))}
@@ -69,6 +77,6 @@ def mount(app, *, skills, brain, skiller=None) -> None:
     async def api_brain_post(request: Request):
         body = await request.json()
         if not str(nz(body.get("text"), "")).strip():
-            return JSONResponse({"error": "Scrivi il contenuto della nota"}, status_code=400)
+            return _err(400, "note_empty")
         note = brain.add(title=body.get("title"), text=body.get("text"), tags=nz(body.get("tags"), ["utente"]), kind="user", agent_id="user")
         return JSONResponse(note, status_code=201)

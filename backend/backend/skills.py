@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 from backend.embed import LOCAL, Embedder, local_vectors, merge_pieces, split_pieces
+from backend.i18n import Refusal
 from backend.plan import nz
 from backend.search import HybridIndex
 
@@ -271,7 +272,7 @@ class SkillLibrary:
     async def add_repo(self, url) -> dict:
         repo = self.repo(url)
         if not repo:
-            raise ValueError("Serve un indirizzo GitHub del tipo https://github.com/utente/repo")
+            raise Refusal("repo_url_invalid")
         self.vendor_dir.mkdir(parents=True, exist_ok=True)
         if repo["dir"].exists():
             await _git(["-C", str(repo["dir"]), "pull", "--ff-only"])
@@ -286,7 +287,7 @@ class SkillLibrary:
         for url in (self.config.get().get("skills") or {}).get("repos") or []:
             repo = self.repo(url)
             if not repo:
-                print(f"Skill Hub    →  repo ignorata, non è un indirizzo GitHub: {url}")
+                print(f"Skill Hub    →  repo skipped, not a GitHub address: {url}")
                 continue
             if repo["dir"].exists():
                 continue
@@ -300,7 +301,7 @@ class SkillLibrary:
             except Exception as err:  # noqa: BLE001 -- never throws, like ensureRepos() in Node
                 await asyncio.to_thread(shutil.rmtree, tmp, True)
                 if not repo["dir"].exists():
-                    print(f"Skill Hub    →  {repo['slug']} non scaricata: {str(err).splitlines()[0]}")
+                    print(f"Skill Hub    →  {repo['slug']} not downloaded: {str(err).splitlines()[0]}")
         if added:
             await self.refresh()
         return added

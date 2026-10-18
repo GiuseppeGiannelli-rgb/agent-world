@@ -131,10 +131,18 @@ def test_names_become_plain_file_names(raw, safe):
     assert A.safe_name(raw) == safe
 
 
+def _short_id(v):
+    """The file name, and the bytes by their size: pytest puts the test id in
+    PYTEST_CURRENT_TEST, and a WAV written out byte by byte is over the 32767
+    characters a Windows environment variable can hold."""
+    return v if isinstance(v, str) else f"{len(v)}B"
+
+
 @pytest.mark.parametrize(
     "name,data",
     [("photo.png", b"MZ\x90\x00 not an image"), ("photo.jpg", png()), ("menu.pdf", b"hello"), ("t.docx", b"PK\x03\x04 not a docx"),
      ("v.mp3", b"just text"), ("v.wav", b"RIFF\x00\x00\x00\x00AVI "), ("notes.txt", b"bin\x00ary"), ("logo.svg", b"<html>no svg</html>")],
+    ids=_short_id,
 )
 def test_the_bytes_must_be_what_the_name_says(name, data):
     with pytest.raises(A.AttachmentError):
@@ -145,6 +153,7 @@ def test_the_bytes_must_be_what_the_name_says(name, data):
     "name,data",
     [("hero.png", png()), ("f.jpg", jpeg()), ("g.gif", gif()), ("w.webp", webp()), ("logo.svg", SVG), ("menu.pdf", pdf()), ("t.docx", docx()),
      ("p.csv", b"piatto,prezzo\nMargherita,7\n"), ("v.wav", wav()), ("v.mp3", MP3), ("x.html", b"<!doctype html><p>ciao</p>"), ("n.md", "# Menù\n".encode())],
+    ids=_short_id,
 )
 def test_real_files_pass(name, data):
     assert A.check(name, data, max_mb=25) in ("image", "document", "audio")

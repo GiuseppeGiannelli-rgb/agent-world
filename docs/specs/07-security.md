@@ -79,4 +79,4 @@ Sopravvive una sola mutazione, lo spacchettamento degli IPv6 mappati su IPv4. Py
 - **Anteprima e `localStorage`.** Nella sandbox un sito generato non può usare `localStorage` né cookie: per quei casi va aperto dalla cartella del run.
 - **Server in LAN.** Con `server.host` uguale a `0.0.0.0` bisogna elencare i nomi in `AGENT_WORLD_ALLOWED_HOSTS`, altrimenti si accede solo in locale.
 - **I media** scaricano gli URL che restituiscono i provider di immagini configurati (es. fal): sono fidati quanto il provider.
-- **N13:** anche i nuovi 403 sono in italiano, come gli altri errori HTTP.
+- **N13 (chiuso il 18/10/2026):** i 403 parlano la lingua dell'app, come gli altri errori HTTP (`Request refused: …` in inglese, `Richiesta rifiutata: …` in italiano).

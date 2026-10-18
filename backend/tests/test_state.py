@@ -4,6 +4,7 @@ import pytest
 from backend.app import ROOT, create_app
 from backend.brain import Brain
 from backend.config import Config
+from backend.i18n import LANGUAGES, http_error
 from backend.store import Store
 
 
@@ -96,7 +97,7 @@ async def test_api_config_post_rejects_an_unknown_ui_language(client, app_and_st
     async with client as c:
         res = await c.post("/api/config", json={"ui": {"language": bad}})
         assert res.status_code == 400
-        assert res.json()["error"].startswith("Lingua non supportata")
+        assert res.json()["error"] == http_error("en", "language_unsupported", value=repr(bad), choices=", ".join(LANGUAGES))  # N13: English by default
     assert config.get()["ui"]["language"] == before  # nothing was written
 
 
@@ -107,7 +108,7 @@ async def test_api_config_post_rejects_a_ui_that_is_not_an_object(client, app_an
     async with client as c:
         res = await c.post("/api/config", json={"ui": bad})
         assert res.status_code == 400
-        assert res.json()["error"].startswith("Lingua non supportata")
+        assert res.json()["error"] == http_error("en", "language_unsupported", value=repr(bad), choices=", ".join(LANGUAGES))  # N13: English by default
     assert config.get()["ui"]["language"] == before
 
 

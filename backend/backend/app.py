@@ -13,6 +13,7 @@ from backend.bus import Bus
 from backend.embed import Embedder
 from backend.config import Config
 from backend.downloads import DownloadError, resolve_download_root
+from backend.i18n import ui_language
 from backend.media import Media
 from backend.router.index import Router
 from backend.security import LocalGuard, allowed_hosts
@@ -48,10 +49,10 @@ def _make_lifespan(shutdown: asyncio.Event, router: Router, skills: SkillLibrary
     async def lifespan(app: FastAPI):
         async def boot_skills():
             count = await skills.reindex()
-            print(f"Skill Hub    →  {count} skill indicizzate")
+            print(f"Skill Hub    →  {count} skills indexed")
             added = await skills.ensure_repos() if skill_repos_enabled() else []
             if added:
-                print(f"Skill Hub    →  scaricate le repo predefinite {', '.join(added)} ({len(skills.skills)} skill)")
+                print(f"Skill Hub    →  default repos downloaded: {', '.join(added)} ({len(skills.skills)} skills)")
 
         asyncio.ensure_future(boot_skills())
         # Spec 05: the Skiller scouts GitHub on a schedule. The test launchers
@@ -97,7 +98,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     try:
         download_root = resolve_download_root(os.environ.get("CUSTOM_DOWNLOAD_PATH"), app_root=ROOT, data_dir=home)
     except DownloadError as err:
-        print(f"Skiller      →  download spenti: {err}", flush=True)
+        print(f"Skiller      →  downloads off: {err}", flush=True)
     if download_root is not None:
         skills.extra_sources = [{"label": "downloads", "dir": download_root, "thirdParty": True}]
     skiller = skiller or Skiller(config, skills, home, client=router.client, bus=bus, download_root=download_root)
@@ -111,12 +112,13 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     shutdown = asyncio.Event()
     app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media, skiller))
     # Spec 07: DNS rebinding and CSRF are refused before any route runs
-    app.add_middleware(LocalGuard, hosts=allowed_hosts(config.get()["server"].get("host")))
+    # (N13: their 403 speaks the language of the app, read at every refusal)
+    app.add_middleware(LocalGuard, hosts=allowed_hosts(config.get()["server"].get("host")), language=lambda: ui_language(config.get()))
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
     api_state.mount(app, config=config, store=store, bus=bus, router=router, skills=skills, brain=brain, team=team, media=media, live=live)
     runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx, uploads_dir=home / "uploads")
-    skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller)
+    skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller, config=config)
     events.mount(app, bus=bus, shutdown=shutdown)
     gateway.mount(app, config=config, router=router)
     providers.mount(app, config=config, router=router, bus=bus, env_file=env_file)
@@ -127,6 +129,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
         three_addons=ROOT / "node_modules" / "three" / "examples" / "jsm",
         store=store,
         live=live,
+        config=config,
     )
     app.state.config = config
     app.state.store = store

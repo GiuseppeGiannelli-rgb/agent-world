@@ -24,6 +24,8 @@ import re
 import unicodedata
 import zipfile
 
+from backend.i18n import Refusal
+
 KINDS = {
     "image": {".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif"},
     "document": {".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".html", ".htm", ".css", ".js"},
@@ -39,8 +41,9 @@ MAX_CHUNKS = 40
 BINARY_MAGIC = (b"MZ", b"\x7fELF", b"PK\x03\x04", b"%PDF", b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe")
 
 
-class AttachmentError(ValueError):
-    """A file that may not enter a run; the message is for the owner (Italian, like every HTTP error: N13)."""
+class AttachmentError(Refusal):
+    """A file that may not enter a run: a key of i18n.HTTP_ERRORS, which the route
+    writes in the language of the app (N13)."""
 
 
 def _ext(name: str) -> str:
@@ -109,14 +112,14 @@ def check(name: str, data: bytes, *, max_mb: float, size: int | None = None) -> 
     kind = kind_of(name)
     if kind is None:
         allowed = ", ".join(sorted(EXT_KIND))
-        raise AttachmentError(f"Tipo di file non ammesso: {name!r}. Ammessi: {allowed}.")
+        raise AttachmentError("file_type_refused", name=repr(name), allowed=allowed)
     size = len(data) if size is None else size
     if size > max_mb * 1024 * 1024:
-        raise AttachmentError(f"Il file {name!r} supera i {max_mb:g} MB.")
+        raise AttachmentError("file_too_big", name=repr(name), mb=f"{max_mb:g}")
     if size == 0:
-        raise AttachmentError(f"Il file {name!r} è vuoto.")
+        raise AttachmentError("file_empty", name=repr(name))
     if not sniff(_ext(name), data):
-        raise AttachmentError(f"Il contenuto di {name!r} non è un file {_ext(name)}.")
+        raise AttachmentError("file_content_mismatch", name=repr(name), ext=_ext(name))
     return kind
 
 

@@ -1015,7 +1015,7 @@ class Run:
         lim = self.cfg["limits"]
         records = self.data.setdefault("attachments", [])
         if len(records) >= int(lim.get("maxAttachments", 60)):
-            raise attachments.AttachmentError(f"Questo run ha già {len(records)} file: il massimo è {lim.get('maxAttachments', 60)}.")
+            raise attachments.AttachmentError("too_many_files", n=len(records), max=lim.get("maxAttachments", 60))
         kind = attachments.check(name, data, max_mb=float(lim.get("maxUploadMB", 25)))
         base = attachments.safe_name(name)
         stem, ext = Path(base).stem, Path(base).suffix

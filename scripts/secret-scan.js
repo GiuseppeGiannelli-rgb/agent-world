@@ -59,7 +59,9 @@ export function personalWords(root = process.cwd()) {
     w = String(w ?? '').trim().toLowerCase();
     if (w.length >= 4 && !/^(noreply|users|github|example|claude|test|user)$/.test(w)) words.add(w);
   };
-  const file = join(root, gitText(['-C', root, 'rev-parse', '--git-dir']).trim(), 'info', 'personal-words');
+  // the common dir: a worktree's own git dir (.git/worktrees/<name>, an absolute path,
+  // which join() would glue after root) has no info/ of its own
+  const file = join(resolve(root, gitText(['-C', root, 'rev-parse', '--git-common-dir']).trim()), 'info', 'personal-words');
   if (existsSync(file)) {
     for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) if (line.trim() && !line.startsWith('#')) add(line);
     return [...words];

@@ -16,10 +16,15 @@ The sites the agents build are served sandboxed (routes/static.py), so their
 scripts have an opaque origin ("null") and fall under the same rules.
 
 Allowed hosts: the loopback names, the configured server.host unless it is a
-wildcard, and AGENT_WORLD_ALLOWED_HOSTS (comma separated) for a LAN setup."""
+wildcard, and AGENT_WORLD_ALLOWED_HOSTS (comma separated) for a LAN setup.
+
+The 403 speaks the language of the app (N13): `language` reads ui.language
+at every refusal, so a switch in the UI applies at once."""
 
 import json
 import os
+
+from backend.i18n import DEFAULT, http_error
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -45,9 +50,10 @@ def host_name(host_header: str) -> str:
 
 
 class LocalGuard:
-    def __init__(self, app, *, hosts: set[str]):
+    def __init__(self, app, *, hosts: set[str], language=lambda: DEFAULT):
         self.app = app
         self.hosts = hosts
+        self.language = language
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -55,18 +61,17 @@ class LocalGuard:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         host = headers.get("host", "")
         if host_name(host) not in self.hosts:
-            return await _refuse(send, "Host non ammesso")
+            return await self._refuse(send, "refused_host")
         path = scope.get("path", "")
         api = path == "/api" or path.startswith("/api/") or path == "/v1" or path.startswith("/v1/")
         if api and headers.get("sec-fetch-site") in FOREIGN_SITES:
-            return await _refuse(send, "Richiesta da un altro sito")
+            return await self._refuse(send, "refused_site")
         origin = headers.get("origin")
         if scope.get("method") not in SAFE_METHODS and origin is not None and origin.lower() != f"{scope.get('scheme', 'http')}://{host}".lower():
-            return await _refuse(send, "Origine non ammessa")
+            return await self._refuse(send, "refused_origin")
         return await self.app(scope, receive, send)
 
-
-async def _refuse(send, why: str) -> None:
-    body = json.dumps({"error": f"Richiesta rifiutata: {why}"}).encode()
-    await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
-    await send({"type": "http.response.body", "body": body})
+    async def _refuse(self, send, key: str) -> None:
+        body = json.dumps({"error": http_error(self.language(), key)}).encode()
+        await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})

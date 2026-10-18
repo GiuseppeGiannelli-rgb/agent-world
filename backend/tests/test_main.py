@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from backend.i18n import tr
+
 BACKEND = Path(__file__).resolve().parents[1]
 
 
@@ -19,7 +21,7 @@ def test_busy_port_is_explained_without_a_traceback():
         r = subprocess.run([sys.executable, "-m", "backend"], cwd=BACKEND, env=env, capture_output=True, text=True, encoding="utf-8", timeout=60)
     out = r.stdout + r.stderr
     assert r.returncode == 1, out
-    assert f"porta {port} è già in uso" in r.stderr
+    assert tr("en", "port_busy", port=port) in r.stderr  # N17: the app language, English by default
     assert "PORT=" in r.stderr  # how to pick another port
     assert "Traceback" not in out
     # The test scripts take "Agent World" on stdout as the ready line: an error

@@ -167,7 +167,7 @@ export async function launch() {
   const exe = findBrowser();
   if (!exe) throw new Error('no Edge or Chrome found: set BROWSER to its path');
   const profile = ownedDir('profile');
-  const proc = spawn(exe, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-breakpad', '--disable-crash-reporter', '--mute-audio', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
+  const proc = spawn(exe, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-breakpad', '--disable-crash-reporter', '--mute-audio', '--hide-scrollbars', ...(process.env.BROWSER_FLAGS ?? '').split(' ').filter(Boolean), 'about:blank'], { stdio: 'ignore' });
   const browser = { exe, proc, profile, port: null, endpoint: null, swept };
   browser.connect = async () => {
     const portFile = join(profile, 'DevToolsActivePort');

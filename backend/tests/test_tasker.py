@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from backend.i18n import tr
+
 TASK = {"id": "w1.1", "wsId": "w1", "team": "dev", "title": "Scrivere il modulo", "description": "Scrivi x.", "acceptance": ["Funziona"], "outputs": ["out.md"], "dependsOn": [], "attempts": 0, "skills": [], "brief": "", "pitfalls": [], "history": []}
 AGENT = {"id": "nina", "name": "Nina", "team": "dev", "kind": "worker"}
 
@@ -161,6 +163,9 @@ class FakeRun:
     def note(self, task, agent, kind, text, **extra):
         self.notes.append((kind, text))
 
+    def t(self, key, **vars):  # Run.t: the run's own texts, in the run's language
+        return tr(self.data.get("language"), key, **vars)
+
     def step(self, task, agent, action):
         self.steps.append(action["tool"])
 
@@ -195,7 +200,7 @@ class TestTaskerWork:
         assert "RESULT of write_file" in text
         assert run.tool_calls == ["write_file"]
         assert run.steps == ["write_file", "finish"]
-        assert ("error", "Risposta non valida, riprovo") in run.notes
+        assert ("error", tr(None, "invalid_answer")) in run.notes  # N17: English without a language
 
     @pytest.mark.asyncio
     async def test_finish_blocked_until_outputs_exist(self):

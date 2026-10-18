@@ -373,7 +373,7 @@ class Skiller:
             if self.cfg["enabled"]:
                 try:
                     report = await self.run_once()
-                    print(f"Skiller      →  {report['evaluated']} repo valutate, {len(report['approved'])} approvate", flush=True)
+                    print(f"Skiller      →  {report['evaluated']} repos evaluated, {len(report['approved'])} approved", flush=True)
                 except Exception as err:  # noqa: BLE001 -- a failed run waits for the next one
-                    print(f"Skiller      →  giro fallito: {err}", flush=True)
+                    print(f"Skiller      →  round failed: {err}", flush=True)
             delay = float(self.cfg["intervalHours"]) * 3600
