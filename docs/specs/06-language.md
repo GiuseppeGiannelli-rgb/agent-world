@@ -10,7 +10,7 @@ Si salva in `config/local.json` come `ui.language` e vale fra una sessione e l'a
 
 Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 
-**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. Resta aperto il ticket N13; N14, N15 e N16 sono chiusi (§5).
+**Stato: fatta.** Backend, frontend e test ci sono tutti. Alla chiusura ho sistemato tre difetti trovati dalle verifiche, nessuno della lingua (§6, "Chiusura"). I risultati delle suite sono nel §7. N13, N14, N15 e N16 sono chiusi (§5).
 
 ## 1. Decisioni
 
@@ -19,7 +19,7 @@ Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 | D1 | La lingua si salva in `ui.language`, dentro `config/local.json` (con `POST /api/config`). `POST /api/runs` la riceve come `language` e la salva in `run.data["language"]`: cambiarla durante un run non tocca il run in corso. |
 | D2 | La UI non ha un'opzione "Auto". Con `language` assente o `None`, i prompt tengono la regola di prima (la lingua del GOAL); è solo un fallback interno. |
 | D3 | Le etichette dei team si traducono con un dizionario del frontend, indicizzato per id del team. Se un team non è nel dizionario, si usa `label` di config. |
-| D4 | I messaggi di sistema e i log di `run.py` mandati via SSE si traducono: messaggi, testi dei fumetti, errori di task e workstream, titoli delle note del Brain (`Missione ·`, `Lezione ·`), feedback automatici. Gli errori HTTP restano in italiano: ticket **N13**. |
+| D4 | I messaggi di sistema e i log di `run.py` mandati via SSE si traducono: messaggi, testi dei fumetti, errori di task e workstream, titoli delle note del Brain (`Missione ·`, `Lezione ·`), feedback automatici. Gli errori HTTP seguono la lingua dell'app: ticket **N13**, chiuso il 18/10/2026 (§5). |
 | D5 | I testi del provider demo (`router/mock.py`) non si toccano: in inglese la demo resta in italiano. Ticket **N14**, chiuso dopo: ora la demo parla la lingua della run (§5). |
 | D6 | Branch `feat/spec06-language`, da `fix/start-port-message` (`809e0cb`). |
 
@@ -42,7 +42,7 @@ Decisioni D1–D6 approvate dall'utente il 15/10/2026.
 Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, messaggi, sintesi, report e testi consegnati, in qualunque lingua siano il GOAL o gli input. Le chiavi JSON, i valori fissi (`pass`, `revise`, `retry`, `skip`…) e i nomi dei tool restano come sono scritti: il parsing e il provider demo non cambiano. Una lingua sconosciuta solleva `ValueError`.
 
 **Route.**
-- `POST /api/runs`: `language` è opzionale. Un valore assente o `null` prende `ui.language` di config. Un valore fuori da `LANGUAGES` dà 400 (`"Lingua non supportata: …"`, in italiano, vedi N13).
+- `POST /api/runs`: `language` è opzionale. Un valore assente o `null` prende `ui.language` di config. Un valore fuori da `LANGUAGES` dà 400 (`"Unsupported language: …"`, nella lingua dell'app: N13).
 - `POST /api/chat/:id`: usa la lingua del run attivo, se c'è, altrimenti `ui.language`.
 - `POST /api/config`: `ui` è fra le chiavi modificabili (`EDITABLE`), e `/api/state` e `/api/config` la espongono. Dà 400 (`"Lingua non supportata: …"`) e non scrive niente se `ui` non è un oggetto o se `ui.language` non è una stringa di `LANGUAGES`.
 
@@ -78,6 +78,11 @@ Con una lingua scelta, la regola chiede di usare quella lingua per pensieri, mes
 ## 5. Ticket aperti
 
 - **N13**: errori HTTP del backend ancora in italiano.
+  - **Chiuso il 18/10/2026.**
+    - **La lingua è quella dell'app**, `ui.language`, letta a ogni richiesta (`i18n.ui_language`): la UI mostra `body.error` in un toast accanto ai suoi testi, quindi l'errore va con la UI e non con la run, che tiene la lingua con cui è partita (D1). Senza lingua, o con una lingua sconosciuta in un `local.json` scritto a mano, l'inglese: un errore non diventa mai un 500. `Accept-Language` non si usa: è la lingua del browser, non quella scelta nell'app.
+    - **Le tabelle** stanno in `i18n.HTTP_ERRORS` (50 chiavi, cinque lingue, stessi segnaposto). Le route (`runs`, `providers`, `api_state`, `skills_brain`, `static`) e i 403 della spec 07 (`security.py`) scrivono solo chiavi. Sotto le route, `attachments.check` e `SkillLibrary.add_repo` alzano `i18n.Refusal` (chiave e valori, testo inglese per i log), che la route traduce. Anche la risposta di riserva della chat ("non riesco a rispondere ora") passa da qui, nella lingua della chat.
+    - **Restano in inglese**, come dettagli tecnici: i messaggi dei livelli sotto (`paths.py`, `downloads.py`, `Skill not found`), il gateway `/v1` (formato OpenAI) e i testi in chiaro `Forbidden` / `Not found` dei file statici.
+    - **Test, visti rossi prima del codice** (`test_i18n.py`, 131 nuovi): tabelle allineate e tradotte davvero, inglese senza italiano; `ui_language` e `http_error` non alzano mai; 21 rifiuti di ogni tipo di route nelle cinque lingue; i tre 403 della spec 07; l'anteprima di una run che non c'è; un errore su una run italiana con l'app in tedesco è in tedesco; un cambio di lingua vale subito; un controllo sui sorgenti (AST, senza docstring) che fallisce se una route torna a scrivere un errore in italiano. Una mutazione (il middleware senza `language`) fa 4 rossi.
 - **N14**: testi del provider demo solo in italiano.
   - **Chiuso il 16/10/2026** (branch `feat/n14-demo-language`, decisioni D1–D3 dell'utente).
     - **D1, la lingua dalla regola.** `mock.language_of()` legge il nome della lingua dalla regola che `language_rule()` mette in ogni system prompt. Il pezzo di regola prima del nome lo prende da `prompts.py`, così se il testo cambia il mock lo segue. Ai modelli veri non arriva niente di nuovo.
@@ -239,5 +244,5 @@ Richiesta dall'utente dopo il merge in `main`: spagnolo, francese e tedesco, e i
   - L7: il selettore delle Impostazioni elenca le cinque lingue.
   - L8 (nuovo): in ogni lingua ogni tab è tutta visibile e la topbar non va in overflow, a 1920×1080 e 1440×900. Senza la correzione del CSS L8 è rosso (1–2 tab tagliate in ogni lingua).
 
-**Restano aperti:** N13 (errori HTTP in italiano). N14 (simulatore demo in italiano) è chiuso il 16/10/2026: la demo parla la lingua della run, e senza lingua l'inglese (§5).
+**Restano aperti:** nessuno. N14 (simulatore demo in italiano) è chiuso il 16/10/2026: la demo parla la lingua della run, e senza lingua l'inglese. N13 (errori HTTP in italiano) è chiuso il 18/10/2026: gli errori seguono la lingua dell'app (§5).
 

@@ -4,17 +4,9 @@ matching handlers in server/index.js."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from backend.i18n import LANGUAGES
+from backend.i18n import LANGUAGES, http_error, ui_language
 from backend.router.providers import ProviderError
 from backend.state import build_state, public_config
-
-
-def _bad_combo_message(name: str) -> str:
-    return f'Combo "{name}": "models" deve essere una lista di "provider/modello"'
-
-
-def _bad_language_message(value) -> str:
-    return f"Lingua non supportata: {value!r}. Scegli fra {', '.join(LANGUAGES)}."
 
 
 def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None, team=None, media=None, live=None) -> None:
@@ -28,6 +20,10 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None,
     async def api_config_get():
         return public_config(config)
 
+    def _err(key: str, **vars) -> JSONResponse:
+        """N13: the error in the language of the app (the one before this request)."""
+        return JSONResponse({"error": http_error(ui_language(config.get()), key, **vars)}, status_code=400)
+
     @app.post("/api/config")
     async def api_config_post(request: Request):
         body = await request.json()
@@ -36,11 +32,11 @@ def mount(app, *, config, store, bus=None, router=None, skills=None, brain=None,
             for name, c in combos.items():
                 models = c.get("models") if isinstance(c, dict) else None
                 if not isinstance(models, list) or any(not isinstance(m, str) or "/" not in m for m in models):
-                    return JSONResponse({"error": _bad_combo_message(name)}, status_code=400)
+                    return _err("combo_models", name=name)
         ui = body.get("ui")
         # isinstance first: a list or an object is unhashable, and `in` would raise (a 500)
         if ui is not None and (not isinstance(ui, dict) or ("language" in ui and (not isinstance(ui["language"], str) or ui["language"] not in LANGUAGES))):
-            return JSONResponse({"error": _bad_language_message(ui.get("language") if isinstance(ui, dict) else ui)}, status_code=400)
+            return _err("language_unsupported", value=repr(ui.get("language") if isinstance(ui, dict) else ui), choices=", ".join(LANGUAGES))
         config.update(body)
         public = public_config(config)
         if bus is not None:

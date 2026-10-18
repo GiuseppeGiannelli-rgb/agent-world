@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 from backend.embed import LOCAL, Embedder, local_vectors, merge_pieces, split_pieces
+from backend.i18n import Refusal
 from backend.plan import nz
 from backend.search import HybridIndex
 
@@ -271,7 +272,7 @@ class SkillLibrary:
     async def add_repo(self, url) -> dict:
         repo = self.repo(url)
         if not repo:
-            raise ValueError("Serve un indirizzo GitHub del tipo https://github.com/utente/repo")
+            raise Refusal("repo_url_invalid")
         self.vendor_dir.mkdir(parents=True, exist_ok=True)
         if repo["dir"].exists():
             await _git(["-C", str(repo["dir"]), "pull", "--ff-only"])

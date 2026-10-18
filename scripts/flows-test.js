@@ -53,7 +53,7 @@ try {
   const item = await until(async () => (await j(`/api/runs/${a.id}`)).waiting?.find((w) => w.kind === 'plan' && w.status === 'open'));
   assert.equal((await j(`/api/runs/${a.id}`)).status, 'awaiting_approval');
   const busy = await j('/api/runs', { goal: 'un altro run' });
-  assert.match(busy.error, /già lavorando/);
+  assert.match(busy.error, /already working/); // N13: the language of the app, English here
   const chat = await j('/api/chat/ada', { text: 'Mi raccomando, testi brevi' });
   assert.ok(chat.reply && chat.steered);
   assert.ok((await j(`/api/runs/${a.id}/answer`, { itemId: item.id, decision: 'approve', text: 'Ok, colori caldi' })).ok);

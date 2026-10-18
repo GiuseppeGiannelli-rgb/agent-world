@@ -11,6 +11,7 @@ import pytest
 from backend.app import ROOT, create_app
 from backend.brain import Brain
 from backend.config import Config
+from backend.i18n import LANGUAGES, http_error
 from backend.store import Store
 
 
@@ -108,7 +109,7 @@ async def test_create_run_validates_goal(client):
     async with client as c:
         res = await c.post("/api/runs", json={"goal": "ab"})
         assert res.status_code == 400
-        assert res.json()["error"] == "Scrivi un obiettivo per la squadra."
+        assert res.json()["error"] == http_error("en", "goal_missing")  # N13: the app language, English by default
         res = await c.post("/api/runs", json={})
         assert res.status_code == 400
 
@@ -132,7 +133,7 @@ async def test_create_run_conflict_while_active(client, app_and_store):
         assert res.status_code == 201
         res = await c.post("/api/runs", json={"goal": "Secondo run"})
         assert res.status_code == 409
-        assert res.json()["error"] == "La squadra sta già lavorando a un run. Fermalo o aspetta che finisca."
+        assert res.json()["error"] == http_error("en", "busy")
         FakeRun.instances[0].stop()  # unblock start() so the task can finish
         await asyncio.sleep(0.05)
 
@@ -168,7 +169,7 @@ async def test_create_run_rejects_an_unknown_language(client, bad):
     async with client as c:
         res = await c.post("/api/runs", json={"goal": "Un sito per il bar", "language": bad})
         assert res.status_code == 400
-        assert res.json()["error"].startswith("Lingua non supportata")  # N13: HTTP errors stay Italian
+        assert res.json()["error"] == http_error("en", "language_unsupported", value=repr(bad), choices=", ".join(LANGUAGES))
         assert FakeRun.instances == []
 
 
@@ -224,12 +225,12 @@ async def test_actions_require_an_active_run(client, app_and_store):
         for action in ("pause", "stop"):
             res = await c.post(f"/api/runs/r1/{action}", json={})
             assert res.status_code == 409
-            assert res.json()["error"] == "Questo run non è attivo"
+            assert res.json()["error"] == http_error("en", "run_not_active")
         # spec 09: a stored run can be resumed (not a complete one) and its questions answered
         res = await c.post("/api/runs/r1/resume", json={})
-        assert res.status_code == 409 and "già completo" in res.json()["error"]
+        assert res.status_code == 409 and res.json()["error"] == http_error("en", "run_complete")
         res = await c.post("/api/runs/r1/answer", json={"itemId": "nope", "text": "x"})
-        assert res.status_code == 409 and res.json()["error"] == "Questa richiesta non è più aperta"
+        assert res.status_code == 409 and res.json()["error"] == http_error("en", "request_closed")
 
 
 async def test_pause_resume_stop_delegate(client, app_and_store):
@@ -267,7 +268,7 @@ async def test_answer_route_validates_and_delegates(client, app_and_store):
         assert captured["call"][1]["decision"] is None
         res = await c.post(f"/api/runs/{fake.data['id']}/answer", json={"itemId": "gone"})
         assert res.status_code == 409
-        assert res.json()["error"] == "Questa richiesta non è più aperta"
+        assert res.json()["error"] == http_error("en", "request_closed")
     app.state.live.clear()
 
 
@@ -303,10 +304,10 @@ async def test_chat_unknown_agent_and_empty_text(client):
     async with client as c:
         res = await c.post("/api/chat/nobody", json={"text": "ciao"})
         assert res.status_code == 404
-        assert res.json()["error"] == "Agente non trovato"
+        assert res.json()["error"] == http_error("en", "agent_not_found")
         res = await c.post("/api/chat/ada", json={"text": "   "})
         assert res.status_code == 400
-        assert res.json()["error"] == "Messaggio vuoto"
+        assert res.json()["error"] == http_error("en", "message_empty")
 
 
 async def test_chat_replies_and_keeps_history(client, app_and_store):
