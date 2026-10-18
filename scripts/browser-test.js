@@ -11,6 +11,8 @@
 //                                                   the same measures on another checkout
 //   --json FILE   write every result to FILE        BROWSER=path   pick the browser
 //   --spec NN     prefix of the screenshots (02)    --port N       port of the demo server
+//   BROWSER_FLAGS="--disable-gpu" BROWSER_CPU_THROTTLE=20   a container without a GPU, as
+//                 slow as one (software WebGL, about 2 frames a second): the waits count frames
 //
 // Phases. Spec 01: views (A1 coverage, 3 viewports x 3 panel layouts), checks (A6, A7,
 // A8 and the trap mutation), cubes (A9), input (A7 with real mouse events), run (A10).
@@ -128,19 +130,20 @@ async function load(cdp, [width, height], { settle = 800 } = {}) {
   for (const src of SCRIPTS) await cdp.eval(`${src}\n;void 0`);
   await cdp.eval('__t.frames(3)');
 }
+// A new window size, then the view still: counted in frames (lib.js, still), never in ms.
 async function viewport(cdp, [width, height]) {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
-  await sleep(600);
+  return cdp.eval('__t.still()');
 }
 // A new window size for the CSS: a few real frames, for the ResizeObservers of main.js.
 async function resizeTo(cdp, [width, height]) {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   await cdp.eval('__t.frames(3)');
 }
-// The real panel buttons, then real frames for the re-frame to finish.
+// The real panel buttons, then real frames for the re-frame to finish: true once still.
 async function layout(cdp, [left, right]) {
   await cdp.eval(`(() => { const t = window.__t; if (t.isOpen('#left') !== ${left}) t.$('#btn-left').click(); if (t.isOpen('#right') !== ${right}) t.$('#btn-right').click(); })()`);
-  await sleep(900);
+  return cdp.eval('__t.still()');
 }
 // tag: what the picture shows, the checkout measured (prima, dopo) unless told otherwise
 async function shot(cdp, name, tag = TAG) {
@@ -156,10 +159,11 @@ async function views(cdp) {
   for (const vp of VIEWPORTS) {
     await viewport(cdp, vp);
     for (const [name, panels] of Object.entries(LAYOUTS)) {
-      await layout(cdp, panels);
-      const c = await cdp.eval('window.__checks.coverage()');
-      // A1 is the new behaviour: on another checkout the numbers are the baseline
-      report('views', `${vp.join('x')} ${name}: floor under the UI ${c.floorCoveredPct}%, office ${c.officeWidthPx} px`, TAG === 'prima' || (c.floorUnderObstaclesPct === 0 && c.envelopeUnderObstacles === 0), c);
+      const settled = await layout(cdp, panels);
+      const c = { ...(await cdp.eval('window.__checks.coverage()')), settled };
+      // A1 is the new behaviour: on another checkout the numbers are the baseline. The
+      // view must have stopped first: halfway through a re-frame it measures nothing.
+      report('views', `${vp.join('x')} ${name}: floor under the UI ${c.floorCoveredPct}%, office ${c.officeWidthPx} px`, TAG === 'prima' || (settled && c.floorUnderObstaclesPct === 0 && c.envelopeUnderObstacles === 0), c);
       if (vp[0] === 1920) await shot(cdp, `${vp.join('x')}-${name === '--' ? 'nessun-pannello' : name === 'LR' ? 'due-pannelli' : 'pannello-destro'}`);
     }
   }
@@ -196,17 +200,10 @@ async function cubes(cdp) {
 const mouseEvent = (cdp, type, [x, y], o = {}) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...o });
 const viewState = (cdp) => cdp.eval('({ auto: agentWorld.autoFrame, picture: __t.picture(), scale: __t.screenScale() })');
 const moved = (a, b) => Math.max(...a.picture.map(([x, y], i) => Math.hypot(x - b.picture[i][0], y - b.picture[i][1])));
-// until the picture is still: drag inertia decays by 0.92 a frame, so how long it
-// lasts depends on how fast the browser draws (12 to 60 fps seen here)
-async function settleView(cdp) {
-  let last = await viewState(cdp);
-  for (let i = 0; i < 40; i++) {
-    await sleep(250);
-    const now = await viewState(cdp);
-    if (moved(last, now) < 0.02 && i >= 3) return;
-    last = now;
-  }
-}
+// until the picture is still: drag inertia decays by 0.92 a frame and a camera move
+// lasts a number of frames, so the wait counts frames (12 to 60 fps seen on a desktop,
+// 2 in a container with software WebGL, where 250 ms polls saw no frame and stopped early)
+const settleView = (cdp) => cdp.eval('__t.still()');
 async function homeView(cdp) {
   await cdp.eval("document.querySelector('#btn-home').click()");
   await settleView(cdp);
@@ -981,12 +978,16 @@ try {
   });
   browser = await launch();
   const cdp = await browser.connect();
+  if (process.env.BROWSER_CPU_THROTTLE) await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.BROWSER_CPU_THROTTLE) });
   results.browser = browser.exe;
   console.log(`browser checks on ${ROOT} (${TAG}) with ${browser.exe}`);
   if (PHASES.includes('hygiene')) await hygiene(browser.profile);
   await load(cdp, VIEWPORTS[0]);
   const webgl = await cdp.eval('Boolean(agentWorld.renderer.getContext())');
   if (!webgl) throw new Error('no WebGL in the headless browser');
+  // how fast this browser draws: the first thing to read when a camera check is red
+  results.fps = await cdp.eval('(async () => { let n = 0; const t0 = performance.now(); while (performance.now() - t0 < 1000) { await __t.frames(1); n++; } return +(n / ((performance.now() - t0) / 1000)).toFixed(1); })()');
+  console.log(`       ${results.fps} frames a second in this browser`);
   if (PHASES.includes('views')) await views(cdp);
   if (PHASES.includes('cubes')) await cubes(cdp);
   if (PHASES.includes('checks')) await checks(cdp);

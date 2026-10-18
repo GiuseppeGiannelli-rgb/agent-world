@@ -181,6 +181,21 @@ window.__t = (() => {
     for (let i = 0; i < frames && !fn(); i++) await t.frames(1);
     return fn();
   };
+  // Until the view is still, counted in frames and not in milliseconds: the world moves
+  // at most 0.05 s a frame (world.js), so a 0.35 s re-frame takes 7 frames whether the
+  // browser draws 60 a second or 2 (software WebGL in a container without a GPU, where
+  // a fixed wait measured the office halfway through its move). Still: no camera move
+  // running and the picture within tol px over `span` frames. False if it never stops.
+  t.still = async ({ span = 8, tol = 0.02, maxFrames = 720 } = {}) => {
+    let last = t.picture();
+    for (let n = 0; n < maxFrames; n += span) {
+      await t.frames(span);
+      const now = t.picture();
+      if (!w.fx.active(w.camera) && t.moved(last, now) < tol) return true;
+      last = now;
+    }
+    return false;
+  };
   t.inspectorOpen = () => !$('#inspector').classList.contains('hidden');
   // The tallest and widest inspector a user gets: 6 events in the timeline (main.js shows
   // no more), a chat long enough to reach the inspector's max-height, and the longest
