@@ -1,9 +1,9 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-18, sera. In breve:*
-- *`main` = `67f98c7`: la PR #6 (spec 09) è unita. Le spec 01–09 sono chiuse (la 03 congelata dopo T2).*
-- *Branch `claude/tech-debt-i18n-browser-docs-519081`, da `main`, per il debito tecnico rimasto:*
-  - *N13 chiuso: gli errori HTTP seguono la lingua dell'app;*
+- *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/tech-debt-i18n-browser-docs-519081`, sopra `67f98c7` (PR #6, spec 09). Le spec 01–09 sono chiuse (la 03 congelata dopo T2).*
+- *Il branch ha chiuso il debito tecnico rimasto:*
+  - *N13 e N17 chiusi: gli errori HTTP seguono la lingua dell'app, la nota del tasker quella della run, i log di avvio sono in inglese;*
   - *i rossi di `views` e `input` del runner del browser venivano dalle attese a tempo fisso: ora contano i frame;*
   - *questo file e il README descrivono il sistema di oggi.*
 - *Da decidere per l'utente: `npm run scan:secrets` trova l'identità vera nei 5 commit di merge che GitHub ha creato per le PR (sezione 1).*
@@ -31,7 +31,7 @@
 - **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. I 3 test saltati di pytest sono la parità Rust.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
-  - il backup della riscrittura della history (`../agent-world-before-scrub.bundle`, accanto alla cartella del repo) c'è ancora e **contiene i dati personali**: va cancellato, o tenuto offline;
+  - il backup della riscrittura della history (`agent-world-before-scrub.bundle`, accanto alla cartella del repo, con i dati personali) è **nel Cestino** dal 18/10: per toglierlo davvero va svuotato il Cestino;
   - **`npm run scan:secrets` non è pulito (18/10): 11 rilievi, tutti nei 5 commit di merge che GitHub ha creato per le PR #1, #3, #4, #5 e #6** (`def76ca`, `2e91b97`, `2e55864`, `6ca7919`, `67f98c7`). Il messaggio "Merge pull request #N from …" porta il nome dell'account, e autore e committer hanno l'identità vera. Sono già su `origin/main`. Per le PR future: "Squash and merge" o "Rebase and merge", oppure il merge in locale con l'identità `agent-world-dev`. Per quelle già fatte serve una nuova riscrittura della history con force push: decide l'utente.
 - **Questo file è tracciato su `main`** (dal 16/10, decisione dell'utente). `scripts/secret-scan.js` ne scansiona il contenuto come per ogni altro file: chiavi, percorsi assoluti, parole personali.
 - **Push su Windows:** `git push` apre la finestra "Select an account" di Git Credential Manager. Va scelto l'account proprietario del repo (quello nell'indirizzo di `origin`); con l'altro GitHub risponde 403. Il push si lancia in background e si avvisa l'utente.
@@ -59,19 +59,13 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-1. **Review del branch `claude/tech-debt-i18n-browser-docs-519081`**, poi la PR verso `main` quando l'utente la chiede.
-2. **I commit di merge di GitHub con l'identità vera** (sezione 1): come unire le PR d'ora in poi, e se riscrivere la history di `main`. Decide l'utente.
-3. **Le verifiche su Windows o con chiavi vere** (in fondo, "Da verificare").
-4. **N17** (sezione 4): l'ultimo testo del backend scritto in una lingua sola.
-5. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
+1. **I commit di merge di GitHub con l'identità vera** (sezione 1): se riscrivere la history di `main`. Decide l'utente. D'ora in poi i branch si uniscono in locale con `git merge --no-ff` e l'identità `agent-world-dev`, come il 18/10, poi `git push origin main`.
+2. **Le verifiche su Windows o con chiavi vere** (in fondo, "Da verificare").
+3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
+4. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
 
 ## 4. Ticket futuri
 
-- **N17 — Testi del backend ancora in italiano, fuori dagli errori HTTP** (trovato chiudendo N13):
-  - la nota di run `"Risposta non valida, riprovo"` di `tasker.py` (riga 226) compare nella timeline del task in ogni lingua;
-  - in console, i log di avvio di `skills.py` e `app.py` ("repo ignorata", "non scaricata", "download spenti").
-  
-  La correzione: una chiave in `i18n.MESSAGES` per la nota, l'inglese per i log.
 - **Spec 03 congelata, nel backlog:**
   - T3–T10: baseline dell'app con le fasi `memory`, `late` e `soak`;
   - **N5:** perdite di memoria della GPU;
@@ -228,7 +222,7 @@ npm run screenshots                          # gli screenshot del README
 
 ## 7. Bug noti e limiti
 
-- **Ticket aperti:** N17, N10, N8, più il backlog della spec 03 (sezione 4).
+- **Ticket aperti:** N10, N8, più il backlog della spec 03 (sezione 4).
 - **Limiti accettati:**
   - un solo run attivo alla volta (409 "the team is already working");
   - la chat con gli agenti sta solo in memoria;
@@ -251,8 +245,10 @@ npm run screenshots                          # gli screenshot del README
   - `daf66d5` test(attachments): id corti per i byte dei file, Windows li rifiutava;
   - `72158a2` fix(i18n): gli errori HTTP nella lingua dell'app (N13);
   - `5729fbc` fix(browser-test): le attese della camera contano i frame;
-  - il commit di questi documenti (HANDOFF e README).
-- Il branch è pushato su `origin` su richiesta dell'utente (18/10); nessuna PR aperta.
+  - `b94bc9b` docs: HANDOFF e README;
+  - `cbb435c` fix(i18n): gli ultimi testi del backend in una lingua sola (N17);
+  - il commit di questo aggiornamento di HANDOFF.
+- Unito in `main` in locale con `git merge --no-ff` e l'identità `agent-world-dev` (nessun merge dall'interfaccia di GitHub), poi `git push origin main` su richiesta dell'utente. Nessuna PR aperta. Su `origin` il branch è fermo a `b94bc9b`: il resto arriva con `main`.
 
 ### Completate
 - **N13, gli errori HTTP nella lingua dell'app** (dettagli: `docs/specs/06-language.md` §5):
@@ -284,21 +280,23 @@ npm run screenshots                          # gli screenshot del README
   - **Correzione:** `__t.still()` in `scripts/browser/lib.js` aspetta la camera ferma contando i frame, e lo usano `viewport()`, `layout()` e `settleView()`. `views` richiede la camera ferma; il runner stampa gli fps. Dopo: 14 controlli su 14 verdi a 2,4 e a 0,4 fps, con le stesse larghezze dell'ufficio della macchina veloce.
 - **Test con id troppo lunghi su Windows:** `test_real_files_pass[v.wav-…]` dava errore, perché l'id con i byte del WAV superava i 32767 caratteri di `PYTEST_CURRENT_TEST`. Ora gli id sono il nome del file e la dimensione.
 - **`secret-scan.js` nei worktree:** il hook di commit bloccava ogni commit da un worktree che nominava agenti o mondo. `personalWords()` cercava `info/personal-words` sotto `--git-dir`, che in un worktree è `.git/worktrees/<nome>`, un percorso assoluto incollato da `join()` e senza `info/`. Così valeva l'identità `agent-world-dev`. Ora legge la cartella comune. Due controlli nuovi in `secret-scan-test.js`, con un worktree vero; il primo era rosso prima della correzione.
+- **N17, gli ultimi testi in una lingua sola** (dettagli: `docs/specs/06-language.md` §5): la nota del tasker "Risposta non valida, riprovo" è la chiave `invalid_answer` nella lingua della run; il messaggio di porta occupata di `npm start` è `port_busy` nella lingua dell'app; i 7 log di avvio di `app.py`, `skills.py` e `skiller.py` sono in inglese. Test scritti prima e visti rossi (8): la nota nelle cinque lingue, la porta con l'app in tedesco, e la guardia di N13 estesa a tutto il backend, con l'elenco esplicito dei letterali che sono dati.
+- **Il backup del 14/10** (`agent-world-before-scrub.bundle`, 5 MB, i ref di prima della riscrittura) è stato spostato nel Cestino, non cancellato: va svuotato il Cestino.
 - **Documenti:** questo file riordinato (la storia del 13–14/10 riassunta nella sezione 2; sezioni 1, 3 e 6 sul sistema di oggi). Nel README:
   - via la nota su N13;
-  - pytest a 927 test;
+  - pytest a 934 test;
   - i 403 nella lingua dell'app;
   - come provare il runner su una macchina lenta.
 
 ### Verifiche (Windows 11)
-- `npm test` verde in 5 min 50 s: mondo 3D, dizionari, launcher, avvio, **pytest 927 passati e 3 saltati** (la parità Rust), smoke, flussi, secret-scan (19 controlli), cartelle temporanee.
-- **`npm run test:browser`: 255 verifiche su 255, ALL OK** in 4 min 53 s, a 106,8 fps, con `known-red.json` vuoto. Il README ne contava 254 (246 più le 8 della spec 09): nessun controllo nuovo in questo branch.
+- `npm test` verde in 5 min 50 s: mondo 3D, dizionari, launcher, avvio, **pytest 934 passati e 3 saltati** (la parità Rust), smoke, flussi, secret-scan (19 controlli), cartelle temporanee. Prima di N17 erano 927.
+- **`npm run test:browser`: 255 verifiche su 255, ALL OK** in 4 min 53 s, a 106,8 fps, con `known-red.json` vuoto (prima di N17, che non tocca il front-end). Il README ne contava 254 (246 più le 8 della spec 09): nessun controllo nuovo in questo branch.
 - `--only views,input` con WebGL software e CPU rallentata: 14 su 14 a 2,4 e a 0,4 fps; prima della correzione 3 rossi a 2,1 fps e 4 a 0,8.
-- **`npm run scan:secrets`: 11 rilievi, tutti nei 5 commit di merge di GitHub** (sezione 1, "Da fare per l'utente"); i cinque commit di questo branch sono puliti, e il hook li ha scansionati uno per uno.
+- **`npm run scan:secrets`: 11 rilievi, tutti nei 5 commit di merge di GitHub** (sezione 1, "Da fare per l'utente"); i commit di questo branch e il merge sono puliti, e il hook li ha scansionati uno per uno.
 
 ### Ticket aperti
 - I merge di GitHub con l'identità vera (sezione 1): da decidere per l'utente.
-- N17 (nuovo): la nota "Risposta non valida, riprovo" di `tasker.py` e alcuni log di avvio sono ancora solo in italiano.
+- N8, N10 e il backlog della spec 03 (sezione 4). N13 e N17 sono chiusi.
 
 ### Da verificare su Windows (o con chiavi vere)
 - La voce in una run LIVE senza credito OpenAI ed ElevenLabs: deve parlare edge-tts, senza `uv add`. Senza rete, o con `media.providers.edgetts.enabled: false`, la voce di sistema (SAPI).
@@ -308,7 +306,7 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. Review del branch e PR verso `main` (quando l'utente la chiede), unita senza un commit di merge di GitHub.
-2. La decisione sui merge già fatti (sezione 1).
+1. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
+2. La decisione sui merge di GitHub già fatti (sezione 1).
 3. Le verifiche qui sopra.
-4. N17.
+4. Il prossimo ciclo SDD, dal backlog.
