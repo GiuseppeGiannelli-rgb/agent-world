@@ -1,7 +1,7 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-20. In breve:*
-- ***T05 fatto** (streaming vero su `/v1`) sul branch `claude/laughing-gates-c8d3a0`, portato in avanti senza merge su `848dcde` (la punta di `claude/t04-tasker-checkpointing-90fa3a`), quindi porta T01–T05 e N19. Decisioni D20–D25 (spec 11 §7.3) **da confermare**. A parte, non unito e da non unire così com'è: il branch `claude/spec11-phase2-wip` (sezione 3, passo 2).*
+- ***T05 fatto** (streaming vero su `/v1`) sul branch `claude/laughing-gates-c8d3a0`, portato in avanti senza merge su `848dcde` (la punta di `claude/t04-tasker-checkpointing-90fa3a`), quindi porta T01–T05 e N19. Decisioni D20–D25 (spec 11 §7.3) confermate dall'utente il 20/10 ("così come sono"). A parte, non unito e da non unire così com'è: il branch `claude/spec11-phase2-wip` (sezione 3, passo 2).*
 - *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout), e poi **T03 fatto** (tokenizer per il codice e ogni scrittura, consolidamento e decadimento del Brain). **T04 fatto** (checkpoint del Tasker e ritorno all'ultimo punto pulito all'escalation) sul branch `claude/t04-tasker-checkpointing-90fa3a`, che parte da `0db28e2` (la punta di `claude/youthful-bun-b80533`) e quindi porta T01–T04 e N19. Niente unito né spinto; decisioni D1–D5 (T01), D6–D11 (T02), D12–D15 (T03) e D16–D19 (T04) confermate dall'utente. **Prossimo: T05** (sezione 3).*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
@@ -54,7 +54,7 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
 - **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente). T02, shell a fiducia zero e chiave d'accesso dalla rete, più la chiusura di N13 (decisioni D6–D11 confermate dall'utente). N19 chiuso subito dopo. T03, tokenizer per il codice e consolidamento del Brain (decisioni D12–D15 confermate dall'utente). T04, checkpoint del Tasker e time-travel all'escalation (decisioni D16–D19 confermate dall'utente).
-- **20/10:** T05, streaming vero su `/v1` (decisioni D20–D25 da confermare). La sessione aveva ricevuto prima una richiesta di fare T05–T10 in un colpo solo, poi quella di fare solo T05: il lavoro già scritto per la fase 2 è su un branch a parte (sezione 3).
+- **20/10:** T05, streaming vero su `/v1` (decisioni D20–D25 confermate dall'utente). La sessione aveva ricevuto prima una richiesta di fare T05–T10 in un colpo solo, poi quella di fare solo T05: il lavoro già scritto per la fase 2 è su un branch a parte (sezione 3).
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -63,7 +63,7 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-0. **L'utente rivede T05** (spec 11 §7) e conferma o cambia le decisioni D20–D25 (§7.3). Solo dopo il suo via libera si passa a T06.
+0. **T05 approvato** con D20–D25 (spec 11 §7.3, confermate dall'utente il 20/10, "così come sono").
 1. **Spec 11, a contesto pulito: T06, l'estrattore strutturale** (spec 11 §2, fase 2): `extract_skeleton(source, ext)` in `backend/backend/deconstructor.py` con il gemello in `crates/aw_core` e la probe d'avvio. Si riparte dal branch `claude/laughing-gates-c8d3a0` (T01–T05, N19), o da `main` se nel frattempo è stato unito.
 2. **Il branch `claude/spec11-phase2-wip`** (non unito, non spinto, da non unire così com'è) parte da `1b40c97`, la prima versione del commit di T05 (solo il codice, prima del 404 e dei documenti; poi riunita nel commit finale del ticket), e tiene il lavoro scritto il 20/10 quando la sessione credeva di dover fare T05–T10 insieme:
    - `4581acc`, una bozza completa di T06 con i suoi test verdi da soli (38 in `test_deconstructor.py`): `deconstructor.py` (scheletro di Python, JS/TS, Rust, HTML e CSS uguale all'`ast` di Python su tutti i 102 file `.py` del repo; metadati di ELF, PE, Mach-O, wasm, zip, tar, gzip; riassunto di HAR, eventi JSON, JSON lines, log), il gemello Rust in `crates/aw_core/src/deconstruct.rs` scritto ma non compilato, la probe; misurato: lo scheletro è il 10,1% dei file di codice del repo;
@@ -276,7 +276,7 @@ npm run screenshots                          # gli screenshot del README
   - `backend/backend/routes/gateway.py`: lo `StreamingResponse` vero, il 502 prima del primo chunk, il frame `error`, il 404 di un modello sconosciuto; `backend/backend/i18n.py`: `model_unknown` × 5 lingue;
   - test: `backend/tests/test_gateway_stream.py` (nuovo, 21 test), `test_gateway.py` (il test del blocco unico rinominato);
   - documenti: README (Streaming, il router, Test), spec 11 (§2, §7), questo file. `bus.py` non cambia (D20).
-- **Decisioni da confermare (spec 11 §7.3):** D20 il flusso di `/v1` non passa dal bus (resta l'evento `router.call` alla fine); D21 il failover vale fino alle prime parole visibili, poi il modello è scelto; D22 un'interruzione a metà è un frame `error` e poi `[DONE]`; D23 i token dal provider, stimati come il simulatore quando mancano; D24 `<think>` mai al client, anche spezzato, e gli spazi finali restano; D25 un modello sconosciuto è un 404 `invalid_request_error`.
+- **Decisioni confermate dall'utente il 20/10 (spec 11 §7.3):** D20 il flusso di `/v1` non passa dal bus (resta l'evento `router.call` alla fine); D21 il failover vale fino alle prime parole visibili, poi il modello è scelto; D22 un'interruzione a metà è un frame `error` e poi `[DONE]`; D23 i token dal provider, stimati come il simulatore quando mancano; D24 `<think>` mai al client, anche spezzato, e gli spazi finali restano; D25 un modello sconosciuto è un 404 `invalid_request_error`.
 - **Difetto trovato e corretto nel perimetro:** un modello che non è né una combo né `provider/modello` dava un 500 nudo su `/v1`, con e senza `stream` (un `ValueError` dal router); ora 404, nella lingua dell'app. Il 500 di un corpo JSON rotto resta, come su `/api` (sezione 7).
 
 ### Completato: spec 11, T04 — checkpoint e time-travel del Tasker (dettagli: spec 11 §6)
@@ -390,7 +390,7 @@ npm run screenshots                          # gli screenshot del README
 ### Prossimi passi
 1. **T01, T02 e T03 approvati** con D1–D15 (19/10): restano da unire in locale, con N19, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
 2. **T04 approvato** con D16–D19 (19/10, spec 11 §6.3, "così come sono"): resta da unire in locale con il resto (unire `claude/t04-tasker-checkpointing-90fa3a` porta T01–T04 e N19).
-3. **T05 fatto** (20/10, spec 11 §7): l'utente conferma o cambia D20–D25.
+3. **T05 approvato** con D20–D25 (20/10, spec 11 §7.3, "così come sono"): resta da unire in locale con il resto.
 4. **T06, a contesto pulito** (sezione 3, passi 1 e 2): dal branch `claude/laughing-gates-c8d3a0`.
 5. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
 6. Le verifiche qui sopra.

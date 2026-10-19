@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 da confermare. Prossimo: T06.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 confermate dall'utente. Prossimo: T06.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -396,7 +396,7 @@
   - un modello sconosciuto: 404 nella forma OpenAI, con il testo nella lingua dell'app (`model_unknown`, cinque lingue in `i18n.py`), con e senza `stream` (D25).
 - **`backend/backend/bus.py`:** invariato (D20).
 
-### 7.3 Decisioni (da confermare dall'utente)
+### 7.3 Decisioni (confermate dall'utente il 20/10/2026)
 
 - **D20 — Il flusso di `/v1` non passa dal bus.** `bus.py` non cambia. Il flusso di `/v1` è di un solo client e di una sola richiesta: va dal router alla risposta HTTP direttamente. Il bus serve la UI e riceve, alla fine di ogni chiamata in streaming, lo stesso evento `router.call` di una chiamata normale, con i token. Un evento per pezzo arriverebbe a ogni pagina aperta.
 - **D21 — Il failover vale fino alle prime parole visibili.** Il router legge il flusso di un modello finché non arriva testo visibile, cioè dopo `<think>` e gli spazi iniziali. Un errore, un flusso vuoto o un 4xx/5xx prima di quel punto passano al bersaglio successivo come in `chat()`, e il client non vede niente. Dopo le prime parole il modello è scelto: niente cambio a metà risposta, perché il client mescolerebbe due testi. Il prezzo è che il primo chunk arriva quando il modello scrive la prima parola visibile, non al primo byte.
