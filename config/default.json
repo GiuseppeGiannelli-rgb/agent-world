@@ -182,7 +182,8 @@
     "localDim": 256,
     "minCosine": 0.25,
     "chunk": { "maxChars": 1200, "minSimilarity": 0.5 },
-    "fusion": { "k": 60, "bm25": 1.0, "vector": 1.0 }
+    "fusion": { "k": 60, "bm25": 1.0, "vector": 1.0 },
+    "brain": { "dedupeCosine": 0.88, "halfLifeDays": 30, "decayFloor": 0.5 }
   },
 
   "ceo": { "id": "ada", "name": "Ada", "title": "CEO · Regia", "color": "#f5c451", "combo": "frontier" },

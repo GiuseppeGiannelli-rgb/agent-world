@@ -1481,7 +1481,8 @@ function handle({ type, payload }) {
       S.brain.count = payload.count;
       world.onBrain(payload);
       invalidate('top');
-      if (S.tab === 'brain' && payload.op === 'remember') loadBrain();
+      // spec 11 T03: a consolidation removes notes, so the open list reloads too
+      if (S.tab === 'brain' && (payload.op === 'remember' || payload.op === 'consolidate')) loadBrain();
       break;
     case 'skills':
       S.skills.count = payload.count;

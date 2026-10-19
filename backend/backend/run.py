@@ -2043,4 +2043,9 @@ class Run:
             agent_id=ceo["id"],
             run_id=self.data["id"],
         )
+        # spec 11 T03: the run's lessons and notes merge with their near-duplicates
+        try:
+            await self.ctx.brain.consolidate(run_id=self.data["id"])
+        except Exception as err:  # noqa: BLE001 -- a memory clean-up never fails the run
+            print(f"Brain        →  consolidation skipped: {err}", flush=True)
         self.message(ceo["id"], "*", "report", self.t("report_ready"))

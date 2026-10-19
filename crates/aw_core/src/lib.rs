@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use unicode_general_category::get_general_category;
 use unicode_normalization::UnicodeNormalization;
 
 /// Same set as `STOP` in backend/search.py. Tokens are accent-stripped before
@@ -27,34 +28,76 @@ fn is_stop(w: &str) -> bool {
     STOP.contains(&w)
 }
 
-/// Python: str(text).lower() -> NFD -> strip U+0300..=U+036F -> split [^a-z0-9]+
-/// -> keep tokens with len > 2 that are not stopwords.
-fn tokenize_str(text: &str) -> Vec<String> {
-    let lowered: String = text.chars().flat_map(|c| c.to_lowercase()).collect();
-    // Per-char NFD then strip combining marks: equivalent to the Python
-    // normalize("NFD") + regex strip, because the stripped marks make the
-    // canonical reordering irrelevant.
-    let cleaned: String = lowered
-        .chars()
-        .flat_map(|c| c.nfd())
-        .filter(|c| !('\u{0300}'..='\u{036f}').contains(c))
-        .collect();
+/// Python: c == "_" or unicodedata.category(c)[0] in "LNM" (spec 11 T03, D12).
+fn is_wordish(c: char) -> bool {
+    c == '_' || matches!(get_general_category(c).abbreviation().as_bytes().first(), Some(b'L' | b'N' | b'M'))
+}
+
+/// Python: search._scan -- runs of word chars and "_", joined by "::" or "@"
+/// when a word char follows; a token may start with "@".
+fn scan(s: &[char]) -> Vec<String> {
+    let n = s.len();
     let mut out = Vec::new();
-    let mut cur = String::new();
-    for c in cleaned.chars() {
-        if c.is_ascii_alphanumeric() {
-            cur.push(c);
-        } else if !cur.is_empty() {
-            // after lowercasing, [a-z0-9] only: byte len == char count
-            if cur.len() > 2 && !is_stop(&cur) {
-                out.push(std::mem::take(&mut cur));
-            } else {
-                cur.clear();
+    let mut i = 0;
+    while i < n {
+        let c = s[i];
+        if is_wordish(c) || (c == '@' && i + 1 < n && is_wordish(s[i + 1])) {
+            let mut j = i;
+            while j < n {
+                let ch = s[j];
+                if is_wordish(ch) {
+                    j += 1;
+                } else if ch == '@' && j + 1 < n && is_wordish(s[j + 1]) {
+                    j += 1;
+                } else if ch == ':' && j > i && j + 2 < n && s[j + 1] == ':' && is_wordish(s[j + 2]) {
+                    j += 2;
+                } else {
+                    break;
+                }
             }
+            out.push(s[i..j].iter().collect());
+            i = j;
+        } else {
+            i += 1;
         }
     }
-    if !cur.is_empty() && cur.len() > 2 && !is_stop(&cur) {
-        out.push(cur);
+    out
+}
+
+/// Python: len(w) > 2 and w not in STOP -- len counts characters, not bytes.
+fn keep(w: &str) -> bool {
+    w.chars().count() > 2 && !is_stop(w)
+}
+
+fn is_joiner(c: char) -> bool {
+    c == '_' || c == ':' || c == '@'
+}
+
+/// Python: str(text).lower() -> NFD -> strip U+0300..=U+036F -> "ς" to "σ" ->
+/// the tokens of _scan, each followed by its parts when it holds a joiner.
+/// Python reads ASCII chunks with a regex of the same grammar: same tokens.
+fn tokenize_str(text: &str) -> Vec<String> {
+    // str::to_lowercase, like Python's lower() on the whole string; the NFD of the
+    // whole string reorders the marks it keeps (T03 keeps the marks outside
+    // U+0300..U+036F, so the canonical order matters now)
+    let folded: Vec<char> = text
+        .to_lowercase()
+        .nfd()
+        .filter(|c| !('\u{0300}'..='\u{036f}').contains(c))
+        .map(|c| if c == 'ς' { 'σ' } else { c })
+        .collect();
+    let mut out = Vec::new();
+    for raw in scan(&folded) {
+        if keep(&raw) {
+            out.push(raw.clone());
+        }
+        if raw.chars().any(is_joiner) {
+            for part in raw.split(is_joiner) {
+                if !part.is_empty() && keep(part) {
+                    out.push(part.to_string());
+                }
+            }
+        }
     }
     out
 }
@@ -210,8 +253,9 @@ fn crc32(bytes: &[u8]) -> u32 {
 }
 
 /// Mirrors backend.embed.ngram_vector: signed feature hashing of "w:<token>"
-/// and of the 3- and 4-grams of " <token> ", then L2 normalization. Tokens are
-/// [a-z0-9] only (tokenize_str), so byte slicing is char slicing.
+/// and of the 3- and 4-grams of " <token> ", then L2 normalization. Spec 11
+/// T03: tokens may be any script, so the grams are cut by characters (Python
+/// slices str) and hashed as UTF-8 bytes.
 fn ngram_vector_str(text: &str, dim: usize) -> Vec<f64> {
     let mut vec = vec![0.0f64; dim];
     if dim == 0 {
@@ -219,11 +263,11 @@ fn ngram_vector_str(text: &str, dim: usize) -> Vec<f64> {
     }
     for token in tokenize_str(text) {
         let mut grams: Vec<String> = vec![format!("w:{}", token)];
-        let padded = format!(" {} ", token);
+        let padded: Vec<char> = format!(" {} ", token).chars().collect();
         for n in [3usize, 4] {
             if padded.len() >= n {
                 for i in 0..=(padded.len() - n) {
-                    grams.push(padded[i..i + n].to_string());
+                    grams.push(padded[i..i + n].iter().collect());
                 }
             }
         }

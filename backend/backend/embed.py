@@ -41,8 +41,9 @@ def dot(a: list[float], b: list[float]) -> float:
 
 def ngram_vector(text, dim: int = DEFAULT_LOCAL_DIM) -> list[float]:
     """Signed feature hashing of " token " 3- and 4-grams and of whole tokens.
-    Tokens come from search.tokenize (lowercase, accents folded, [a-z0-9] only),
-    so every gram is ASCII. Mirrored by aw_core.ngram_vector (CRC-32 IEEE)."""
+    Tokens come from search.tokenize (lowercase, accents folded; spec 11 T03:
+    any script, and the code tokens with "_", "::", "@"). Grams are cut by
+    characters and hashed as UTF-8. Mirrored by aw_core.ngram_vector (CRC-32 IEEE)."""
     vec = [0.0] * dim
     for token in tokenize(text):
         grams = [f"w:{token}"]
@@ -50,7 +51,7 @@ def ngram_vector(text, dim: int = DEFAULT_LOCAL_DIM) -> list[float]:
         for n in (3, 4):
             grams += [padded[i : i + n] for i in range(len(padded) - n + 1)]
         for g in grams:
-            h = zlib.crc32(g.encode("ascii"))
+            h = zlib.crc32(g.encode("utf-8"))
             vec[h % dim] += -1.0 if h & 0x80000000 else 1.0
     return normalize(vec)
 
@@ -58,12 +59,15 @@ def ngram_vector(text, dim: int = DEFAULT_LOCAL_DIM) -> list[float]:
 def _load_rust_ngram():
     """aw_core.ngram_vector, only if it reproduces the Python vectors exactly:
     vectors of the two implementations must never be mixed in one index."""
+    from backend.search import TOKENIZE_PROBES, _native_tokenizer_matches
+
     try:
         import aw_core
 
         fn = aw_core.ngram_vector
-        probes = ["Caffè e tipografia", "Check the HMAC signature of every webhook", "", "il la di", "naïve façade 2026"]
-        return fn if all(list(fn(s, DEFAULT_LOCAL_DIM)) == ngram_vector(s) for s in probes) else None
+        probes = ["Caffè e tipografia", "Check the HMAC signature of every webhook", "il la di", *TOKENIZE_PROBES]
+        same = all(list(fn(s, DEFAULT_LOCAL_DIM)) == ngram_vector(s) for s in probes)
+        return fn if same and _native_tokenizer_matches(aw_core) else None
     except Exception:
         return None
 

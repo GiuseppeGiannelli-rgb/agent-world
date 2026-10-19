@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente. Prossimo: T03.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 da confermare. Prossimo: T04.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -21,7 +21,7 @@
   - con `run_command` attivo (`AGENT_WORLD_ALLOW_SHELL=1`) il sottoprocesso riceve un `env` ripulito (via tutte le `*_API_KEY`, `GITHUB_TOKEN`, `AGENT_WORLD_API_KEY`);
   - se l'host richiesto non è `127.0.0.1` / `localhost` / `::1`, anche `/api/*` e `/api/events` vogliono `AGENT_WORLD_API_KEY` (Bearer o cookie di sessione);
   - chiudere il ticket N13: i messaggi HTTP 403/400 nel dizionario `i18n.py` della lingua attiva.
-- [ ] **T03 — Tokenizer per il codice e consolidamento del Brain** (`search.py`, `crates/aw_core`, `brain.py`):
+- [x] **T03 — Tokenizer per il codice e consolidamento del Brain** (`search.py`, `crates/aw_core`, `brain.py`). Fatto: §5.
   - `tokenize()` (Python e Rust) conserva i token tecnici del codice (identificatori con `_`, `::`, `@`) e i caratteri alfanumerici Unicode, con parità 1:1 nella probe di avvio;
   - `brain.consolidate()`: deduplica le note con similarità coseno > 0,88 e aggiunge un fattore di *time-decay* nell'RRF, per premiare le lezioni del QA più recenti.
 - [ ] **T04 — Checkpoint e time-travel del Tasker** (`tasker.py`, `store.py`, `run.py`): uno snapshot leggero dello stato del sotto-task a ogni passo valido; quando un worker supera `escalateAfter` (2 bocciature) e passa a `frontier`, si torna all'ultimo snapshot pulito invece di accodare gli errori nel contesto.
@@ -210,3 +210,76 @@
 - **Un flusso di eventi già aperto resta aperto** dopo la scadenza della sessione: la chiave si controlla quando si apre.
 - **Dietro il dialogo**, nella pagina ancora vuota e scurita, gli esempi, il pulsante "Start the company" e il selettore della lingua restano in inglese finché non si entra: la lingua completa (`applyLanguage()`) vuole la configurazione, che dalla rete si legge solo dopo il login. I testi statici e il dialogo sono già nella lingua dell'app.
 - **Restano com'erano** (non sono 403/400): i 422 di FastAPI sui parametri e il 500 di un corpo JSON rotto su `/api/*`.
+
+## 5. T03 — Tokenizer per il codice e consolidamento del Brain (fatto il 19/10/2026)
+
+### 5.1 Il punto di partenza (misurato su `4adcaec`)
+
+- **Il tokenizer** divideva su `[^a-z0-9]+`. Un identificatore si spezzava (`budget_gate` → `budget`, `gate`; `std::collections::HashMap` → `std`, `collections`, `hashmap`; `@pytest.fixture` → `pytest`, `fixture`). Il greco, il cirillico, il devanagari e il CJK non davano **nessun** token (`ΟΔΟΣ λόγος`, `Привет мир сервер`, `हिन्दी भाषा`, `数据库很快` → nessun token), `smørrebrød` diventava `rrebr` e `Straße` `stra`.
+- **I vettori locali** (`ngram_vector`) codificavano i grammi in ASCII, e il Rust li tagliava a byte: con un token non ASCII il Python avrebbe alzato un errore e il Rust avrebbe tagliato a metà di un carattere.
+- **La probe d'avvio** di `aw_core` controllava la classifica BM25 su tre documenti, non il tokenizer.
+- **Il Brain** non toglieva i doppioni e non pesava il tempo. Due missioni demo uguali: 12 note, di cui 6 doppie (ogni missione ne scrive 6: 3 note degli agenti, 2 lezioni del QA, il riassunto).
+- **Velocità del tokenizer** (i 30 file Markdown del repo, 0,56 milioni di caratteri): la regex di prima 24 milioni di caratteri al secondo; uno scanner Unicode carattere per carattere 6,3 (3,6 volte più lento); un pezzo alla volta tra gli spazi, con la regex sui pezzi ASCII e lo scanner sugli altri, 16,5 (1,45 volte), con gli stessi token. 28 file su 30 hanno almeno un carattere non ASCII, quindi una scorciatoia per il file intero non serve.
+- **Il coseno a coppie** in Python puro (dimensione 256): 1000 note 4,3 s, 5000 circa 107 s; 30 note nuove contro 5000, 1,3 s.
+
+### 5.2 Cosa fa
+
+- **`backend/backend/search.py`:** `tokenize()` nuovo (D12): `_scan()`, la regex `_ASCII_TOKEN` per i pezzi ASCII, le parti dei token composti. `TOKENIZE_PROBES` e `_native_tokenizer_matches()`: `_load_rust()` usa `aw_core.Bm25` solo se il tokenizer nativo divide i testi di prova come il Python (D13). `HybridIndex.search(…, boost=)` moltiplica il punteggio fuso prima del taglio a *k*.
+- **`backend/backend/embed.py`:** i grammi si tagliano per caratteri e si fa l'hash dei byte UTF-8; `_load_rust_ngram()` vuole anche il tokenizer uguale e prova i testi nuovi.
+- **`crates/aw_core`** (il gemello Rust, regola 2): `tokenize_str()` con la stessa grammatica, la categoria Unicode dal crate `unicode-general-category`, minuscole e NFD su tutta la stringa (riordina i segni che ora restano), le lunghezze in caratteri; `ngram_vector_str()` taglia per caratteri. **Non compilato su questa macchina** (§5.6).
+- **`backend/backend/brain.py`:** `settings()` (da `rag.brain`, letto a ogni chiamata), `decay()` e il suo uso in `search()` (D15), `consolidate(run_id=, threshold=)` con `_merge()` che calcola in un thread e non scrive le note (D14), `reindex(keep_vectors=)`.
+- **`backend/backend/run.py`:** alla fine della run, dopo il riassunto nel Brain, `consolidate(run_id=…)`; un errore si scrive nel log e non ferma la run.
+- **`config/default.json`:** `rag.brain` = `dedupeCosine` 0,88, `halfLifeDays` 30, `decayFloor` 0,5.
+- **UI** (`public/js/main.js`): la scheda Brain aperta ricarica l'elenco anche dopo un evento `consolidate`, non solo dopo `remember`.
+- **Runner del browser:** la fase `brain`.
+
+### 5.3 Decisioni (prese in questa sessione, da confermare)
+
+- **D12 — La grammatica dei token.** Un carattere di parola è una lettera, una cifra o un segno Unicode (categoria L, N o M: i segni servono, per esempio, al devanagari, dove le vocali sono segni). `_` fa parte della parola; `::` e `@` uniscono due parole quando dopo viene un carattere di parola, e `@` può aprire un token. Un token composto dà anche le sue parti: `budget_gate` → `budget_gate`, `budget`, `gate`, così le parole semplici lo trovano ancora e l'identificatore esatto vince. Restano: minuscole, NFD, via i diacritici latini (U+0300–U+036F), almeno 3 caratteri (contati come caratteri, non byte), le stesse stopword. In più `ς` diventa `σ`: il Python minuscola il sigma finale in `ς`, il Rust carattere per carattere in `σ`, e così coincidono (e una query scritta in maiuscolo trova la parola). Il punto non unisce (`app.get` → `app`, `get`), il trattino nemmeno.
+- **D13 — La parità con il Rust passa dalla probe d'avvio.** I testi di prova (`TOKENIZE_PROBES`: identificatori, `::`, `@`, sigma finale, cirillico, un segno devanagari, CJK, lettere senza NFD) devono dare gli stessi token in Python e in Rust, se no `aw_core` non si usa né per BM25 né per i vettori locali. Indici e query non possono dividere le parole in due modi diversi.
+- **D14 — Il consolidamento.** Alla fine di ogni run, le note di quella run si confrontano con tutte le altre; due note dello stesso tipo con coseno **maggiore** di 0,88 diventano una: resta la più recente, con i tag di tutte e due (al più 8) e `repeats`, il numero di note che ha assorbito. Si uniscono solo le note degli agenti (`lesson`, `note`, `run`, e quelle salvate prima che esistesse `kind`), mai quelle del proprietario (`user`) né i suoi file (`document`). Il confronto è per run, perché il passaggio completo costa O(n²) (§5.1); `consolidate()` senza run lo fa, a mano. Il vettore è quello dell'indice: con `local/ngram` 0,88 unisce testi quasi uguali, con un modello di embedding vero anche le parafrasi.
+- **D15 — Il decadimento nel tempo.** Nella ricerca del Brain il punteggio fuso della RRF si moltiplica per `decayFloor + (1 − decayFloor) × 0,5^(età / halfLifeDays)`: 1 per una nota di oggi, 0,75 a 30 giorni, mai sotto 0,5. Vale per le note degli agenti, non per quelle del proprietario. Si applica prima del taglio a *k*, quindi una lezione recente può superarne una vecchia che corrisponde meglio. `halfLifeDays` 0 lo spegne.
+
+### 5.4 Test
+
+- **`backend/tests/test_search.py`** (8 nuovi): il contratto del tokenizer su codice e scritture diverse (12 casi), il sigma finale, le lunghezze in caratteri, la regex dei pezzi ASCII uguale allo scanner su 3000 stringhe casuali di `ab9_:@ x.`, un identificatore che trova prima il suo documento, una query in cirillico e in greco maiuscolo, i vettori locali con ogni scrittura (parole diverse restano lontane) e l'hash dei byte UTF-8 di ogni grammo.
+- **`backend/tests/test_search_rust.py`** (3 nuovi, uno saltato senza `aw_core`): il corpus d'oro con codice, cirillico, greco e devanagari e le loro query; i testi di prova coprono tutto; il tokenizer nativo uguale al Python sui testi di prova (saltato qui); un `aw_core` finto con il tokenizer di prima viene rifiutato sia per BM25 sia per i vettori, uno uguale accettato.
+- **`backend/tests/test_brain.py`** (10 nuovi): il doppione che diventa la nota più recente (tag, `repeats`, evento, indice, file); quello che resta (solo simile, del proprietario, un altro tipo); la soglia strettamente sopra; il passaggio senza run; i vettori tenuti (solo il sopravvissuto si calcola di nuovo); il decadimento (0,75 a 30 giorni, il pavimento, il proprietario, le note senza `kind`); una lezione recente che supera una vecchia migliore con *k* = 1; le impostazioni di serie; una missione demo che consolida alla fine con il suo `run_id`; un consolidamento che fallisce senza fermare la run.
+- **Runner del browser, fase `brain`** (2 verifiche, criterio `T03`): un `recall` non ricarica l'elenco del Brain, un `consolidate` sì, una volta; l'etichetta dell'ufficio segue il conteggio.
+- **Mutazioni:** ognuna deve far diventare rosso il suo test, e lo fa.
+
+  | Mutazione | Test che la prende | Rosso in |
+  |---|---|---|
+  | un token composto senza le sue parti | il contratto del tokenizer; l'identificatore che trova il suo documento | 1 s |
+  | i segni non sono caratteri di parola | il contratto del tokenizer (il devanagari) | 1 s |
+  | niente `ς` → `σ` | il sigma finale; il contratto | 2 s |
+  | la regex dei pezzi ASCII dimentica `@` | la regex uguale allo scanner; il contratto | 1 s |
+  | la probe d'avvio ignora il tokenizer | l'`aw_core` finto con il tokenizer di prima | 1 s |
+  | i grammi codificati in ASCII (i caratteri persi) | l'hash dei byte UTF-8; parole diverse che restano lontane | 1 s |
+  | nessun decadimento nella ricerca | la lezione recente che supera la vecchia | 9 s |
+  | anche le note del proprietario invecchiano | il decadimento | 9 s |
+  | si uniscono tipi diversi | quello che resta | 9 s |
+  | uguale alla soglia si unisce | la soglia strettamente sopra | 9 s |
+  | resta la nota più vecchia | il doppione che diventa la più recente | 9 s |
+  | dopo il consolidamento si ricalcola ogni vettore | i vettori tenuti | 9 s |
+  | la run non consolida | la missione demo che consolida alla fine | 9 s |
+  | UI: un `consolidate` non ricarica l'elenco | la verifica 1 della fase `brain` | 20 s |
+
+  I tempi sono quelli del file di test intero o della sola fase `brain`. Dopo le mutazioni l'impronta di `git diff` è uguale a prima: nessun file resta cambiato.
+
+  **Due prime prove sbagliate, corrette.** I grammi codificati in ASCII senza errori (i caratteri non ASCII persi) passavano: un vettore cirillico restava non nullo e di lunghezza 1, solo sbagliato. Ora un test ricalcola l'hash dei byte UTF-8 di ogni grammo (il contratto del gemello Rust) e controlla che parole diverse restino lontane. La mutazione "senza le parti" la prima volta toglieva una riga e lasciava un `if` vuoto, cioè un errore di sintassi che faceva rossi tutti i test: ora sostituisce la riga, e diventano rossi solo i due test giusti. La verifica della fase `brain` è stata scritta dopo la riga della UI: che sappia fallire lo mostra la sua mutazione.
+
+### 5.5 Verifiche
+
+- `npm test` verde in 6 min 45 s: mondo 3D, dizionari, launcher, avvio, **pytest 1114 passati e 4 saltati** (prima 1094 passati e 3 saltati: 21 test nuovi, 8 in `test_search.py`, 3 in `test_search_rust.py` di cui 1 saltato senza `aw_core`, 10 in `test_brain.py`; i saltati sono la parità Rust ×3 senza il modulo compilato e ffmpeg), smoke, flussi, secret-scan, cartelle temporanee. Alla fine nel worktree non c'è né `data/` né `skills/vendor/`.
+- `npm run test:browser`: **274 verifiche su 274**, ALL OK, in 5 min 13 s a 109,6 fps; `known-red.json` vuoto. Le 2 nuove sono la fase `brain`.
+- **Due missioni demo uguali** sullo stesso Brain: la prima scrive 6 note (3 degli agenti, 2 lezioni, il riassunto), la seconda altre 6, e il consolidamento ne unisce 6: il Brain resta a 6 note invece di 12.
+- **Rust:** il codice di `crates/aw_core` è scritto ma non compilato (§5.6).
+
+### 5.6 Limiti noti
+
+- **Il Rust non si compila qui** (niente `rustc`, `cargo`, Build Tools MSVC). Il gemello Rust è scritto riga per riga sul Python, ma la sua parità si prova solo con il modulo compilato: i test di parità sono saltati, come prima di T03. Se il Rust compilato non coincide, la probe d'avvio lo scarta e resta il Python: il rischio è che il Rust non entri, non che dia risultati diversi.
+- **Versioni di Unicode:** Python 3.13 ha Unicode 15.1; `unicode-general-category` 1.x e `unicode-normalization` possono averne una più nuova. Un carattere aggiunto dopo la 15.1 può essere una lettera in Rust e non in Python; i testi di prova non lo vedono.
+- **Il CJK senza spazi** resta una parola sola per frase (`数据库很快` è un token): per cercare dentro servirebbero i bigrammi.
+- **Il consolidamento è per run:** due doppioni di run vecchie si uniscono solo quando una run nuova ne porta un terzo, o con `consolidate()` a mano (O(n²)).
+- **Il decadimento è solo del Brain:** le skill e la memoria della run (spec 08) non invecchiano.

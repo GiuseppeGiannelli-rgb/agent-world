@@ -216,7 +216,7 @@ flowchart TD
     R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
 ```
 
-- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk).
+- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk). Dalla spec 11 il tokenizer tiene i token del codice e ogni scrittura (serve il crate `unicode-general-category`), e la probe d'avvio controlla anche lui: un `aw_core` compilato prima della spec 11 viene ignorato.
 - **Stessa interfaccia:** chi chiama non sa quale implementazione sta usando.
 - **Due livelli di sicurezza:**
   - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
@@ -328,8 +328,8 @@ L'app recupera il contesto con una **ricerca ibrida**: **BM25**, un ranking less
 
 ```mermaid
 flowchart LR
-    T["testo"] --> N["minuscole → NFD<br/>→ via i diacritici"]
-    N --> SP["split su [^a-z0-9]+"]
+    T["testo"] --> N["minuscole → NFD<br/>→ via i diacritici, ς → σ"]
+    N --> SP["parole Unicode (lettere, cifre, segni),<br/>unite da _ :: @, più le loro parti"]
     SP --> FI["token di almeno 3 caratteri,<br/>senza stopword IT/EN"]
     FI --> IX["indice: tf pesata per campo,<br/>df, lunghezza media"]
     Q["query"] --> N2["stessa tokenizzazione"] --> SC["punteggio BM25<br/>k1 = 1.4 · b = 0.75"]
@@ -395,6 +395,10 @@ $$\text{score}(d) = \frac{w_{bm25}}{60 + r_{bm25}(d)} + \frac{w_{vec}}{60 + r_{v
 Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta `score` (fuso), `bm25` e `cosine`. Nelle missioni semplici, che non hanno un bibliotecario, le skill si scelgono ancora con la soglia BM25 di prima.
 
 **Il Brain** aggiunge una nota a BM25 in modo incrementale; prima ricostruiva tutto l'indice a ogni nota, circa 0,4–0,7 s a 5000 note. Le note ancora senza vettore ne ricevono uno, tutte in un colpo, alla ricerca successiva.
+
+**I token del codice e di ogni scrittura** (spec 11 T03). Un token è una parola di lettere, cifre o segni Unicode, quindi anche il greco, il cirillico, il devanagari e il CJK hanno i loro (prima nessuno). `_`, `::` e `@` tengono insieme un identificatore, che porta con sé anche le sue parti: `budget_gate` dà `budget_gate`, `budget` e `gate`, quindi chi cerca l'identificatore esatto trova prima il suo file, e chi cerca le parole lo trova ancora. Il Rust ha la stessa regola, e la probe d'avvio controlla anche il tokenizer.
+
+**Il Brain invecchia e si ripulisce** (spec 11 T03). Nella ricerca il punteggio fuso delle note degli agenti (lezioni del QA, note, riassunti delle run) si moltiplica per un fattore di tempo: 1 oggi, 0,75 a 30 giorni, mai sotto 0,5. Così una lezione recente passa davanti a una vecchia anche se corrisponde un po' meno. Alla fine di ogni run le note di quella run si confrontano con le altre: due note dello stesso tipo con coseno sopra 0,88 diventano una, la più recente, con i tag di tutte e due e il conto delle ripetizioni (`repeats`). Le tue note e i tuoi file non invecchiano e non si uniscono mai. Le soglie stanno in `rag.brain` di `config/default.json` (`dedupeCosine`, `halfLifeDays`, `decayFloor`; `halfLifeDays` 0 spegne il decadimento).
 
 ---
 
@@ -538,7 +542,7 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 |---|---|---|
 | [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 1013 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (272 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (274 verifiche) |
 
 ### Skill e plugin
 
@@ -722,15 +726,15 @@ Su questa macchina (`http://127.0.0.1:4300`, `localhost`, `[::1]`) non cambia ni
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 272 verifiche sul front-end vero (~5-6 min)
+npm run test:browser   # runner headless: 274 verifiche sul front-end vero (~5-6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (1094 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`).
+- **`pytest` (1114 test, più 4 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`); il tokenizer per il codice e ogni scrittura, la sua probe, il consolidamento e il decadimento del Brain (`test_search.py`, `test_search_rust.py`, `test_brain.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. La fase `lan` (spec 11) apre la stessa app come `lan.localhost`, che per il server è un nome della rete: il login nella lingua dell'app (l'italiano, per l'occasione), che Esc non chiude, una chiave sbagliata, quella giusta con il suo cookie e il flusso di eventi, il reload; e su `127.0.0.1` nessun login, con la chiave impostata. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. La fase `brain` (spec 11) controlla che la scheda Brain aperta ricarichi l'elenco dopo un consolidamento. La fase `lan` (spec 11) apre la stessa app come `lan.localhost`, che per il server è un nome della rete: il login nella lingua dell'app (l'italiano, per l'occasione), che Esc non chiude, una chiave sbagliata, quella giusta con il suo cookie e il flusso di eventi, il reload; e su `127.0.0.1` nessun login, con la chiave impostata. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione). Non toccano nemmeno i tuoi file accanto al codice: ogni script che avvia un server lo fa con `demoEnv()` e una cartella temporanea (`scripts/launcher-test.js` lo controlla su tutti gli script), e `pytest` fallisce se una sessione scrive `config/local.json` o crea un file o una cartella, anche vuota, in `data/` o `skills/vendor/`.
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.

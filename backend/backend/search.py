@@ -10,14 +10,85 @@ STOP = set(
     "dei degli gli le la il lo di da in su tra fra come cosa sono non piu più anche".split(" ")
 )
 
-_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 _COMBINING_RE = re.compile(r"[̀-ͯ]")  # combining diacritics, after NFD decomposition
+
+# Spec 11 T03 (D12): a token is a run of word characters -- Unicode letters,
+# numbers and marks (general category L, N or M), so Greek, Cyrillic, Devanagari
+# and CJK text has tokens too -- and "_", joined by "::" or "@" when a word
+# character follows: budget_gate, std::mem::take, @pytest, user@example. A
+# compound token also gives its parts (budget_gate -> budget_gate, budget, gate),
+# so the plain words still find it. Before T03: [a-z0-9]+ only.
+_ASCII_TOKEN = re.compile(r"@?[a-z0-9_]+(?:(?:::|@)[a-z0-9_]+)*")  # the same grammar, for ASCII chunks
+_JOINERS_RE = re.compile(r"[_:@]")
+
+
+def _wordish(c: str) -> bool:
+    return c == "_" or unicodedata.category(c)[0] in "LNM"
+
+
+def _scan(s: str) -> list[str]:
+    """The raw tokens of a folded string; mirrored char by char by aw_core."""
+    out: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if _wordish(c) or (c == "@" and i + 1 < n and _wordish(s[i + 1])):
+            j = i
+            while j < n:
+                ch = s[j]
+                if _wordish(ch):
+                    j += 1
+                elif ch == "@" and j + 1 < n and _wordish(s[j + 1]):
+                    j += 1
+                elif ch == ":" and j > i and j + 2 < n and s[j + 1] == ":" and _wordish(s[j + 2]):
+                    j += 2
+                else:
+                    break
+            out.append(s[i:j])
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _keep(w: str) -> bool:
+    return len(w) > 2 and w not in STOP
 
 
 def tokenize(text) -> list[str]:
     s = str(text if text is not None else "").lower()
-    s = _COMBINING_RE.sub("", unicodedata.normalize("NFD", s))
-    return [w for w in _SPLIT_RE.split(s) if len(w) > 2 and w not in STOP]
+    # Python lowers a final capital sigma to "ς", Rust char by char to "σ": one form
+    s = _COMBINING_RE.sub("", unicodedata.normalize("NFD", s)).replace("ς", "σ")
+    out: list[str] = []
+    # no token crosses whitespace, so each chunk is read on its own: plain ASCII
+    # with the regex, the rest with the scanner (measured: 1.45x the old regex, 3.6x
+    # with the scanner everywhere; test_search.py pins that the two agree)
+    for chunk in s.split():
+        for raw in _ASCII_TOKEN.findall(chunk) if chunk.isascii() else _scan(chunk):
+            if _keep(raw):
+                out.append(raw)
+            if _JOINERS_RE.search(raw):
+                out += [p for p in _JOINERS_RE.split(raw) if p and _keep(p)]
+    return out
+
+
+# The texts the startup probes tokenize with both implementations (D13): code
+# joiners, the final sigma, Cyrillic, a Devanagari mark, CJK, letters with no NFD.
+TOKENIZE_PROBES = [
+    "Più cose per una pizza",
+    "def run_command(cmd): budget_gate() std::collections::HashMap",
+    "@pytest.fixture user@example.com __init__ self._in_flight foo:::bar @@baz qux@",
+    "ΟΔΟΣ λόγος, Привет мир, हिन्दी भाषा, 数据库很快",
+    "smørrebrød Straße İstanbul ŞEHİR naïve façade 2026",
+    "",
+]
+
+
+def _native_tokenizer_matches(mod) -> bool:
+    try:
+        return all(list(mod.tokenize(s)) == tokenize(s) for s in TOKENIZE_PROBES)
+    except Exception:
+        return False
 
 
 class Bm25:
@@ -80,12 +151,15 @@ class Bm25:
 
 
 def _load_rust():
+    """aw_core.Bm25, only if the native tokenizer splits the probe texts like
+    tokenize() (spec 11 T03) and the index ranks like Bm25 (_parity_probe)."""
     try:
         import aw_core
 
-        return aw_core.Bm25
+        cls = aw_core.Bm25
     except Exception:
         return None
+    return cls if _native_tokenizer_matches(aw_core) and _parity_probe(cls) else None
 
 
 def _parity_probe(rust_cls) -> bool:
@@ -112,9 +186,7 @@ def _parity_probe(rust_cls) -> bool:
         return False
 
 
-RUST_BM25 = _load_rust()
-if RUST_BM25 is not None and not _parity_probe(RUST_BM25):
-    RUST_BM25 = None  # native module present but off-contract: ignore it
+RUST_BM25 = _load_rust()  # None: missing, or present but off-contract
 
 
 def bm25(k1: float = 1.4, b: float = 0.75):
@@ -216,7 +288,10 @@ class HybridIndex:
             self.chunk_vec.append(vec)
         self.has_vectors.add(id_)
 
-    def search(self, query: str, k: int = 10, query_vec: list[float] | None = None) -> list[dict]:
+    def search(self, query: str, k: int = 10, query_vec: list[float] | None = None, boost=None) -> list[dict]:
+        """boost(id) -> factor, applied to the fused score before the cut to k
+        (spec 11 T03: the Brain's time decay), so it can lift a document from
+        below k."""
         lexical = self.bm25.search(query, self.pool)
         bm25_score = {h["id"]: h["score"] for h in lexical}
         cos: dict = {}
@@ -231,5 +306,7 @@ class HybridIndex:
         if cos:
             rankings.append((sorted(cos, key=lambda d: -cos[d]), self.weights["vector"]))
         fused = rrf(rankings, self.rrf_k)
+        if boost is not None:
+            fused = {d: s * boost(d) for d, s in fused.items()}
         order = sorted(fused, key=lambda d: (-fused[d], -bm25_score.get(d, 0.0)))
         return [{"id": d, "score": fused[d], "bm25": bm25_score.get(d, 0.0), "cosine": cos.get(d, 0.0)} for d in order[:k]]

@@ -11,3 +11,5 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
 unicode-normalization = "0.1"
+# spec 11 T03: the general category of a char (L, N, M), as Python's unicodedata.category
+unicode-general-category = "1"

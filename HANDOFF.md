@@ -1,7 +1,7 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-19. In breve:*
-- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout). Niente unito né spinto; decisioni D1–D5 (T01) e D6–D11 (T02) confermate dall'utente. **Prossimo: T03** (sezione 3).*
+- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout), e poi **T03 fatto** (tokenizer per il codice e ogni scrittura, consolidamento e decadimento del Brain). Niente unito né spinto; decisioni D1–D5 (T01) e D6–D11 (T02) confermate dall'utente, D12–D15 (T03) da confermare. **Prossimo: T04** (sezione 3).*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
@@ -27,7 +27,7 @@
   - 08 router, RAG e media;
   - 09 file del proprietario, dialogo, ripresa e failover;
   - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt.
-- **Spec aperta:** 11, Core Hardening e Intent Engine a doppia modalità (`docs/specs/11-core-hardening-intent-engine.md`, ticket T01–T10). Si fa **un ticket per sessione**, e si passa al successivo solo con `npm test` verde al 100% (regole di sessione dell'utente, §1 della spec). T01 è fatto sul branch `claude/core-hardening-intent-engine-cdd150`, T02 sul branch `claude/youthful-bun-b80533`, che parte da T01 (worktree omonimi in `.claude/worktrees/`): non ancora uniti né spinti.
+- **Spec aperta:** 11, Core Hardening e Intent Engine a doppia modalità (`docs/specs/11-core-hardening-intent-engine.md`, ticket T01–T10). Si fa **un ticket per sessione**, e si passa al successivo solo con `npm test` verde al 100% (regole di sessione dell'utente, §1 della spec). T01 è fatto sul branch `claude/core-hardening-intent-engine-cdd150`, T02 e T03 sul branch `claude/youthful-bun-b80533`, che parte da T01 (worktree omonimi in `.claude/worktrees/`): non ancora uniti né spinti.
 - **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 3 test saltati di pytest, 2 sono la parità Rust e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
@@ -52,7 +52,7 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **16/10:** chiusi N14 (la demo parla la lingua della run), N15 (i test non toccano i file dell'utente) e N16 (test uguali su ogni sistema). Spec 08 (router, cascata, profiler, RAG su misura del modello, media sempre reali in LIVE). Da qui questo file è tracciato.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
-- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente). T02, shell a fiducia zero e chiave d'accesso dalla rete, più la chiusura di N13 (decisioni D6–D11 confermate dall'utente). N19 chiuso subito dopo.
+- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente). T02, shell a fiducia zero e chiave d'accesso dalla rete, più la chiusura di N13 (decisioni D6–D11 confermate dall'utente). N19 chiuso subito dopo. T03, tokenizer per il codice e consolidamento del Brain (decisioni D12–D15 da confermare).
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -61,7 +61,7 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-0. **Spec 11, a contesto pulito:** T01 è approvato con D1–D5 (spec 11 §3.3), T02 con D6–D11 (spec 11 §4.3); il prossimo step è **T03, tokenizer per il codice e consolidamento del Brain** (spec 11 §2): `tokenize()` in `search.py` e in `crates/aw_core` conserva i token del codice (identificatori con `_`, `::`, `@`) e i caratteri alfanumerici Unicode, con parità 1:1 nella probe di avvio; `brain.consolidate()` deduplica le note con coseno > 0,88 e aggiunge il time-decay all'RRF. Si riparte dal branch `claude/youthful-bun-b80533` (T01 + T02), o da `main` se nel frattempo è stato unito. Prima: leggere `backend/backend/search.py`, `backend/backend/brain.py`, `crates/aw_core/src/`, `backend/tests/test_search.py`, `test_search_rust.py`, `test_brain.py`. Qui Rust non si compila (sezione 1): la funzione Rust si scrive con il suo gemello Python, ma la probe di parità resta saltata finché non c'è `rustc`, ed è da dire.
+0. **Spec 11, a contesto pulito:** se l'utente approva T03 e le sue decisioni D12–D15 (spec 11 §5.3; T01 e T02 sono approvati), il prossimo step è **T04, checkpoint e time-travel del Tasker** (spec 11 §2): uno snapshot leggero dello stato del sotto-task a ogni passo valido; quando un worker supera `limits.escalateAfter` (2 bocciature) e passa alla combo `frontier` (`router.escalationCombo`), si riparte dall'ultimo snapshot pulito invece di accodare gli errori nel contesto. Si riparte dal branch `claude/youthful-bun-b80533` (T01, T02, N19, T03), o da `main` se nel frattempo è stato unito. Prima: leggere `backend/backend/tasker.py` (il loop di un worker), `backend/backend/run.py` (la revisione e l'escalation, intorno a `escalateAfter`), `backend/backend/store.py`, `backend/tests/test_tasker.py` e i test della revisione in `test_run.py`. T04 non tocca `crates/aw_core`.
 1. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
 2. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
@@ -153,7 +153,7 @@ Lezioni del porting ancora valide:
   - `crossbus.py` (spec 10: i fatti dei file e i legami tra lavori, per `[LIVE CROSS-AGENT UPDATE]`);
   - `arbiter.py` (TypeSafe), `attachments.py`;
 - `router/`: `index.py` (combo, cascata, cooldown, blacklist; spec 10: `catalog()`, `health()`, `chat(chain=…)`), `providers.py`, `profiler.py` (spec 10: taglia, specialità, costo), `hiring.py` (spec 10: analisi del sotto-task, catena, subentro), `mock.py` + `mock_texts.py` (la demo, nella lingua della run);
-- memoria: `brain.py`, `skills.py`, `skiller.py` + `downloads.py`, `embed.py`, `search.py` (BM25 e coseno, Rust se compilato);
+- memoria: `brain.py` (spec 11 T03: `consolidate()` alla fine di ogni run, il decadimento nel tempo in `search()`), `skills.py`, `skiller.py` + `downloads.py`, `embed.py`, `search.py` (BM25 e coseno, Rust se compilato; spec 11 T03: il tokenizer dei token del codice e di ogni scrittura, verificato anche dalla probe d'avvio);
 - `media.py` (voce: cloud, poi edge-tts, poi la voce del sistema; immagini: cloud, poi il generatore locale), `store.py`;
 - lingue: `i18n.py`.
   - `MESSAGES`: i testi della run, nella lingua della run.
@@ -253,6 +253,18 @@ npm run screenshots                          # gli screenshot del README
 - **Branch `claude/youthful-bun-b80533`** (worktree omonimo), portato in avanti senza merge su `349f903`: sopra c'è un commit per T02. Unire questo branch porta T01 e T02 insieme. Niente unito, niente spinto: si unisce in locale come la spec 10 (sezione 3), quando l'utente approva.
 - `main` resta il merge della spec 10 (`33c6135`), già su `origin`.
 
+### Completato: spec 11, T03 — tokenizer per il codice e consolidamento del Brain (dettagli: spec 11 §5)
+- **File toccati:**
+  - `backend/backend/search.py`: `tokenize()` nuovo (`_scan()`, `_ASCII_TOKEN` per i pezzi ASCII, le parti dei token composti), `TOKENIZE_PROBES`, `_native_tokenizer_matches()` nella probe d'avvio, `HybridIndex.search(boost=)`;
+  - `backend/backend/embed.py`: grammi per caratteri, hash dei byte UTF-8, la probe dei vettori nativi con il tokenizer;
+  - `crates/aw_core/src/lib.rs` e `Cargo.toml` (`unicode-general-category`): il gemello Rust del tokenizer e dei grammi, **scritto ma non compilato qui**;
+  - `backend/backend/brain.py`: `settings()`, `decay()`, `consolidate()`, `_merge()`, `reindex(keep_vectors=)`; `backend/backend/run.py`: `consolidate(run_id=…)` alla fine della run; `config/default.json`: `rag.brain`;
+  - `public/js/main.js`: la scheda Brain ricarica l'elenco dopo `consolidate`; `scripts/browser-test.js`: la fase `brain`;
+  - test: `backend/tests/test_search.py` (8 nuovi), `test_search_rust.py` (3 nuovi, 1 saltato senza `aw_core`), `test_brain.py` (10 nuovi);
+  - documenti: README (RAG, Rust, Test), spec 11 (§2, §5), questo file.
+- **Decisioni prese in sessione, da confermare (spec 11 §5.3):** D12 un token è una parola di lettere, cifre o segni Unicode (categorie L, N, M), unita da `_`, `::`, `@`, più le sue parti; `ς` → `σ`; D13 la probe d'avvio prova anche il tokenizer, e un `aw_core` che divide diversamente non si usa; D14 a fine run le note della run si uniscono ai doppioni (coseno > 0,88, stesso tipo, solo note degli agenti), resta la più recente con tag e `repeats`; D15 decadimento moltiplicativo sul punteggio fuso, emivita 30 giorni, pavimento 0,5, solo note degli agenti.
+- **Misure:** prima di T03 greco, cirillico, devanagari e CJK non davano nessun token; il tokenizer nuovo costa 1,45 volte quello vecchio (lo scanner su tutto sarebbe costato 3,6 volte); due missioni demo uguali lasciano 6 note invece di 12.
+
 ### Completato: N19 — il test di avvio senza scritture nel checkout (19/10, commit a parte su questo branch, chiesto dall'utente)
 - **Il difetto** (trovato chiudendo T02): `scripts/backend-boot-test.js` avviava il backend con l'ambiente intero, senza `demoEnv()` né una home temporanea. Ogni `npm test` lasciava una cartella `data/runs/` vuota accanto al codice, e quel server leggeva `.env` (con le chiavi vere sarebbe partito in LIVE, anche se faceva solo `GET /`) e `config/local.json` dell'utente. La guardia N15 di `conftest.py` contava solo i file, e non vedeva né questa cartella né la `skills/vendor/` vuota che un test di T02 creava prima del commit (corretto lì: il test dà alla libreria una cartella temporanea).
 - **File toccati:**
@@ -290,6 +302,12 @@ npm run screenshots                          # gli screenshot del README
 - **Decisioni confermate dall'utente il 19/10 (spec 11 §3.3):** D1 il simulatore non conta (misurato: la missione demo più grande fa 228 chiamate su 250); D2 costo stimato da `router.pricing`, budget di serie 5 $, prezzi di listino indicativi da verificare; D3 un blocco alla volta, "Ferma la run" la ferma e si può riprendere; D4 limite delle chiamate esatto, quello del costo superabile del costo delle chiamate in volo; D5 le chiamate chieste dal proprietario si contano ma non si fermano.
 - **Un difetto trovato da una mutazione, corretto:** con la richiesta di budget aperta e la run tolta dalla pausa, `budget_gate()` girava senza mai cedere il loop; ora rimette la pausa.
 
+### Verifiche di T03 (Windows 11)
+- **`npm test` verde** in 6 min 45 s: **pytest 1114 passati e 4 saltati (prima 1094 e 3)** (il quarto saltato è la parità Rust del tokenizer, senza il modulo compilato).
+- **`npm run test:browser`: 274 verifiche su 274**, ALL OK in 5 min 13 s a 109,6 fps, `known-red.json` vuoto. Le 2 nuove sono la fase `brain` (criterio `T03`).
+- **Mutazioni:** 14 (13 sul backend, 1 sulla UI), tutte prese; due prime prove sbagliate corrette (spec 11 §5.4).
+- **Rust:** il codice è scritto riga per riga sul Python ma non compilato: la sua parità la proverà la prima macchina con `rustc` (`test_search_rust.py`), e fino ad allora, se non coincide, la probe lo scarta.
+
 ### Verifiche di T02 (Windows 11)
 - **`npm test` verde** in 6 min 34 s (rifatto sull'albero finale: 6 min 35 s): **pytest 1093 passati e 3 saltati (prima 1046: 27 in `test_zero_trust.py`, 20 in `test_i18n.py`)**; il resto come per T01.
 - **`npm run test:browser`: 272 verifiche su 272**, ALL OK in 5 min 8 s a 113,3 fps sull'albero finale, `known-red.json` vuoto. Le 6 nuove sono la fase `lan` (criterio `T02`); tutte le altre fasi girano con la chiave d'accesso impostata.
@@ -303,10 +321,11 @@ npm run screenshots                          # gli screenshot del README
 - QA visivo a 1920×1080 dagli screenshot della fase `budget` (`--shots`): la richiesta nel pannello di sinistra con "Go on (one more block)" e "Stop the run", la run "running · paused" con "250/250 paid calls" e "≈ $1.23 of $5.00"; le Impostazioni con "Run budget".
 
 ### Ticket aperti
-- Spec 11: T03–T10.
+- Spec 11: T04–T10.
 - N18 (le anteprime dalla rete), N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
+- **T03 con il Rust compilato:** su una macchina con `rustc` e maturin, `uv run maturin develop --manifest-path ../crates/aw_core/Cargo.toml`, poi `test_search_rust.py`: i test di parità del tokenizer e dei vettori non devono più essere saltati, e la probe d'avvio deve accettare il modulo.
 - **T02 da un dispositivo vero della rete** (un telefono): `server.host` `0.0.0.0`, `AGENT_WORLD_ALLOWED_HOSTS` con l'indirizzo del PC, `AGENT_WORLD_API_KEY`; il login, il cookie, il flusso di eventi, un'anteprima. Il firewall di Windows chiede il permesso a Python la prima volta. Il runner lo prova con `lan.localhost`, che per il server è un nome della rete ma arriva da questa macchina.
 - **T01 con chiavi vere:** una run LIVE con `maxCallsPerRun` basso (per esempio 10, dalle Impostazioni) per vedere la pausa, "Prosegui" e "Ferma la run" con un provider vero, e confrontare il costo stimato con la fattura del provider.
 - **Spec 10 con chiavi vere:** una run LIVE con modelli di famiglie diverse (un locale o `:free`, un reasoning, un coder) per vedere le quattro forme del prompt e un subentro vero per credito finito. Finora solo server finti.
@@ -317,7 +336,7 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. **T01 e T02 approvati** con D1–D5 e D6–D11 (19/10): restano da unire in locale, con il commit di N19, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
-2. **T03, a contesto pulito** (spec 11 §2, sezione 3 qui sopra): `tokenize()` per il codice in Python e Rust con parità 1:1, `brain.consolidate()` (coseno > 0,88) e il time-decay nell'RRF. Dal branch `claude/youthful-bun-b80533`. Prima: leggere `search.py`, `brain.py`, `crates/aw_core/src/`, `tests/test_search.py`, `tests/test_search_rust.py`, `tests/test_brain.py`.
+1. **L'utente rivede T03** e conferma (o cambia) D12–D15. T01 e T02 sono approvati con D1–D5 e D6–D11 (19/10): restano da unire in locale, con N19 e T03, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
+2. **T04, a contesto pulito** (spec 11 §2, sezione 3 qui sopra): lo snapshot del sotto-task a ogni passo valido e, all'escalation verso `frontier`, la ripartenza dall'ultimo snapshot pulito. Dal branch `claude/youthful-bun-b80533`. Prima: leggere `tasker.py`, `run.py` (escalation), `store.py`, `tests/test_tasker.py`.
 3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
 4. Le verifiche qui sopra.

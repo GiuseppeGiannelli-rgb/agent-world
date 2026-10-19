@@ -22,7 +22,8 @@
 // (L1-L7: the IT/EN switch, its persistence, the run payload, the voice). Spec 10: hiring
 // (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
 // Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings),
-// lan (T02: the login of a page on the LAN, its cookie, the page on this machine that never asks).
+// lan (T02: the login of a page on the LAN, its cookie, the page on this machine that never asks),
+// brain (T03: a consolidation reloads the open Brain list and moves the office label).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
@@ -56,7 +57,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,brain,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -104,7 +105,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan', T03: 'brain' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -780,6 +781,39 @@ async function budgetPhase(cdp) {
   await cdp.eval(`document.querySelector('#settings [data-act="close-modal"]')?.click(); true`);
 }
 
+// ---------- spec 11 T03: a consolidation in the Brain tab ----------
+
+// The end of a run merges near-duplicate notes and says so with a "brain" event
+// (op "consolidate"). The open Brain tab must reload its list, or it keeps showing
+// the notes that are gone; a recall does not reload it. The events enter through the
+// page's own stream, as in the budget phase.
+async function brainPhase(cdp) {
+  const en = await uiWords();
+  await cdp.send('Page.enable');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  await cdp.eval(`(() => { window.__brainCalls = 0; const real = window.fetch.bind(window);
+    window.fetch = (url, opts) => { if (String(url).startsWith('/api/brain')) window.__brainCalls++; return real(url, opts); };
+    document.querySelector('[data-tab="brain"]').click(); return true; })()`);
+  const opened = await until(() => cdp.eval('window.__brainCalls'), 5000, 100); // the tab loads its list once
+  const target = (await api('/api/brain')).count + 7; // a count the page has not shown
+  const feed = (payload) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'brain', payload }))} }); return true; })()`);
+  const fedRecall = await until(() => feed({ op: 'recall', agentId: null, count: target - 7, hits: 1 }), 5000, 100);
+  await cdp.eval('__t.frames(10)');
+  const afterRecall = await cdp.eval('window.__brainCalls');
+  const fed = await feed({ op: 'consolidate', agentId: null, count: target, removed: 2, runId: 'spec11-t03' });
+  const afterConsolidate = await until(() => cdp.eval(`window.__brainCalls > ${afterRecall} && window.__brainCalls`), 5000, 100);
+  report('T03', 'a consolidation reloads the open Brain list, a recall does not', Boolean(opened) && fedRecall && fed && afterRecall === opened && afterConsolidate === opened + 1, { opened, afterRecall, afterConsolidate });
+  const label = await cdp.eval(`document.querySelector('.brain-label span')?.textContent ?? null`);
+  report('T03', 'the office label follows the count of the consolidation', label === fill(en['world.brain'], { n: target }), { label, expected: fill(en['world.brain'], { n: target }) });
+  await shot(cdp, 'brain-consolidate');
+}
+
 // ---------- spec 11 T02: the access key on the LAN ----------
 
 // The same page and server, reached as lan.localhost: the page asks GET /api/session
@@ -1230,6 +1264,7 @@ try {
   if (PHASES.includes('run')) await run(cdp);
   if (PHASES.includes('hiring')) await hiring(cdp);
   if (PHASES.includes('budget')) await budgetPhase(cdp);
+  if (PHASES.includes('brain')) await brainPhase(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
   if (PHASES.includes('lan')) await lanPhase(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
