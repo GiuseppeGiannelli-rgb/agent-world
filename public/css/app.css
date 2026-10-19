@@ -172,7 +172,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--soft); pad
 .panel h3, .col-title { margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 800; }
 .col-title { display: flex; justify-content: space-between; align-items: center; margin: 12px 4px 6px; }
 
-textarea, input[type=text], input[type=search], input[type=url] {
+textarea, input[type=text], input[type=search], input[type=url], input[type=password] {
   width: 100%; padding: 9px 11px; border-radius: 11px;
   border: 1px solid var(--line); background: var(--card); outline: none; line-height: 1.45;
 }
@@ -428,6 +428,10 @@ body:not(.night) .primary { background: var(--ink); }
 .sheet .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .sheet .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .sheet .head .x { margin-left: auto; }
+/* spec 11 T02: the login of a page on the LAN */
+.sheet.login-sheet { width: min(420px, 100%); display: grid; gap: 10px; }
+.sheet.login-sheet p { margin: 0; }
+.login-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }
 .sheet img.full { max-width: 100%; border-radius: 12px; display: block; margin: 0 auto; }
 
 .toasts { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); display: grid; gap: 6px; z-index: 30; }

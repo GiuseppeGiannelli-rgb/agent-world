@@ -27,8 +27,8 @@ def mount(app, *, skills, brain, skiller=None, config=None) -> None:
     async def api_skills_read(id: str | None = None):
         try:
             r = await skills.read(id)
-        except ValueError as err:
-            return JSONResponse({"error": str(err)}, status_code=404)
+        except Refusal as err:
+            return _err(404, err.key, **err.vars)
         return {"name": r["skill"]["name"], "source": r["skill"]["source"], "path": r["skill"]["path"], "content": r["text"]}
 
     @app.post("/api/skills/reindex")
@@ -43,8 +43,8 @@ def mount(app, *, skills, brain, skiller=None, config=None) -> None:
             return await skills.add_repo(body.get("url"))
         except Refusal as err:
             return _err(400, err.key, **err.vars)
-        except ValueError as err:
-            return JSONResponse({"error": str(err)}, status_code=400)
+        except RuntimeError as err:  # git failed: no such repository, or no network (it was a bare 500)
+            return _err(502, "repo_failed", detail=str(err))
 
     @app.get("/api/skills/skiller")
     async def api_skiller():
@@ -66,7 +66,8 @@ def mount(app, *, skills, brain, skiller=None, config=None) -> None:
         try:
             return {"slug": body.get("slug"), "install": await skiller.approve(str(body.get("slug") or ""))}
         except DownloadError as err:
-            return JSONResponse({"error": str(err)}, status_code=400)
+            # N13: the sentence in the app's language; what the download layer found is a detail
+            return _err(400, "download_refused", detail=str(err))
 
     @app.get("/api/brain")
     async def api_brain_get(q: str | None = None):

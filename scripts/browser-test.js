@@ -21,14 +21,18 @@
 // killed, interrupted and closed, and the sweep of what they leave). Spec 06: language
 // (L1-L7: the IT/EN switch, its persistence, the run payload, the voice). Spec 10: hiring
 // (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
-// Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings).
+// Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings),
+// lan (T02: the login of a page on the LAN, its cookie, the page on this machine that never asks).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
 // The server never sees an API key: every key the config names is set to "" (present,
 // so .env cannot fill it in), and a run that is not in demo mode is stopped at once.
+// It has an access key of its own (AGENT_WORLD_API_KEY, spec 11 T02), random for each
+// run: on 127.0.0.1 nothing asks for it, which every phase but lan checks by working.
 // At the end no browser process may be left with this run's profile, and no folder.
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -52,12 +56,16 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
 const PORT = Number(arg('--port', 4397));
 const BASE = `http://127.0.0.1:${PORT}`;
+// spec 11 T02: the browser resolves *.localhost to this machine by itself; to the server
+// that Host is no loopback name, so a page there is a page on the LAN (D7)
+const LAN_BASE = `http://lan.localhost:${PORT}`;
+const LAN_KEY = randomBytes(24).toString('hex');
 const MISSION = 'Il sito completo per il lancio di una pizzeria napoletana a Milano, con brand, immagini e testi';
 const VIEWPORTS = [[1920, 1080], [2560, 1440], [1440, 900]];
 const LAYOUTS = { LR: [true, true], '-R': [false, true], '--': [false, false] };
@@ -96,7 +104,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -105,6 +113,8 @@ async function startServer(home) {
   // demo: every provider key blanked, also the ones of local.json and .env
   const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_HOME: home });
   delete env.AGENT_WORLD_FAST; // the mission at its normal pace, as in T0
+  // after demoEnv, which blanks every *_KEY: the access key is not a provider's
+  Object.assign(env, { AGENT_WORLD_API_KEY: LAN_KEY, AGENT_WORLD_ALLOWED_HOSTS: 'lan.localhost' });
   const server = spawnBackend(ROOT, env);
   server.exited = new Promise((ok) => server.once('exit', ok));
   await new Promise((ok, fail) => {
@@ -614,11 +624,11 @@ async function run(cdp) {
 
 const HIRING_MISSION = 'Una breve nota di benvenuto per il bar';
 
-// The English words of the UI, to read the badges as a user reads them
-const uiWords = async () => {
+// The words of the UI (English unless told), to read the page as a user reads it
+const uiWords = async (lang = 'en') => {
   globalThis.document ??= { documentElement: {} }; // i18n.js sets <html lang> when the language changes
   const { dictionaries } = await import(pathToFileURL(join(ROOT, 'public', 'js', 'i18n.js')).href);
-  return dictionaries().en;
+  return dictionaries()[lang];
 };
 
 // A demo hires nobody (D5): the live hires and a replacement come from the network
@@ -708,13 +718,13 @@ async function hiring(cdp) {
 // at its budget is handed to its onmessage, as the server would send it. The answer the
 // owner gives goes to the page's own fetch, which records it.
 const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+// keeps every EventSource the page opens in window.__es (installed before the page loads)
+const ES_WRAP = `(() => { const ES = window.EventSource; window.__es = []; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es.push(this); } }; })()`;
 
 async function budgetPhase(cdp) {
   const en = await uiWords();
   await cdp.send('Page.enable'); // the scripts for a new document need the Page domain on
-  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-    source: `(() => { const ES = window.EventSource; window.__es = []; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es.push(this); } }; })()`,
-  });
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
   try {
     await load(cdp, VIEWPORTS[0]);
     await layout(cdp, LAYOUTS.LR);
@@ -768,6 +778,65 @@ async function budgetPhase(cdp) {
   report('T01', 'the Settings show the two limits of the budget', Boolean(inputs) && inputs.calls === cfg.maxCallsPerRun && inputs.cost === cfg.maxCostUSD && inputs.hint, { ...(inputs ?? {}), config: { calls: cfg.maxCallsPerRun, cost: cfg.maxCostUSD } });
   await shot(cdp, 'budget-settings');
   await cdp.eval(`document.querySelector('#settings [data-act="close-modal"]')?.click(); true`);
+}
+
+// ---------- spec 11 T02: the access key on the LAN ----------
+
+// The same page and server, reached as lan.localhost: the page asks GET /api/session
+// first, shows its login in the app's language, and only with the key loads the office.
+async function lanPhase(cdp) {
+  // the app in Italian, so that "in the app's language" is not also English, the page's own default
+  const before = (await api('/api/config')).ui?.language ?? 'en';
+  await api('/api/config', { ui: { language: 'it' } });
+  const { language, local } = await api('/api/session'); // from here (127.0.0.1): local, never asks
+  const words = await uiWords(language);
+  // the server's own words for a wrong key, asked from here, where the same check runs
+  const wrongText = (await fetch(`${BASE}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"key":"not the key"}' }).then((r) => r.json())).error;
+  const submit = (key) => cdp.eval(`(() => { const f = document.querySelector('#login form'); if (!f) return false; f.querySelector('input').value = ${JSON.stringify(key)}; f.requestSubmit(); return true; })()`);
+  const state = () => cdp.eval(`(() => { const m = document.querySelector('#login'); return { login: Boolean(m) && !m.classList.contains('hidden'), actors: window.agentWorld?.actors.size ?? 0, stream: window.__es?.[0]?.readyState ?? null }; })()`);
+  await cdp.send('Page.enable');
+  await cdp.send('Network.enable');
+  await cdp.send('Network.clearBrowserCookies');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: VIEWPORTS[0][0], height: VIEWPORTS[0][1], deviceScaleFactor: 1, mobile: false });
+    await cdp.send('Page.navigate', { url: LAN_BASE });
+    // 1. the login, in the app's language, and nothing of the office behind it
+    const login = await until(() => cdp.eval(`(() => { const m = document.querySelector('#login'); if (!m || m.classList.contains('hidden')) return null;
+      return { title: m.querySelector('h2')?.textContent, text: m.querySelector('p')?.textContent, input: m.querySelector('input')?.type, placeholder: m.querySelector('input')?.placeholder, button: m.querySelector('button[type=submit]')?.textContent,
+        lang: document.documentElement.lang, actors: window.agentWorld?.actors.size ?? 0, stream: window.__es?.length ?? 0, toasts: [...document.querySelectorAll('.toast')].map((x) => x.textContent) }; })()`), 20000, 200);
+    // no toast: the page did not try the state first (a "could not load" behind the dialog)
+    report('T02', 'on the LAN the page asks for the access key in the app language, and loads nothing before', local === true && language === 'it' && Boolean(login) && login.title === words['login.title'] && login.text === words['login.text'] && login.input === 'password' && login.placeholder === words['login.key'] && login.button === words['login.go'] && login.lang === language && login.actors === 0 && login.stream === 0 && !login.toasts.length, { local, language, ...(login ?? {}) });
+    await shot(cdp, 'lan-login');
+    // the login cannot be put aside: Esc and a click beside a dialog close the others
+    await cdp.eval(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); document.querySelector('#login')?.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`);
+    const kept = await cdp.eval(`Boolean(document.querySelector('#login')) && !document.querySelector('#login').classList.contains('hidden')`);
+    report('T02', 'Esc and a click beside the login do not close it', kept, { kept });
+    // 2. a wrong key: the server's refusal in the dialog, which stays
+    const sentWrong = await submit('not the key');
+    const wrong = await until(() => cdp.eval(`(() => { const e = document.querySelector('#login .login-error')?.textContent; return e ? { error: e, open: !document.querySelector('#login').classList.contains('hidden'), actors: window.agentWorld?.actors.size ?? 0 } : null; })()`), 5000, 100);
+    report('T02', 'a wrong key is refused in the dialog with the server words, and the page stays closed', sentWrong && Boolean(wrong) && wrong.error === wrongText && wrong.open && wrong.actors === 0, { expected: wrongText, ...(wrong ?? {}) });
+    // 3. the key: the office and its event stream, with a session cookie that is not the key
+    await submit(LAN_KEY);
+    const inside = await until(async () => { const s = await state(); return !s.login && s.actors > 0 && s.stream === 1 ? s : null; }, 20000, 200);
+    const { cookies } = await cdp.send('Network.getCookies', { urls: [LAN_BASE] });
+    const c = cookies.find((x) => x.name === 'aw_session');
+    const cookie = c && { httpOnly: c.httpOnly, sameSite: c.sameSite, path: c.path, days: Math.round((c.expires - Date.now() / 1000) / 86400), holdsKey: c.value.includes(LAN_KEY) };
+    report('T02', 'the key opens the office and its event stream, with an HttpOnly SameSite=Strict session cookie that is not the key', Boolean(inside) && Boolean(cookie) && cookie.httpOnly && cookie.sameSite === 'Strict' && cookie.path === '/' && cookie.days === 7 && !cookie.holdsKey, { inside, cookie });
+    await shot(cdp, 'lan-inside');
+    // 4. a reload keeps the session: straight to the office
+    await cdp.send('Page.reload');
+    const again = await until(async () => { const s = await state(); return !s.login && s.actors > 0 && s.stream === 1 ? s : null; }, 20000, 200);
+    report('T02', 'a reload keeps the session: no login again', Boolean(again), again ?? (await state().catch(() => ({}))));
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    await cdp.send('Network.clearBrowserCookies');
+    await api('/api/config', { ui: { language: before } });
+  }
+  // 5. on this machine the same server, with its key, never asks
+  await load(cdp, VIEWPORTS[0]);
+  const home = await state();
+  report('T02', 'on this machine the page never asks for the key', !home.login && home.actors > 0, home);
 }
 
 // ---------- spec 09: the owner's files, the box of a task, resume, changes ----------
@@ -1162,6 +1231,7 @@ try {
   if (PHASES.includes('hiring')) await hiring(cdp);
   if (PHASES.includes('budget')) await budgetPhase(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
+  if (PHASES.includes('lan')) await lanPhase(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });
 } catch (e) {

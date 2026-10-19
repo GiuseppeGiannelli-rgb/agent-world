@@ -538,7 +538,7 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 |---|---|---|
 | [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 1013 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (266 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (272 verifiche) |
 
 ### Skill e plugin
 
@@ -646,8 +646,8 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `NVIDIA_API_KEY`, … | accendono i provider; senza chiavi si va in demo |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers AI: l'account entra nell'URL del provider |
 | `TYPESAFE_API_KEY` (e `TYPESAFE_BASE_URL`, facoltativo) | l'arbitro TypeSafe delle decisioni prese per il proprietario; da solo non accende la modalità live |
-| `AGENT_WORLD_API_KEY` | protegge il gateway `/v1` con un Bearer token |
-| `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli) |
+| `AGENT_WORLD_API_KEY` | la chiave d'accesso: protegge il gateway `/v1` con un Bearer token e, dalla rete, anche `/api` e `/api/events` (spec 11 T02, vedi "Usarlo in LAN"); senza, la LAN resta chiusa |
+| `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli); i comandi partono senza le chiavi dell'ambiente (spec 11 T02) |
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
@@ -676,7 +676,7 @@ Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni te
 
 ## Sicurezza
 
-Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine web che apri nel browser (spec 07, [`docs/specs/07-security.md`](docs/specs/07-security.md)). Tutte le regole stanno in `backend/backend/security.py` e in `routes/static.py`, e valgono prima di ogni route.
+Su questa macchina il server non ha login: di default ascolta solo su `127.0.0.1`, e si difende dalle pagine web che apri nel browser (spec 07, [`docs/specs/07-security.md`](docs/specs/07-security.md)). Dalla rete chiede la chiave d'accesso (spec 11 T02, [`docs/specs/11-core-hardening-intent-engine.md`](docs/specs/11-core-hardening-intent-engine.md) §4). Le regole stanno in `backend/backend/security.py`, `routes/session.py` e `routes/static.py`, e valgono prima di ogni route.
 
 | Regola | Contro cosa |
 |---|---|
@@ -686,12 +686,14 @@ Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine w
 | Serve i siti generati dagli agenti in una sandbox con un'origine opaca (`Content-Security-Policy: sandbox`, senza `allow-same-origin`) | un sito generato, magari guidato da una pagina malevola, che usa le API dell'app |
 | `X-Frame-Options: DENY` e `frame-ancestors 'none'` su ogni pagina, più `nosniff` | clickjacking |
 | `web_fetch` legge solo indirizzi pubblici e si connette all'indirizzo che ha controllato | SSRF: un agente spinto a leggere `127.0.0.1`, la rete privata o i metadati cloud |
-| Il token di `AGENT_WORLD_API_KEY` si confronta a tempo costante | indovinare il token del gateway `/v1` |
+| Dalla rete `/api`, `/api/events` e `/v1` vogliono `AGENT_WORLD_API_KEY`: un header `Authorization: Bearer …` (script) o il cookie di sessione (browser). Locale vuol dire `Host` di loopback **e** connessione da questa macchina; senza chiave sul server la rete è chiusa | chiunque sulla rete che prende il controllo dell'app, anche scrivendo `Host: 127.0.0.1` |
+| La chiave si confronta a tempo costante; il cookie non è la chiave ma una scadenza firmata con lei | indovinare la chiave; un cookie rubato che la rivela |
+| `run_command` parte con un ambiente senza chiavi | un comando scritto da un modello che legge le chiavi del server e le manda fuori |
 
 **Da sapere:**
 - **Anteprima dei siti generati.** Nella sandbox i loro script girano, ma non hanno `localStorage` né cookie. Se un sito ne ha bisogno, aprilo dalla cartella del run.
-- **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve.
-- **I 403 di queste regole** hanno il messaggio "Request refused: …", nella lingua dell'app ("Richiesta rifiutata: …" in italiano).
+- **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve. Dalla spec 11 i comandi non vedono le chiavi: manca ogni variabile che ha tra le parole del nome (separate da `_`) `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIALS` o `AUTH` (anche `APIKEY`, `KEYS`, `TOKENS`, `SECRETS`, `PASSWD`), e ogni variabile che la configurazione nomina come `keyEnv`, qualunque nome abbia. Non è una sandbox: un comando legge ancora i file a cui arriva il tuo utente, `.env` compreso.
+- **I rifiuti di queste regole** sono nella lingua dell'app: i 403 "Request refused: …" ("Richiesta rifiutata: …" in italiano), il 401 "This agent-world is shared on the network: …" e il 403 "Access from the network is off: …".
 
 ### Usarlo in LAN
 
@@ -701,14 +703,17 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
    ```json
    { "server": { "host": "0.0.0.0" } }
    ```
-2. In `.env` elenca i nomi o gli indirizzi con cui gli altri lo raggiungeranno, separati da virgole:
+2. In `.env` elenca i nomi o gli indirizzi con cui gli altri lo raggiungeranno, separati da virgole, e scegli una chiave d'accesso lunga e casuale:
    ```sh
    AGENT_WORLD_ALLOWED_HOSTS=192.168.1.20,studio.lan
+   AGENT_WORLD_API_KEY=...
    ```
-   Senza questa riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed" (nella lingua dell'app).
-3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo.
+   Al posto di `...` va la chiave: una così la dà `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Senza la prima riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed"; senza la chiave la pagina si apre ma l'app risponde 403 "Access from the network is off: …" (nella lingua dell'app).
+3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo. La pagina chiede la chiave d'accesso: con quella giusta il browser riceve un cookie di sessione (`aw_session`: `HttpOnly`, `SameSite=Strict`, 7 giorni) e l'app si apre. Uno script usa invece `Authorization: Bearer <chiave>`, anche su `/v1`.
 
-> **Attenzione: `/api` non ha login.** Chi raggiunge il server dalla rete ne ha il controllo completo: avvia missioni, legge i file dei run e cambia la configurazione, compresi gli URL dei provider a cui il router manda le tue chiavi. Fallo solo su una rete di cui ti fidi. `AGENT_WORLD_API_KEY` protegge solo il gateway `/v1`.
+Su questa macchina (`http://127.0.0.1:4300`, `localhost`, `[::1]`) non cambia niente: la chiave non serve. Cambiare la chiave chiude tutte le sessioni aperte.
+
+> **Da sapere.** Senza la chiave, dalla rete restano aperte la pagina (è il codice dell'app) e le anteprime dei siti generati: chi conosce l'id di una run (8 cifre esadecimali) vede `/preview/<id>/` (ticket N18). Su `http` la chiave e il cookie passano in chiaro: in una rete che non controlli metti davanti un proxy `https`, che passi l'`Host` originale o `X-Forwarded-For` (un proxy sulla stessa macchina che riscrive l'`Host` in `127.0.0.1` fa sembrare locale tutta la rete). Non c'è un limite ai tentativi: per questo la chiave va lunga.
 
 ---
 
@@ -717,15 +722,15 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 266 verifiche sul front-end vero (~5-6 min)
+npm run test:browser   # runner headless: 272 verifiche sul front-end vero (~5-6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (1046 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`).
+- **`pytest` (1093 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. La fase `lan` (spec 11) apre la stessa app come `lan.localhost`, che per il server è un nome della rete: il login nella lingua dell'app (l'italiano, per l'occasione), che Esc non chiude, una chiave sbagliata, quella giusta con il suo cookie e il flusso di eventi, il reload; e su `127.0.0.1` nessun login, con la chiave impostata. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.

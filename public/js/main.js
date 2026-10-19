@@ -64,8 +64,57 @@ const dur = (a, b) => {
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) } });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== SESSION) relogin();
   if (!res.ok) throw new Error(body.error ?? t('error.status', { n: res.status }));
   return body;
+}
+
+// ---------- spec 11 T02: the access key on the LAN ----------
+
+// The page asks GET /api/session first: it needs no key and tells the app's language.
+// On this machine the page is always in. From the LAN, without a session, the login
+// takes the key; POST /api/session sets the cookie (HttpOnly: no script here sees it)
+// and the boot goes on with it. With no key on the server the dialog only says why.
+const SESSION = '/api/session';
+
+function login(session) {
+  setLang(session.language ?? getLang());
+  applyStatic();
+  const box = $('#login');
+  box.innerHTML = `<form class="sheet login-sheet">
+    <h2>${esc(t('login.title'))}</h2>
+    <p class="hint">${esc(t(session.keySet ? 'login.text' : 'login.off'))}</p>
+    ${session.keySet ? `<input type="password" autocomplete="current-password" placeholder="${esc(t('login.key'))}"><div class="login-error"></div><button class="primary" type="submit">${esc(t('login.go'))}</button>` : ''}
+  </form>`;
+  box.classList.remove('hidden');
+  const form = box.querySelector('form');
+  const input = form.querySelector('input');
+  input?.focus();
+  return new Promise((resolve) => {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const error = form.querySelector('.login-error');
+      error.textContent = '';
+      try {
+        await api(SESSION, { method: 'POST', body: JSON.stringify({ key: input.value }) });
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        resolve();
+      } catch (err) {
+        error.textContent = err.message;
+        input.select();
+      }
+    };
+  });
+}
+
+// The session ended with the page open (after its days, or a new key on the server):
+// the login again, then a fresh page, whose event stream opens with the new cookie.
+let relogging = false;
+function relogin() {
+  if (relogging) return;
+  relogging = true;
+  login({ keySet: true }).then(() => location.reload());
 }
 
 function toast(text, bad = false) {
@@ -1169,7 +1218,7 @@ function switchTab(tab) {
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-act],[data-task],[data-run],[data-agent],[data-file],[data-test],[data-tab],[data-filter],[data-team],[data-focusroom],[data-skill],[data-answer],[data-solve],[data-attach],[data-unstage],[data-isend],[data-isolve],[data-openbox],[data-prov-remove],.chip');
   if (!t) {
-    if (e.target.classList.contains('modal')) e.target.classList.add('hidden');
+    if (e.target.classList.contains('modal') && e.target.id !== 'login') e.target.classList.add('hidden'); // spec 11 T02: the login stays
     return;
   }
   // spec 09: files, the box of a task, the questions of a stopped run
@@ -1270,7 +1319,7 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') document.querySelectorAll('.modal').forEach((m) => m.classList.add('hidden'));
+  if (e.key === 'Escape') document.querySelectorAll('.modal:not(#login)').forEach((m) => m.classList.add('hidden'));
   if (e.key === 'Enter' && e.target.id === 'chat-input') sendChat();
   // spec 09: Ctrl/Cmd+Enter sends from the box of a task or from the change box
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.dataset?.iboxText) sendBox(e.target.dataset.iboxText);
@@ -1467,6 +1516,10 @@ async function boot() {
   document.body.classList.toggle('night', night);
   $('#btn-theme').textContent = night ? '☾' : '☀';
   world.setTheme(night);
+
+  // spec 11 T02: from the LAN, the key before anything else (nothing to do on this machine)
+  const session = await api(SESSION).catch(() => null);
+  if (session && !session.authenticated) await login(session);
 
   const st = await api('/api/state');
   S.config = st.config;

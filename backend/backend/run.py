@@ -51,7 +51,7 @@ from backend.prompts import (
     work_teams,
 )
 from backend.tasker import Tasker
-from backend.tools import Workspace, run_command
+from backend.tools import Workspace, config_key_names, run_command
 from backend.web import web_fetch, web_search
 
 TERMINAL = {"done", "failed", "skipped"}
@@ -1984,7 +1984,8 @@ class Run:
             if tool == "run_command":
                 if not self.cfg["limits"].get("allowShell"):
                     return "ERROR: shell commands are disabled on this machine. Verify by reading files instead."
-                r = await run_command(str(args.get("cmd") or ""), self.ws.root, self.cfg["limits"]["commandTimeoutMs"], self._abort)
+                # spec 11 T02: without the keys of the environment, nor those the config names
+                r = await run_command(str(args.get("cmd") or ""), self.ws.root, self.cfg["limits"]["commandTimeoutMs"], self._abort, secrets=config_key_names(self.cfg))
                 return f"exit code {r['code']}\n{r['output']}"
             if tool == "generate_image":
                 return await self.write_media(task, agent, "image", args)

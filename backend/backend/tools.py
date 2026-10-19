@@ -101,6 +101,45 @@ class Workspace:
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+# Spec 11 T02 (D6): a shell command is written by a model, and a page the model
+# read can steer it. It runs without the server's secrets: a variable goes when
+# one of the words of its name (split on "_") is one of these, or when the
+# config names it as a key (keyEnv), whatever its form.
+SECRET_WORDS = frozenset({"KEY", "KEYS", "APIKEY", "TOKEN", "TOKENS", "SECRET", "SECRETS", "PASSWORD", "PASSWD", "CREDENTIALS", "AUTH"})
+
+
+def config_key_names(cfg: dict) -> set[str]:
+    """Every variable the config names as a provider key (providers, media,
+    the runtime-registered ones of local.json). Not baseUrlEnv: a URL is no key."""
+    names: set[str] = set()
+
+    def walk(o) -> None:
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "keyEnv" and isinstance(v, str) and v:
+                    names.add(v)
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(cfg)
+    return names
+
+
+def shell_env(names=(), base=None) -> dict[str, str]:
+    """The environment of a shell command: `base` (the server's own by default)
+    without its secrets. Names compare upper case, as Windows does."""
+    drop = {n.upper() for n in names}
+    out = {}
+    for k, v in (os.environ if base is None else base).items():
+        up = k.upper()
+        if up in drop or SECRET_WORDS.intersection(up.split("_")):
+            continue
+        out[k] = v
+    return out
+
 
 def _kill_tree(proc) -> None:
     """Node kills the whole tree on Windows (taskkill /T): a shell command
@@ -119,7 +158,9 @@ def _kill_tree(proc) -> None:
         pass
 
 
-async def run_command(cmd: str, cwd, timeout_ms: int, stop_event: asyncio.Event | None = None) -> dict:
+async def run_command(cmd: str, cwd, timeout_ms: int, stop_event: asyncio.Event | None = None, *, secrets=()) -> dict:
+    """`secrets`: more variable names to keep out of the command (the run passes
+    the config's keyEnv names); the secret words go in any case."""
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -127,6 +168,7 @@ async def run_command(cmd: str, cwd, timeout_ms: int, stop_event: asyncio.Event 
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             creationflags=_NO_WINDOW,
+            env=shell_env(secrets),
         )
     except OSError as err:
         return {"code": -1, "output": str(err)}

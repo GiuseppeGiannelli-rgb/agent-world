@@ -51,26 +51,30 @@ NO_FRAMES = "frame-ancestors 'none'"
 PREVIEW_CSP = f"sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock; {NO_FRAMES}"
 
 
-def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache", sandbox: bool = False):
+def serve_from(root: Path, rel: str, *, cache_control: str = "no-cache", sandbox: bool = False, lang: str = DEFAULT):
+    """lang: the language of the app, for the two refusals (N13, spec 11 T02)."""
     full = _resolve(root, rel)
     if full is None:
-        return PlainTextResponse("Forbidden", status_code=403)
+        return PlainTextResponse(http_error(lang, "forbidden"), status_code=403)
     target = full / "index.html" if full.is_dir() else full
     if not target.is_file():
-        return PlainTextResponse("Not found", status_code=404)
+        return PlainTextResponse(http_error(lang, "not_found"), status_code=404)
     media_type = MIME.get(target.suffix.lower(), "application/octet-stream")
     headers = {"cache-control": cache_control, "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": PREVIEW_CSP if sandbox else NO_FRAMES}
     return FileResponse(target, media_type=media_type, headers=headers)
 
 
 def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, store=None, live=None, config=None) -> None:
+    def lang() -> str:
+        return ui_language(config.get()) if config is not None else DEFAULT
+
     @app.get("/vendor/three/{path:path}")
     async def vendor_three(path: str):
-        return serve_from(three_build, path)
+        return serve_from(three_build, path, lang=lang())
 
     @app.get("/vendor/three-addons/{path:path}")
     async def vendor_three_addons(path: str):
-        return serve_from(three_addons, path)
+        return serve_from(three_addons, path, lang=lang())
 
     @app.get("/preview/{run_id}")
     async def preview_redirect(run_id: str):
@@ -85,9 +89,9 @@ def mount(app, *, public_root: Path, three_build: Path, three_addons: Path, stor
             active = live.get(run_id)
             run = active.data if active is not None else None
         if run is None:
-            return PlainTextResponse(http_error(ui_language(config.get()) if config is not None else DEFAULT, "run_not_found"), status_code=404)
-        return serve_from(Path(run["workspace"]), rest, sandbox=True)
+            return PlainTextResponse(http_error(lang(), "run_not_found"), status_code=404)
+        return serve_from(Path(run["workspace"]), rest, sandbox=True, lang=lang())
 
     @app.get("/{path:path}")
     async def static_files(path: str):
-        return serve_from(public_root, path)
+        return serve_from(public_root, path, lang=lang())

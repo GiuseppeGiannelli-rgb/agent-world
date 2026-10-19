@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente. Prossimo: T02.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 da confermare. Prossimo: T03.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -17,7 +17,7 @@
 ### Fase 1: Core Hardening
 
 - [x] **T01 — Budget e circuit breaker** (`run.py`, `config/default.json`): `limits.maxCallsPerRun` (250) e `limits.maxCostUSD`. Una run che supera la soglia non fallisce: emette l'evento SSE `waiting` e va in pausa, chiedendo all'utente se proseguire. Fatto: §3.
-- [ ] **T02 — Shell a fiducia zero e autenticazione in LAN** (`tools.py`, `security.py`, `i18n.py`):
+- [x] **T02 — Shell a fiducia zero e autenticazione in LAN** (`tools.py`, `security.py`, `i18n.py`). Fatto: §4.
   - con `run_command` attivo (`AGENT_WORLD_ALLOW_SHELL=1`) il sottoprocesso riceve un `env` ripulito (via tutte le `*_API_KEY`, `GITHUB_TOKEN`, `AGENT_WORLD_API_KEY`);
   - se l'host richiesto non è `127.0.0.1` / `localhost` / `::1`, anche `/api/*` e `/api/events` vogliono `AGENT_WORLD_API_KEY` (Bearer o cookie di sessione);
   - chiudere il ticket N13: i messaggi HTTP 403/400 nel dizionario `i18n.py` della lingua attiva.
@@ -122,3 +122,91 @@
 - I prezzi sono stime da listino, non la fattura: un provider che fa pagare un livello gratuito (o prezzi diversi per contesti lunghi) va aggiunto a `router.pricing.models`.
 - Non entrano nel conteggio della run, come prima della spec 11: la chat con un agente (`POST /api/chat/{agent_id}`), le chiamate di TypeSafe come arbitro e quelle del gateway `/v1`.
 - Uno stop non aspetta le chiamate già partite: arrivano e si contano dopo che la run è ferma.
+
+## 4. T02 — Shell a fiducia zero e autenticazione in LAN (fatto il 19/10/2026)
+
+### 4.1 Il punto di partenza (misurato su `f66d1d7`, T01)
+
+- **La shell.** `run_command` passava al comando l'ambiente intero del server. `load_env` copia `.env` in `os.environ`, quindi un `env` o un `set` scritto da un modello stampava ogni chiave dei provider, `GITHUB_TOKEN` e `AGENT_WORLD_API_KEY`.
+- **Le chiavi che la configurazione nomina** (`keyEnv` in `default.json`): 23. Di queste, 19 finiscono in `_API_KEY`; le altre 4 no (`HF_TOKEN`, `CLOUDFLARE_API_TOKEN`, `FAL_KEY`, `LOCAL_OPENAI_KEY`). La regola letterale del ticket (`*_API_KEY`, `GITHUB_TOKEN`, `AGENT_WORLD_API_KEY`) ne avrebbe lasciate passare 4 su 23 (D6). Un provider registrato dall'app deve avere una chiave che finisce in `_KEY` o `_TOKEN`; un `local.json` scritto a mano può usare qualsiasi nome.
+- **La LAN.** `AGENT_WORLD_ALLOWED_HOSTS` bastava ad aprire tutta l'API a chiunque sulla rete, senza login: il README lo diceva in un riquadro. `AGENT_WORLD_API_KEY` proteggeva solo `/v1`, e solo se impostata.
+- **Chi è locale.** Il guard della spec 07 decideva tutto dall'header `Host`, che scrive il client: con la chiave chiesta "quando l'host non è `127.0.0.1`", uno script sulla rete l'avrebbe saltata scrivendo `Host: 127.0.0.1` (D7).
+- **N13, quello che restava in inglese** tra i 403/400 e vicini: `Forbidden` e `Not found` dei file statici, `Skill not found` (404), il 400 dello Skiller (il testo di `DownloadError`), il 400 e il 401 del gateway `/v1`. In più un difetto: `POST /api/skills/repo` con un git che fallisce (repo che non c'è, niente rete) dava un 500 nudo, con un `RuntimeError` in italiano ("git ha risposto …") nel log e "Error 500" nella UI.
+
+### 4.2 Cosa fa
+
+- **`backend/backend/tools.py`:** `SECRET_WORDS`, `shell_env()` e `config_key_names()`. `run_command` passa sempre al comando `env=shell_env(secrets)`: l'ambiente del server senza ogni variabile che ha una parola segreta nel nome e senza i nomi in `secrets`. I nomi si confrontano in maiuscolo, come fa Windows.
+- **`backend/backend/run.py`:** il tool `run_command` passa `secrets=config_key_names(self.cfg)`, cioè ogni `keyEnv` della configurazione in uso (`default.json` più `local.json`, quindi anche i provider registrati a runtime).
+- **`backend/backend/security.py`:** dopo i controlli della spec 07 (Host, `Sec-Fetch-Site`, `Origin`), che restano identici e restano primi, una richiesta non locale a `/api/*`, `/api/events` o `/v1/*` vuole la chiave:
+  - senza chiave sul server: 403 `lan_needs_key`;
+  - senza credenziali valide: 401 `auth_required`, con `WWW-Authenticate: Bearer realm="agent-world"`;
+  - le credenziali: `Authorization: Bearer <chiave>` (a tempo costante) o il cookie `aw_session` valido;
+  - nuove: `is_local()`, `access_key()` (letta a ogni richiesta, perché la registrazione di un provider rilegge `.env`), `session_token()`, `valid_session()`, `authorized()`.
+- **`backend/backend/routes/session.py`** (nuovo): `GET /api/session` dice `local`, `keyRequired`, `keySet`, `authenticated` e la lingua dell'app; `POST /api/session` con `{"key": …}` controlla la chiave e mette il cookie. Sono le sole route di `/api` che dalla rete non vogliono la chiave.
+- **N13** (`i18n.py`, 10 chiavi nuove × 5 lingue): `auth_required`, `auth_wrong`, `lan_needs_key`, `forbidden`, `not_found`, `skill_not_found`, `download_refused`, `repo_failed`, `messages_required`, `api_key_invalid`. Le usano `security.py`, `routes/session.py`, `routes/static.py`, `routes/skills_brain.py` e `routes/gateway.py` (che tiene la forma OpenAI degli errori). `skills.read()` alza `Refusal("skill_not_found")`, che resta un `ValueError` per i tool degli agenti; il messaggio di `_git()` è in inglese e porta l'ultima riga di git.
+- **UI** (`public/js/main.js`, `public/js/i18n.js` con 5 chiavi × 5 lingue, `public/index.html`, `public/css/app.css`): prima di tutto il resto la pagina chiede `GET /api/session`; dalla rete, senza sessione, mostra il dialogo "Chiave d'accesso" nella lingua dell'app, con l'errore del server sotto il campo, e solo dopo carica lo stato e apre il flusso di eventi. Esc e un clic fuori chiudono gli altri dialoghi, non questo. Con la chiave assente sul server il dialogo dice solo perché la rete è chiusa. Un 401 a pagina aperta (sessione scaduta, chiave cambiata) riapre il dialogo, poi ricarica la pagina.
+- **Runner del browser** (`scripts/browser-test.js`): il server del runner ha una chiave d'accesso casuale a ogni giro e ammette il nome `lan.localhost`; la fase `lan` apre lì la stessa app. Tutte le altre fasi girano su `127.0.0.1` con la chiave impostata, quindi provano anche che il flusso locale non cambia.
+
+### 4.3 Decisioni (prese in questa sessione, da confermare)
+
+- **D6 — Dalla shell esce ogni variabile che sembra un segreto, più quelle che la configurazione nomina.** Una variabile resta fuori quando una delle parole del suo nome (separate da `_`) è `KEY`, `KEYS`, `APIKEY`, `TOKEN`, `TOKENS`, `SECRET`, `SECRETS`, `PASSWORD`, `PASSWD`, `CREDENTIALS` o `AUTH`, oppure quando la configurazione la nomina come `keyEnv`, qualunque nome abbia. Così escono anche `HF_TOKEN`, `FAL_KEY`, `CLOUDFLARE_API_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, `SSH_AUTH_SOCK` (l'agente SSH del proprietario) e `OPENAI_API_KEY_BACKUP`; restano `TOKENIZERS_PARALLELISM`, `PORT`, `PATH` e tutto quello che serve ai comandi per partire. Non escono gli URL (`baseUrlEnv`, `CLOUDFLARE_ACCOUNT_ID`): non sono chiavi e un comando può averne bisogno. Non si legge `.env` per togliere anche le sue righe che non sembrano chiavi: ci sono anche impostazioni come `PORT`.
+- **D7 — Locale vuol dire `Host` di loopback e connessione da questa macchina.** Il ticket dice "quando l'host non è `127.0.0.1` / `localhost` / `::1`", ma l'header `Host` lo scrive il client: uno script sulla rete che scrive `Host: 127.0.0.1` sarebbe stato locale. Ora la chiave non serve solo con un `Host` di loopback **e** un indirizzo del client di loopback (`127.0.0.0/8`, `::1`, `::ffff:127.0.0.1`). Il nome della rete aperto da questa stessa macchina (`http://192.168.1.20:4300`) vuole la chiave. Uvicorn, dietro un proxy sulla stessa macchina, prende l'indirizzo da `X-Forwarded-For`; un proxy che riscrive l'`Host` in `127.0.0.1` senza quell'header fa sembrare locale tutta la rete (README).
+- **D8 — Senza chiave sul server la rete è chiusa.** Prima di T02 `AGENT_WORLD_ALLOWED_HOSTS` da solo apriva l'API a tutta la rete. Ora una richiesta dalla rete senza `AGENT_WORLD_API_KEY` sul server riceve 403 "Access from the network is off: …", e la pagina lo dice. Il test della spec 07 `test_more_hosts_can_be_allowed_for_a_lan_setup` ora manda la chiave.
+- **D9 — Dalla rete anche `/v1` vuole la chiave; la pagina e le anteprime no.** Il gateway chiedeva la chiave solo se impostata: dalla rete ora la chiede sempre (D8). La pagina (`public/`, `/vendor/three*`) è il codice dell'app e porta il dialogo del login. Le anteprime `/preview/<run>/` restano aperte: i siti generati girano in una sandbox con un'origine opaca, e le loro richieste (CSS, immagini, script) per il browser sono di un altro sito, quindi un cookie `SameSite` non ci arriverebbe e su `http` un cookie `SameSite=None` non si può mettere. Chi conosce l'id di una run ne vede il sito: ticket **N18** (§4.6).
+- **D10 — Il browser entra con un login, e il cookie non è la chiave.** La pagina chiede `GET /api/session`, che non vuole la chiave e dice anche la lingua dell'app (la configurazione è chiusa fino al login). `POST /api/session` controlla la chiave a tempo costante e mette `aw_session`: `HttpOnly` (nessuno script lo legge), `SameSite=Strict` (nessun altro sito lo manda), `Path=/`, `Secure` quando la richiesta è `https`, valido **7 giorni** fissi. Il valore è `<scadenza>.<HMAC-SHA256(chiave, scadenza)>`: niente stato sul server, quindi sopravvive a un riavvio; un cookie rubato scade e non rivela la chiave; cambiare la chiave chiude tutte le sessioni. I 7 giorni e la durata fissa (non si allunga con l'uso) sono da confermare.
+- **D11 — N13: la frase nel dizionario, il dettaglio tecnico così com'è.** I 30 e più messaggi di `downloads.py` (nomi di file nell'archivio, limiti, cartelle) e l'ultima riga di git restano dettagli in inglese dentro una frase tradotta ("Download rifiutato: …", "Non riesco a scaricare il repository: …"). Un git che fallisce dà 502, come un upstream che non risponde, invece del 500 nudo. Anche i 404 dei file statici e della skill passano dal dizionario, perché stavano nello stesso elenco di N13. Resta com'è il testo che arriva da un provider (il 502 del gateway, il test di una combo nella scheda Router): è la risposta dell'upstream.
+
+### 4.4 Test
+
+- **`backend/tests/test_zero_trust.py`** (nuovo, 27 test):
+  - la shell: `shell_env` toglie 14 segreti di forme diverse e tiene 8 variabili che non lo sono; i nomi della configurazione senza badare alle maiuscole; `config_key_names` su `default.json` più un provider con una chiave di nome libero; un comando vero che elenca l'ambiente non vede nessuna chiave e vede il resto; una run vera con `allowShell` e un provider `MYBOX_CREDS` (nome senza parole segrete) non la passa al comando;
+  - chi è locale: 10 combinazioni di indirizzo e `Host`, comprese `Host: 127.0.0.1` dalla rete, il nome della rete da questa macchina, nessun indirizzo, `::ffff:127.0.0.1`;
+  - il cookie: firmato, scade, muore con la chiave, una scadenza allungata non è firmata, 9 valori rotti rifiutati senza 500;
+  - l'app vera (con l'indirizzo del client voluto): il flusso locale con la chiave impostata; dalla rete 401 su 7 letture e su un POST; `Host` falsificato; il Bearer giusto, sbagliato e senza `Bearer`; la rete chiusa senza chiave; il login (risposta di `GET /api/session`, chiave sbagliata, corpo non JSON, chiave giusta, attributi del cookie, l'API e un POST con il cookie); cookie scaduto, di un'altra chiave, la chiave stessa come cookie; i controlli della spec 07 ancora primi, anche sul login; la pagina che si apre senza chiave;
+  - il guard da solo: `/api/events` dalla rete solo con il Bearer o il cookie (che può stare tra altri cookie), `HEAD`, `/api` nudo, `/apis-…` che non è API.
+- **`backend/tests/test_i18n.py`:** i rifiuti della LAN nelle cinque lingue (e la lingua in `GET /api/session`); `Forbidden` e `Not found` dei file statici; i 400 e 401 del gateway nella forma OpenAI; il 400 dello Skiller e il 502 di git, con il dettaglio; `skill_not_found` tra i rifiuti di ogni route; una guardia sui sorgenti (AST) che fallisce se una route scrive un 4xx con un testo che non viene da `http_error`; la guardia N17 ora vede anche "risposto".
+- **`backend/tests/test_security.py`:** la LAN della spec 07 manda la chiave (D8).
+- **Runner del browser, fase `lan`** (6 verifiche, criterio `T02`, con l'app in italiano): il login nella lingua dell'app, senza niente dell'ufficio dietro e senza avvisi; Esc e un clic fuori non lo chiudono; una chiave sbagliata con le parole del server; la chiave giusta che apre l'ufficio e il flusso di eventi, con il cookie `HttpOnly`, `SameSite=Strict`, 7 giorni, senza la chiave dentro; un reload senza login; `127.0.0.1` senza login.
+- **Mutazioni:** ognuna deve far diventare rosso il suo test, e lo fa.
+
+  | Mutazione | Test che la prende | Rosso in |
+  |---|---|---|
+  | la shell riceve l'ambiente intero | un comando vero che non vede chiavi; la run che non passa i nomi della configurazione | 7 s |
+  | la run non passa i nomi della configurazione | la run che non passa `MYBOX_CREDS` | 2 s |
+  | i nomi della configurazione confrontati con le maiuscole | i nomi senza badare alle maiuscole | 7 s |
+  | locale guardando solo l'`Host` | 3 casi di chi è locale; `Host: 127.0.0.1` dalla rete | 6 s |
+  | nessun controllo della chiave dalla rete | 7 test di `test_zero_trust.py` | 17 s |
+  | senza chiave sul server la rete è aperta | la rete chiusa senza chiave | 6 s |
+  | una sessione non scade mai | il cookie che scade; il cookie vecchio di 8 giorni | 6 s |
+  | il login non è esente dalla chiave | il login; la rete chiusa senza chiave | 6 s |
+  | un cookie leggibile dagli script (`HttpOnly=False`, `SameSite=Lax`) | il login | 6 s |
+  | `Forbidden` di nuovo in inglese | i rifiuti dei file statici (3 lingue); la guardia sui sorgenti | 52 s |
+  | il 400 del gateway di nuovo scritto a mano | i rifiuti del gateway (le 2 lingue non inglesi); la guardia sui sorgenti | 52 s |
+  | un git che fallisce torna un 500 nudo | i download delle skill (3 lingue) | 53 s |
+  | UI: il boot senza `GET /api/session` | verifica 1 della fase `lan` | 17 s |
+  | UI: l'errore del server non si mostra nel dialogo | verifica 3 della fase `lan` | 22 s |
+  | UI: Esc chiude anche il login | verifiche 2 e 3 della fase `lan` | 17 s |
+
+  I tempi sono quelli del file di test intero (`test_i18n.py` dura 52 s) o della sola fase `lan`. Dopo ogni mutazione l'impronta di `git diff` è uguale a prima: nessun file resta cambiato.
+
+  **Una mutazione all'inizio è passata verde**, quella del boot senza `GET /api/session`: il 401 di `/api/state` apriva lo stesso il login (la strada di `relogin`, pensata per una sessione che scade a pagina aperta), ma con l'avviso "Could not load the state" dietro il dialogo e in inglese anche con l'app in un'altra lingua. La fase `lan` girava con l'app in inglese, che è anche la lingua di partenza della pagina, quindi non vedeva la differenza. Ora la fase mette l'app in italiano (e la rimette com'era alla fine) e vuole zero avvisi: la mutazione è rossa.
+
+  **Un difetto trovato dal passaggio avversario**, prima del commit: Esc e un clic fuori chiudono ogni `.modal`, quindi chiudevano anche il login e lasciavano la pagina ferma a metà avvio, senza ufficio e senza dialogo. La verifica è stata scritta prima della correzione; che sappia fallire lo mostra la mutazione "Esc chiude anche il login".
+
+### 4.5 Verifiche
+
+- `npm test` verde in 6 min 34 s (due giri: dopo il codice e sull'albero finale, 6 min 35 s): mondo 3D, dizionari, launcher, avvio, **pytest 1093 passati e 3 saltati** (prima 1046: 27 in `test_zero_trust.py`, 20 in `test_i18n.py`; i saltati sono la parità Rust ×2 senza il modulo compilato e ffmpeg), smoke, flussi, secret-scan, cartelle temporanee. T02 non aggiunge funzioni a `crates/aw_core`.
+- `npm run test:browser`: **272 verifiche su 272**, ALL OK, in 5 min 8 s a 113,3 fps sull'albero finale (5 min 5 s a 108,9 fps il primo giro); `known-red.json` vuoto. Le 6 nuove sono la fase `lan`; tutte le altre fasi girano con la chiave d'accesso impostata sul server, quindi il flusso locale è provato da tutto il resto del runner.
+- QA visivo a 1920×1080 dagli screenshot della fase `lan` (`--shots`): il dialogo "Chiave d'accesso" al centro, con "Entra", sopra l'ufficio vuoto e le schede senza dati; dopo la chiave, l'ufficio con i 16 agenti, la run precedente e i suoi workstream.
+- **N18, misurato** (§4.6): un server vero di questo checkout risponde 174 tentativi di `/preview/<id>/` al secondo a un solo client con 64 connessioni (il limite è il server, un processo solo).
+
+### 4.6 Limiti noti
+
+- **La shell non è una sandbox.** Senza chiavi nell'ambiente, un comando legge ancora i file a cui arriva l'utente del server: la cartella della run sta in `data/workspace/`, e `.env` sta tre cartelle più su. T02 toglie la via più facile (`env`, `set`, uno script di `postinstall` che legge `process.env`), non quella dei file: `AGENT_WORLD_ALLOW_SHELL` resta spento di default.
+- **N18 — le anteprime dalla rete** (nuovo ticket aperto, D9): `/preview/<id>/` risponde senza chiave. Gli id sono 8 cifre esadecimali (32 bit). Misurato con un server vero di questo checkout: 174 tentativi al secondo da un client con 64 connessioni, tutti 404. Per trovare per caso un sito, in media, servono circa 34 ore con 100 run salvate, 14 giorni con 10, 143 giorni con una. Proposta: un segmento firmato nel percorso (`/preview/<id>.<firma>/`), che le pagine relative del sito si portano dietro, dato dalla UI solo a chi ha la sessione.
+- **Nessun limite ai tentativi** sul login e sul Bearer: la difesa è una chiave lunga e casuale (il README dà il comando per farla).
+- **Su `http` la chiave e il cookie passano in chiaro.** In una rete che non si controlla serve un proxy `https` davanti (allora il cookie è anche `Secure`).
+- **I cookie sono per host, non per porta:** un'altra app web sulla stessa macchina, su un'altra porta, riceve `aw_session`. È una scadenza firmata, non la chiave, e muore in 7 giorni o con una chiave nuova.
+- **Un flusso di eventi già aperto resta aperto** dopo la scadenza della sessione: la chiave si controlla quando si apre.
+- **Dietro il dialogo**, nella pagina ancora vuota e scurita, gli esempi, il pulsante "Start the company" e il selettore della lingua restano in inglese finché non si entra: la lingua completa (`applyLanguage()`) vuole la configurazione, che dalla rete si legge solo dopo il login. I testi statici e il dialogo sono già nella lingua dell'app.
+- **Restano com'erano** (non sono 403/400): i 422 di FastAPI sui parametri e il 500 di un corpo JSON rotto su `/api/*`.

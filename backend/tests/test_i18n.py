@@ -240,6 +240,7 @@ REFUSALS = [
     ("delete", "/api/providers/ghost", {}, 404, "provider_not_found", {}),
     ("delete", "/api/providers/openai", {}, 400, "provider_shipped_remove", {"pid": "openai"}),
     ("post", "/api/skills/repo", {"json": {"url": "not a url"}}, 400, "repo_url_invalid", {}),
+    ("get", "/api/skills/read?id=nope-t02", {}, 404, "skill_not_found", {"name": "nope-t02"}),
     ("post", "/api/brain", {"json": {"title": "A", "text": "  "}}, 400, "note_empty", {}),
 ]
 
@@ -273,6 +274,113 @@ async def test_the_spec07_refusals_speak_the_language_of_the_app(app_in, lang):
     assert host.json()["error"] == http_error(lang, "refused_host")
     assert site.json()["error"] == http_error(lang, "refused_site")
     assert origin.json()["error"] == http_error(lang, "refused_origin")
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "es", "fr", "de"])
+async def test_the_lan_refusals_speak_the_language_of_the_app(app_in, lang, monkeypatch):
+    """Spec 11 T02: the access key on the LAN. The login dialog shows these
+    texts as they are, so they follow the app like every other error."""
+    import httpx
+
+    from backend.i18n import http_error
+
+    monkeypatch.setenv("AGENT_WORLD_ALLOWED_HOSTS", "studio.lan")
+    monkeypatch.setenv("AGENT_WORLD_API_KEY", "t02-access-key-0123456789abcdef")
+    app, _, _ = app_in(lang)
+    lan = httpx.ASGITransport(app=app, client=("192.168.1.30", 51000))
+    async with httpx.AsyncClient(transport=lan, base_url="http://studio.lan:4300") as c:
+        needed = await c.get("/api/state")
+        wrong = await c.post("/api/session", json={"key": "nope"}, headers={"origin": "http://studio.lan:4300"})
+        monkeypatch.delenv("AGENT_WORLD_API_KEY")
+        closed = await c.get("/api/state")
+        session = (await c.get("/api/session")).json()
+    assert [r.status_code for r in (needed, wrong, closed)] == [401, 401, 403]
+    assert needed.json()["error"] == http_error(lang, "auth_required")
+    assert wrong.json()["error"] == http_error(lang, "auth_wrong")
+    assert closed.json()["error"] == http_error(lang, "lan_needs_key")
+    assert session["language"] == lang  # the login dialog speaks it before the page can read the config
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "de"])
+async def test_the_static_refusals_speak_the_language_of_the_app(app_in, lang):
+    """N13, closed by spec 11 T02: the plain texts of the file server were
+    "Forbidden" and "Not found" in every language."""
+    from backend.i18n import http_error
+
+    app, _, _ = app_in(lang)
+    async with _client(app) as c:
+        refused = await c.get("/css/app.css:hidden")  # ':' is refused on every system (N16)
+        missing = await c.get("/no-such-page-t02.html")
+    assert refused.status_code == 403 and refused.text == http_error(lang, "forbidden")
+    assert missing.status_code == 404 and missing.text == http_error(lang, "not_found")
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "fr"])
+async def test_the_gateway_refusals_speak_the_language_of_the_app(app_in, lang, monkeypatch):
+    """N13, closed by spec 11 T02: /v1 keeps the OpenAI shape of its errors,
+    with the text in the language of the app."""
+    from backend.i18n import http_error
+
+    app, _, _ = app_in(lang)
+    async with _client(app) as c:
+        no_messages = await c.post("/v1/chat/completions", json={"model": "combo:fast"})
+        monkeypatch.setenv("AGENT_WORLD_API_KEY", "t02-access-key-0123456789abcdef")
+        no_key = await c.get("/v1/models")
+    assert no_messages.status_code == 400 and no_messages.json() == {"error": {"message": http_error(lang, "messages_required")}}
+    assert no_key.status_code == 401 and no_key.json() == {"error": {"message": http_error(lang, "api_key_invalid")}}
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "es"])
+async def test_the_skill_downloads_refuse_in_the_language_of_the_app(app_in, lang, monkeypatch, tmp_path):
+    """The sentence is the app's; what the download layer found (an archive
+    entry, a limit, a folder) is a technical detail and stays as it is."""
+    import backend.skills as skills_mod
+    from backend.i18n import http_error
+
+    monkeypatch.delenv("CUSTOM_DOWNLOAD_PATH", raising=False)
+
+    async def git_fails(args):
+        raise RuntimeError("git exited with 128: repository not found")
+
+    monkeypatch.setattr(skills_mod, "_git", git_fails)
+    app, _, _ = app_in(lang)
+    app.state.skills.vendor_dir = tmp_path / "vendor"  # N15: add_repo makes this folder, never the repo's skills/vendor/
+    async with _client(app) as c:
+        refused = await c.post("/api/skills/skiller/approve", json={"slug": "nobody/unknown"})
+        failed = await c.post("/api/skills/repo", json={"url": "https://github.com/nobody/no-such-repo-t02"})
+    assert refused.status_code == 400
+    assert refused.json()["error"] == http_error(lang, "download_refused", detail="downloads are off: CUSTOM_DOWNLOAD_PATH is not set")
+    # a git that fails (no such repo, no network) was a bare 500 with an Italian log line
+    assert failed.status_code == 502
+    assert failed.json()["error"] == http_error(lang, "repo_failed", detail="git exited with 128: repository not found")
+
+
+def test_every_http_refusal_is_built_from_the_dictionary():
+    """The guard behind N13 (spec 11 T02): in the routes, a response with a
+    4xx status writes its text through http_error (directly or through the
+    route's _err), never a literal or the str() of an exception. A 5xx may
+    carry the upstream's own text (a provider's error, as it answered)."""
+    import ast
+
+    backend = ROOT / "backend" / "backend"
+    found = {}
+    for f in sorted((backend / "routes").glob("*.py")):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("JSONResponse", "PlainTextResponse") and node.args):
+                continue
+            status = next((k.value for k in node.keywords if k.arg == "status_code"), None)
+            if not (isinstance(status, ast.Name) or (isinstance(status, ast.Constant) and 400 <= status.value < 500)):
+                continue
+            text = node.args[0]
+            while isinstance(text, ast.Dict):  # {"error": ...} or, on /v1, {"error": {"message": ...}}
+                keys = [k.value for k in text.keys if isinstance(k, ast.Constant)]
+                field = "error" if "error" in keys else "message" if "message" in keys else None
+                if field is None:
+                    break
+                text = text.values[keys.index(field)]
+            if not (isinstance(text, ast.Call) and getattr(text.func, "id", None) == "http_error"):
+                found.setdefault(f.name, []).append(ast.unparse(node)[:120])
+    assert not found
 
 
 @pytest.mark.parametrize("lang", ["en", "fr"])
@@ -367,7 +475,7 @@ DATA_LITERALS = {
 # the language tables themselves, the demo's goal keywords and (spec 10) the
 # hiring matcher's subtask keywords, both in five languages
 TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py", "router/hiring.py"}
-LOG_WORDS = re.compile(r"\b(riprovo|risposta|porta|indicizzat\w*|scaricat\w*|predefinit\w*|valutat\w*|approvat\w*|fallit\w*|giro|spent[io]|ignorat\w*)\b", re.IGNORECASE)
+LOG_WORDS = re.compile(r"\b(riprovo|rispost\w*|porta|indicizzat\w*|scaricat\w*|predefinit\w*|valutat\w*|approvat\w*|fallit\w*|giro|spent[io]|ignorat\w*)\b", re.IGNORECASE)
 
 
 def test_no_italian_text_is_left_in_the_backend():

@@ -93,7 +93,9 @@ async def _git(args: list[str]) -> None:
     proc = await asyncio.create_subprocess_exec("git", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     _, err = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"git ha risposto {proc.returncode}: {err.decode(errors='replace')[-300:]}")
+        # the last line says why ("fatal: repository ... not found"); the route shows it as a detail
+        lines = [line.strip() for line in err.decode(errors="replace").splitlines() if line.strip()]
+        raise RuntimeError(f"git exited with {proc.returncode}: {lines[-1][:300] if lines else 'no output'}")
 
 
 class SkillLibrary:
@@ -301,7 +303,7 @@ class SkillLibrary:
     async def read(self, id_or_name, max: int = 12000) -> dict:
         s = self.find(id_or_name)
         if not s:
-            raise ValueError(f"Skill not found: {id_or_name}")
+            raise Refusal("skill_not_found", name=str(id_or_name))
         text = await asyncio.to_thread(Path(s["path"]).read_text, encoding="utf-8")
         if len(text) > max:
             text = f"{text[:max]}\n… [truncated]"

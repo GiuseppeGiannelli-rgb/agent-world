@@ -8,6 +8,7 @@ import time
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from backend.i18n import http_error, ui_language
 from backend.plan import nz
 from backend.router.providers import ProviderError
 
@@ -21,10 +22,14 @@ def _authorized(request: Request) -> bool:
 
 
 def mount(app, *, config, router) -> None:
+    def _err(status: int, key: str) -> JSONResponse:
+        """The OpenAI shape, the text in the language of the app (N13, spec 11 T02)."""
+        return JSONResponse({"error": {"message": http_error(ui_language(config.get()), key)}}, status_code=status)
+
     @app.get("/v1/models")
     async def v1_models(request: Request):
         if not _authorized(request):
-            return JSONResponse({"error": {"message": "Invalid API key"}}, status_code=401)
+            return _err(401, "api_key_invalid")
         c = config.get()
         data = [{"id": f"combo:{name}", "object": "model", "owned_by": "agent-world"} for name in c["combos"]]
         for combo in c["combos"].values():
@@ -36,10 +41,10 @@ def mount(app, *, config, router) -> None:
     @app.post("/v1/chat/completions")
     async def v1_chat_completions(request: Request):
         if not _authorized(request):
-            return JSONResponse({"error": {"message": "Invalid API key"}}, status_code=401)
+            return _err(401, "api_key_invalid")
         body = await request.json()
         if not isinstance(body.get("messages"), list):
-            return JSONResponse({"error": {"message": '"messages" is required'}}, status_code=400)
+            return _err(400, "messages_required")
         use = str(nz(body.get("model"), f"combo:{config.get()['router']['defaultCombo']}"))
         try:
             out = await router.chat(

@@ -17,7 +17,7 @@ from backend.i18n import ui_language
 from backend.media import Media
 from backend.router.index import Router
 from backend.security import LocalGuard, allowed_hosts
-from backend.routes import api_state, events, gateway, providers, runs, skills_brain, static
+from backend.routes import api_state, events, gateway, providers, runs, session, skills_brain, static
 from backend.skiller import Skiller
 from backend.skills import SkillLibrary
 from backend.store import Store
@@ -112,7 +112,8 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     shutdown = asyncio.Event()
     app = FastAPI(lifespan=_make_lifespan(shutdown, router, skills, media, skiller))
     # Spec 07: DNS rebinding and CSRF are refused before any route runs
-    # (N13: their 403 speaks the language of the app, read at every refusal)
+    # (N13: their 403 speaks the language of the app, read at every refusal);
+    # spec 11 T02: from the LAN the API also wants AGENT_WORLD_API_KEY
     app.add_middleware(LocalGuard, hosts=allowed_hosts(config.get()["server"].get("host")), language=lambda: ui_language(config.get()))
     # Order matters: static.py's catch-all route must be mounted last, or it
     # would swallow /api/*, /v1/* and /vendor/* first.
@@ -120,6 +121,7 @@ def create_app(*, config=None, store=None, bus=None, router=None, skills=None, b
     runs.mount(app, config=config, store=store, bus=bus, router=router, team=team, media=media, live=live, chats=chats, ctx=ctx, uploads_dir=home / "uploads")
     skills_brain.mount(app, skills=skills, brain=brain, skiller=skiller, config=config)
     events.mount(app, bus=bus, shutdown=shutdown)
+    session.mount(app, config=config)
     gateway.mount(app, config=config, router=router)
     providers.mount(app, config=config, router=router, bus=bus, env_file=env_file)
     static.mount(
