@@ -27,7 +27,7 @@ import httpx
 
 from backend.plan import nz
 from backend.router import profiler
-from backend.router.providers import ProviderError, base_url, call_provider, unfilled
+from backend.router.providers import ProviderError, ThinkFilter, base_url, call_provider, call_provider_stream, unfilled
 
 log = logging.getLogger("agent_world.router")
 
@@ -406,6 +406,141 @@ class Router:
         self.record(target, ok=True, ms=ms, usage=res["usage"])
         summary = self.log(target, None, role, meta, ms, True, usage=res["usage"], demo=True, emergency=emergency)
         return {"text": res["text"], "provider": "mock", "model": res["model"], "target": target["key"], "usage": res["usage"], "ms": ms, "callId": summary["id"], "demo": True, "emergency": emergency, "combo": None, "requested": spec, "cascade": visited, "profile": self.profile(target["key"])}
+
+    # ---------- spec 11 T05: streaming ----------
+
+    @staticmethod
+    async def _first_text(gen, think: ThinkFilter) -> tuple[str, dict | None]:
+        """Reads a provider's stream up to its first visible text (after <think>
+        and the leading blanks). An error or an empty stream before it raises,
+        so the router can still move to the next target: nothing reached the
+        client yet."""
+        while True:
+            try:
+                ev = await gen.__anext__()
+            except StopAsyncIteration:
+                raise ProviderError("Empty answer from provider", retryable=True, kind="empty") from None
+            if "text" in ev:
+                visible = think.feed(ev["text"]).lstrip()
+                if visible:
+                    return visible, None
+            elif ev.get("end"):
+                visible = think.flush().strip()
+                if visible:
+                    return visible, ev
+                raise ProviderError("Empty answer from provider", retryable=True, kind="empty")
+
+    async def stream(self, *, role: str | None = None, use: str | None = None, messages: list[dict], json: bool = False, max_tokens: int | None = None, temperature: float | None = None, meta: dict | None = None, cascade: bool | None = None, emergency: bool | None = None):
+        """chat() as it is written: an async generator of events, {"type": "start"}
+        (the target that answers), {"type": "delta", "text"} as the provider
+        writes, then {"type": "end", "usage", "finish", "callId", ...}, or
+        {"type": "error"} when the provider breaks off mid-answer. The cascade,
+        the cooldowns, the blacklist and the simulator work as in chat() until
+        the first visible text: a target that fails before it is skipped; one
+        that fails after it ends the stream (the client already has its words)."""
+        meta = meta or {}
+        spec = use or self.spec_for_role(role)
+        first = self.expand(spec)
+        steps = [first]
+        if emergency is None and first["combo"] is None:
+            emergency = False
+        if cascade if cascade is not None else first["combo"] is not None:
+            steps += [self.expand(name) for name in self.cascade_after(first["combo"])]
+        req = {"messages": messages, "json": json, "maxTokens": max_tokens, "temperature": temperature, "role": role}
+        prompt_chars = sum(len(str(m.get("content"))) for m in messages)
+        tried: set[str] = set()
+        visited: list[str] = []
+        errors: list[str] = []
+        for step in steps:
+            visited.append(step["combo"] or spec)
+            queue = self.order(step)
+            while queue:
+                target = queue.pop(0)
+                if target["key"] in tried or self.provider_cooldown(target["provider"]) or self.is_dead(target["key"]):
+                    continue
+                tried.add(target["key"])
+                provider = self.cfg["providers"][target["provider"]]
+                started = time.monotonic()
+                gen = call_provider_stream(provider, target["provider"], target["model"], req, self.client)
+                think = ThinkFilter()
+                try:
+                    text, end = await self._first_text(gen, think)
+                except BaseException as err:
+                    await gen.aclose()  # a client that went away, too: the provider's stream closes now
+                    if not isinstance(err, ProviderError):
+                        raise
+                    ms = (time.monotonic() - started) * 1000
+                    self.cool(target, err)
+                    self.record(target, ok=False, ms=ms, error=str(err))
+                    self.log(target, step["combo"], role, meta, ms, False, error=str(err))
+                    errors.append(f"{target['key']}: {err}")
+                    if err.kind == "model_not_found":
+                        queue[0:0] = [a for a in self.aliases_of(target) if a["key"] not in tried and self.provider_ready(a["provider"])]
+                    continue
+                yield {"type": "start", "target": target["key"], "provider": target["provider"], "model": target["model"], "combo": step["combo"], "demo": False, "emergency": False, "cascade": visited}
+                async for ev in self._relay(gen, think, text, end, target, step["combo"], role, meta, started, prompt_chars):
+                    yield ev
+                return
+        if self._may_simulate(emergency):
+            emergency_ = self.mode() == "live"
+            target = {"provider": "mock", "model": f"mock-{role or 'any'}", "key": f"mock/mock-{role or 'any'}"}
+            if emergency_:
+                log.warning('No provider answered for "%s" (tried %s): the demo simulator streams instead', spec, " -> ".join(visited))
+                if self.bus is not None:
+                    self.bus.emit("router.emergency", {"requested": spec, "role": role, "cascade": visited, "runId": meta.get("runId"), "taskId": meta.get("taskId"), "agentId": meta.get("agentId"), "errors": errors[-6:]})
+            started = time.monotonic()
+            gen = call_provider_stream(self.cfg["providers"]["mock"], "mock", target["model"], req, self.client)
+            think = ThinkFilter()
+            text, end = await self._first_text(gen, think)
+            yield {"type": "start", "target": target["key"], "provider": "mock", "model": target["model"], "combo": None, "demo": True, "emergency": emergency_, "cascade": visited}
+            async for ev in self._relay(gen, think, text, end, target, None, role, meta, started, prompt_chars, demo=True, emergency=emergency_):
+                yield ev
+            return
+        if not errors:
+            raise ProviderError(f'No provider with a key in "{spec}"')
+        raise ProviderError(f'Every target failed for "{spec}":\n' + "\n".join(errors))
+
+    async def _relay(self, gen, think: ThinkFilter, text: str, end: dict | None, target: dict, combo, role, meta: dict, started: float, prompt_chars: int, *, demo: bool = False, emergency: bool = False):
+        """The rest of a committed stream, then its record and its log. Without a
+        usage from the provider, the tokens are estimated as the simulator does."""
+        written = len(text)
+        try:
+            yield {"type": "delta", "text": text}
+            while end is None:
+                try:
+                    ev = await gen.__anext__()
+                except StopAsyncIteration:
+                    end = {"end": True, "usage": {}, "finish": "stop"}
+                    break
+                except ProviderError as err:
+                    ms = (time.monotonic() - started) * 1000
+                    self.cool(target, err)
+                    self.record(target, ok=False, ms=ms, error=str(err))
+                    self.log(target, combo, role, meta, ms, False, error=str(err), demo=demo, emergency=emergency)
+                    yield {"type": "error", "message": str(err), "kind": err.kind}
+                    return
+                if "text" in ev:
+                    piece = think.feed(ev["text"])
+                    if piece:
+                        written += len(piece)
+                        yield {"type": "delta", "text": piece}
+                elif ev.get("end"):
+                    end = ev
+            tail = think.flush()
+            if tail:
+                written += len(tail)
+                yield {"type": "delta", "text": tail}
+        finally:
+            await gen.aclose()
+        usage = end.get("usage") or {}
+        estimated = not (usage.get("in") or usage.get("out"))
+        if estimated:
+            usage = {"in": -(-prompt_chars // 4), "out": -(-written // 4)}
+        ms = (time.monotonic() - started) * 1000
+        self.cooldowns.pop(target["key"], None)
+        self.record(target, ok=True, ms=ms, usage=usage)
+        summary = self.log(target, combo, role, meta, ms, True, usage=usage, demo=demo, emergency=emergency)
+        yield {"type": "end", "usage": usage, "estimated": estimated, "finish": end.get("finish") or "stop", "callId": summary["id"], "ms": ms, "target": target["key"], "model": end.get("model") or target["model"]}
 
     def cool(self, target: dict, err: ProviderError) -> None:
         r = self.cfg["router"]

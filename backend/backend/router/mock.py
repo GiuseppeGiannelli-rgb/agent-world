@@ -502,7 +502,8 @@ def answer(kind: str, messages: list[dict], team: str) -> str:
 ROLE_RE = re.compile(r"\[\[role:([a-z]+)(?::([a-z]+))?\]\]")
 
 
-async def mock_chat(provider: dict, model: str, req: dict) -> dict:
+async def _mock_answer(provider: dict, req: dict) -> tuple[str, dict]:
+    """The simulated answer after the simulated latency, with its usage."""
     system = next((m["content"] for m in req["messages"] if m["role"] == "system"), "")
     m = ROLE_RE.search(system)
     marker, team = (m.group(1), m.group(2) or "") if m else ("other", "")
@@ -511,4 +512,33 @@ async def mock_chat(provider: dict, model: str, req: dict) -> dict:
     await asyncio.sleep((lo + random.random() * (hi - lo)) * slow / 1000)
     text = answer(marker, req["messages"], team)
     prompt_chars = sum(len(str(m["content"])) for m in req["messages"])
-    return {"text": text, "model": model, "usage": {"in": -(-prompt_chars // 4), "out": -(-len(text) // 4)}}
+    return text, {"in": -(-prompt_chars // 4), "out": -(-len(text) // 4)}
+
+
+async def mock_chat(provider: dict, model: str, req: dict) -> dict:
+    text, usage = await _mock_answer(provider, req)
+    return {"text": text, "model": model, "usage": usage}
+
+
+STREAM_PIECE_RE = re.compile(r"\S+\s*|\s+")
+
+
+def stream_pieces(text: str, words: int = 3) -> list[str]:
+    """The answer in pieces of a few words, spaces included: joined, the same text."""
+    tokens = STREAM_PIECE_RE.findall(text)
+    return ["".join(tokens[i : i + words]) for i in range(0, len(tokens), words)]
+
+
+async def mock_stream(provider: dict, model: str, req: dict):
+    """Spec 11 T05: the simulator streams like a provider: the answer of
+    mock_chat in pieces of a few words, a short pause between them (the
+    whole stream stays under ~2.5 s however long the answer)."""
+    text, usage = await _mock_answer(provider, req)
+    pieces = stream_pieces(text)
+    lo, hi = provider.get("streamMs", [8, 20])
+    pause = min(lo + random.random() * (hi - lo), 2500 / max(1, len(pieces))) / 1000
+    for i, piece in enumerate(pieces):
+        if i:
+            await asyncio.sleep(pause)
+        yield {"text": piece}
+    yield {"end": True, "usage": usage, "finish": "stop", "model": model}

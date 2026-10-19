@@ -648,6 +648,7 @@ HTTP_ERRORS = {
         "repo_failed": "Could not download the repository: {detail}",
         "messages_required": '"messages" is required',
         "api_key_invalid": "Invalid API key",
+        "model_unknown": "Unknown model {value}: use a combo (GET /v1/models) or provider/model",
     },
     "it": {
         "busy": "La squadra sta già lavorando a un run. Fermalo o aspetta che finisca.",
@@ -710,6 +711,7 @@ HTTP_ERRORS = {
         "repo_failed": "Non riesco a scaricare il repository: {detail}",
         "messages_required": 'Serve "messages"',
         "api_key_invalid": "Chiave API non valida",
+        "model_unknown": "Modello sconosciuto {value}: usa una combo (GET /v1/models) o provider/modello",
     },
     "es": {
         "busy": "El equipo ya está trabajando en un run. Detenlo o espera a que termine.",
@@ -772,6 +774,7 @@ HTTP_ERRORS = {
         "repo_failed": "No he podido descargar el repositorio: {detail}",
         "messages_required": 'Hace falta "messages"',
         "api_key_invalid": "Clave de API no válida",
+        "model_unknown": "Modelo desconocido {value}: usa una combo (GET /v1/models) o proveedor/modelo",
     },
     "fr": {
         "busy": "L'équipe travaille déjà sur un run. Arrête-le ou attends qu'il se termine.",
@@ -834,6 +837,7 @@ HTTP_ERRORS = {
         "repo_failed": "Impossible de télécharger le dépôt : {detail}",
         "messages_required": '"messages" est obligatoire',
         "api_key_invalid": "Clé API non valide",
+        "model_unknown": "Modèle inconnu {value} : utilisez une combo (GET /v1/models) ou fournisseur/modèle",
     },
     "de": {
         "busy": "Das Team arbeitet bereits an einem Run. Halte ihn an oder warte, bis er fertig ist.",
@@ -896,6 +900,7 @@ HTTP_ERRORS = {
         "repo_failed": "Das Repository konnte nicht heruntergeladen werden: {detail}",
         "messages_required": '"messages" ist erforderlich',
         "api_key_invalid": "Ungültiger API-Schlüssel",
+        "model_unknown": "Unbekanntes Modell {value}: Verwende eine Combo (GET /v1/models) oder Anbieter/Modell",
     },
 }
 

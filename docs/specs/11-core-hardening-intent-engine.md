@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente. Prossimo: T05.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 da confermare. Prossimo: T06.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -25,7 +25,7 @@
   - `tokenize()` (Python e Rust) conserva i token tecnici del codice (identificatori con `_`, `::`, `@`) e i caratteri alfanumerici Unicode, con parità 1:1 nella probe di avvio;
   - `brain.consolidate()`: deduplica le note con similarità coseno > 0,88 e aggiunge un fattore di *time-decay* nell'RRF, per premiare le lezioni del QA più recenti.
 - [x] **T04 — Checkpoint e time-travel del Tasker** (`tasker.py`, `store.py`, `run.py`): uno snapshot leggero dello stato del sotto-task a ogni passo valido; quando un worker supera `escalateAfter` (2 bocciature) e passa a `frontier`, si torna all'ultimo snapshot pulito invece di accodare gli errori nel contesto. Fatto: §6.
-- [ ] **T05 — Streaming vero su `/v1`** (`routes/gateway.py`, `bus.py`): `/v1/chat/completions` con `"stream": true` manda chunk SSE compatibili OpenAI man mano che il provider risponde, invece del blocco unico finale.
+- [x] **T05 — Streaming vero su `/v1`** (`routes/gateway.py`, `bus.py`): `/v1/chat/completions` con `"stream": true` manda chunk SSE compatibili OpenAI man mano che il provider risponde, invece del blocco unico finale. Fatto: §7.
 
 ### Fase 2: Intent Router e motore di Reverse Engineering
 
@@ -363,3 +363,92 @@
 - **Le sessioni salvate prima di T04** (run fermate prima dell'aggiornamento) non hanno il punto pulito: alla ripresa vale come pulito il punto della ripresa.
 - **Un crash perde al più 0,4 s di passi**, cioè quelli dopo l'ultima scrittura.
 - **Su Windows**, se un altro processo tiene aperto il file (un antivirus, l'indicizzatore), `os.replace` fallisce: la scrittura torna sul posto, come prima di T04.
+
+## 7. T05 — Streaming vero su `/v1` (fatto il 20/10/2026)
+
+### 7.1 Il punto di partenza (misurato su `848dcde`)
+
+- **Che cosa mandava `/v1`.** Con `"stream": true` il gateway chiamava `router.chat()`, cioè una richiesta normale al provider, senza `stream`, e solo a risposta finita mandava tre frame: un chunk con tutto il testo (`delta.role` e `delta.content`), il chunk con `finish_reason: "stop"` e l'usage, `data: [DONE]`.
+- **Misurato** con un provider finto compatibile OpenAI che scrive 10 pezzi in 2 s, su un server uvicorn vero (l'`ASGITransport` di httpx tiene in memoria tutta la risposta prima di restituirla, quindi non può misurare lo streaming), tre giri per parte:
+
+  | | Chunk con testo | Primo testo al client | Fine |
+  |---|---|---|---|
+  | prima di T05 (`848dcde`) | 1 | 2,05–2,08 s | 2,05–2,08 s |
+  | dopo T05 | 10 | 0,25 s | 2,08–2,10 s |
+
+- **Gli adapter.** Nessuno sapeva fare streaming: `openai_chat` e `anthropic_chat` facevano un POST e leggevano il JSON intero, il simulatore rispondeva in un blocco.
+- **`bus.py`** è il fan-out degli eventi dell'app verso la UI (`/api/events`): il gateway non lo usava, e la chiamata arrivava alla UI come evento `router.call` dal log del router.
+- **Un difetto trovato misurando:** un modello che non è né una combo né `provider/modello` (`"model": "nope"`) faceva alzare un `ValueError` dentro il router, e il client riceveva un 500 nudo, con e senza `stream`.
+
+### 7.2 Cosa fa
+
+- **`backend/backend/router/providers.py`:** `call_provider_stream()`, il gemello in streaming di `call_provider()`, un generatore asincrono di `{"text"}` e di un `{"end", "usage", "finish", "model"}` finale.
+  - `openai_stream()`: `stream: true` e `stream_options.include_usage`; legge le righe `data:` man mano che arrivano (`client.stream`). Un errore dentro un flusso già partito (OpenRouter li manda così) si classifica dalle sue parole, come uno normale. Un server che risponde 400 a `stream_options` o a `response_format` si richiama una volta senza.
+  - `anthropic_stream()`: `message_start` (i token in ingresso), `content_block_delta` (il testo), `message_delta` (`stop_reason` e i token in uscita), `error`.
+  - `ThinkFilter`: `strip_thinking()` per un testo a pezzi, anche con un tag spezzato tra due pezzi. `FINISH`: `end_turn` e `stop_sequence` → `stop`, `max_tokens` → `length`.
+- **`backend/backend/router/index.py`:** `Router.stream()`, `chat()` scritto come generatore di eventi: `start` (il bersaglio che risponde), `delta`, `end` (`usage`, `finish`, `callId`) oppure `error`. Cascata, cooldown, blacklist, alias e simulatore funzionano come in `chat()` fino alle prime parole visibili (D21). `_first_text()` legge fino a lì; `_relay()` inoltra il resto e alla fine registra la chiamata nelle statistiche e nel log, con i token stimati quando il provider non li dà (D23).
+- **`backend/backend/router/mock.py`:** `mock_stream()`, la stessa risposta di `mock_chat()` a pezzi di tre parole, con una pausa breve tra i pezzi (`streamMs`, 8–20 ms; in tutto al più circa 2,5 s, per quanto lunga sia la risposta). `backend/backend/config.py`: `streamMs` [1, 2] con `AGENT_WORLD_FAST=1`, come la latenza.
+- **`backend/backend/routes/gateway.py`:**
+  - con `stream` aspetta il primo evento, cioè le prime parole di un modello, oppure l'errore di tutti, che resta un 502 come prima;
+  - poi apre lo `StreamingResponse`: un chunk per pezzo, `delta.role` solo nel primo, lo stesso `id` per tutti (`chatcmpl-aw-…`, deciso al primo chunk: l'id della chiamata del router si sa solo alla fine); poi il chunk con `finish_reason` e `usage`, poi `data: [DONE]`. Header `cache-control: no-cache` e `x-accel-buffering: no`, così un proxy come nginx non trattiene i pezzi;
+  - un provider che si interrompe a metà: un frame `error`, poi `[DONE]` (D22);
+  - un client che chiude la connessione chiude anche il flusso verso il provider: non si continua a pagare una risposta che nessuno legge;
+  - un modello sconosciuto: 404 nella forma OpenAI, con il testo nella lingua dell'app (`model_unknown`, cinque lingue in `i18n.py`), con e senza `stream` (D25).
+- **`backend/backend/bus.py`:** invariato (D20).
+
+### 7.3 Decisioni (da confermare dall'utente)
+
+- **D20 — Il flusso di `/v1` non passa dal bus.** `bus.py` non cambia. Il flusso di `/v1` è di un solo client e di una sola richiesta: va dal router alla risposta HTTP direttamente. Il bus serve la UI e riceve, alla fine di ogni chiamata in streaming, lo stesso evento `router.call` di una chiamata normale, con i token. Un evento per pezzo arriverebbe a ogni pagina aperta.
+- **D21 — Il failover vale fino alle prime parole visibili.** Il router legge il flusso di un modello finché non arriva testo visibile, cioè dopo `<think>` e gli spazi iniziali. Un errore, un flusso vuoto o un 4xx/5xx prima di quel punto passano al bersaglio successivo come in `chat()`, e il client non vede niente. Dopo le prime parole il modello è scelto: niente cambio a metà risposta, perché il client mescolerebbe due testi. Il prezzo è che il primo chunk arriva quando il modello scrive la prima parola visibile, non al primo byte.
+- **D22 — Un'interruzione a metà risposta** chiude il flusso con `data: {"error": {"message": …, "type": "upstream_error"}}` e poi `data: [DONE]`. Lo stato HTTP è già 200 e non si può più cambiare; è la forma che OpenRouter usa in questi casi. Il bersaglio si raffredda come per un errore normale, e la chiamata risulta fallita nelle statistiche.
+- **D23 — I token.** `stream_options.include_usage` per i server compatibili OpenAI, `message_start` e `message_delta` per Anthropic, il conteggio del simulatore. Se il provider non li dà (un server che rifiuta `stream_options`), si stimano come fa il simulatore: un token ogni 4 caratteri del prompt e della risposta.
+- **D24 — `<think>` e gli spazi.** Un blocco `<think>` non arriva mai al client, nemmeno spezzato tra due pezzi. Un `<think>` mai chiuso (una risposta tagliata) toglie tutto quello che segue; senza streaming resterebbe nel testo. Gli spazi iniziali si tolgono, quelli finali no: in streaming non si sa quale pezzo è l'ultimo (misurato in §7.1: "… word9 " in streaming, "… word9" senza).
+- **D25 — Un modello sconosciuto è un 404** `{"error": {"message": …, "type": "invalid_request_error"}}`, deciso prima di chiamare il router, con e senza `stream`: è la risposta di OpenAI a un modello che non esiste. Prima era un 500 nudo.
+
+### 7.4 Test
+
+- **`backend/tests/test_gateway_stream.py`** (nuovo, 21 test). Nessun test arriva a un provider vero: il client HTTP del router è un `MockTransport`, e i flussi finti aspettano eventi che il test imposta. Un chunk visto prima dell'evento prova che niente è stato trattenuto per strada; per questo i due test sul tempo girano su un server uvicorn vero.
+  - Il simulatore: la risposta in molti chunk che, uniti, danno lo stesso testo della risposta senza streaming, `role` solo nel primo, lo stesso id, il chunk finale con `finish_reason` e `usage`, `[DONE]`; la chiamata nel log del router.
+  - Un provider OpenAI: le prime parole al client mentre il provider sta ancora scrivendo; le richieste con `stream` e `stream_options`; un client che se ne va chiude il flusso del provider.
+  - Anthropic: testo, token e `stop_reason` → `length`.
+  - Il failover: un bersaglio che fallisce prima delle prime parole (raffreddato, contato) e un flusso vuoto passano al successivo; nessuno risponde → 502 prima di ogni chunk; un'interruzione a metà → il frame `error` e `[DONE]`.
+  - `<think>` spezzato tra tre chunk; un server che rifiuta `stream_options` richiamato senza, con i token stimati e `finish_reason: "length"`; la chiave come per il resto di `/v1`; un modello sconosciuto (404, con e senza `stream`).
+  - Il filtro di `<think>`: per 6 testi, ogni taglio in due e 40 tagli casuali in quattro danno quello che toglie `strip_thinking()`; un `<think>` non chiuso non si vede.
+- **`backend/tests/test_gateway.py`:** il vecchio test del "blocco unico" si chiama ora `test_v1_chat_completions_stream_ends_with_done`.
+- **Visti rossi prima del codice:** con il gateway di `848dcde` al posto del nuovo, 9 dei 19 test di allora sono rossi (gli altri 10 provano il log, il 502, la chiave e il filtro da soli); i 2 del modello sconosciuto sono nati rossi (un `ValueError` dal router).
+- **Mutazioni:** ognuna deve far diventare rosso un test, e lo fa. Lo script rimette i byte esatti dei file (il checkout ha file in CRLF e in LF) e chiude l'albero dei processi alla scadenza; l'impronta di `git diff` è uguale prima e dopo.
+
+  | Mutazione | Primo test che la prende | Rosso in |
+  |---|---|---|
+  | il gateway aspetta tutta la risposta prima di mandare | le prime parole prima della fine del provider | 9 s |
+  | nessun failover prima delle prime parole | il bersaglio che fallisce prima delle prime parole | 5 s |
+  | un flusso vuoto vale come risposta (nell'adapter e nel router) | il flusso vuoto | 5 s |
+  | nessun filtro di `<think>` sui pezzi | `<think>` spezzato tra i chunk | 6 s |
+  | nessuna seconda richiesta senza `stream_options` | il server che rifiuta `stream_options` | 6 s |
+  | nessuna stima dei token senza usage | il bersaglio che fallisce prima delle prime parole (il secondo non dà usage) | 5 s |
+  | il flusso del provider non si chiude quando si smette di leggere | il client che se ne va | 10 s |
+  | un'interruzione a metà chiude il flusso in silenzio | l'interruzione a metà | 5 s |
+  | lo `stop_reason` di Anthropic ignorato | Anthropic | 5 s |
+  | il simulatore scrive un blocco solo | la risposta demo in molti chunk | 3 s |
+  | il primo chunk senza `role` | la risposta demo in molti chunk | 3 s |
+  | il flusso parte prima che un modello risponda | le prime parole prima della fine del provider | 4 s |
+  | il modello sconosciuto non si controlla | il modello sconosciuto | 7 s |
+  | un flusso non entra nelle statistiche del router | il bersaglio che fallisce prima delle prime parole | 5 s |
+
+  I tempi sono quelli di `test_gateway_stream.py` fermato al primo rosso (`-x`).
+
+### 7.5 Verifiche
+
+- `npm test` verde in 7 min 10 s: mondo 3D, dizionari, launcher, avvio, **pytest 1148 passati e 4 saltati** (prima 1127 passati e 4 saltati: 21 test nuovi in `test_gateway_stream.py`), smoke, flussi, secret-scan, cartelle temporanee. Alla fine nel worktree non c'è né `data/` né `skills/vendor/`. T05 non tocca `crates/aw_core`.
+- Un primo giro di `npm test` (7 min 25 s) era rosso solo all'ultimo controllo, `temp-test` C1: sei cartelle `aw-measure-*` lasciate nella cartella temporanea dalla sonda della misura di §7.1, non dal codice. Tolte quelle, il giro intero rifatto è quello qui sopra.
+- `npm run test:browser`: **275 verifiche su 275**, ALL OK, in 5 min 33 s a 80 fps; `known-red.json` vuoto. La UI non usa `/v1`; il runner gira perché T05 cambia il simulatore (`mock.py`), che fa tutte le missioni demo del runner. Nessuna verifica nuova: T05 non cambia niente di quello che la pagina mostra.
+- La misura di §7.1, tre giri per parte.
+
+### 7.6 Limiti noti
+
+- **Dopo le prime parole non c'è failover** (D21): un provider che cade a metà lascia al client una risposta tronca, con il frame `error`.
+- **Lo spazio finale** di una risposta resta (D24).
+- **Le run non usano lo streaming:** T05 riguarda `/v1`. Worker, lead, CEO e QA aspettano ancora la risposta intera, come prima; mostrare i token di un worker man mano nella UI sarebbe un ticket a parte.
+- **Il gateway non conta nel budget delle run** (spec 11 §3.6), in streaming come prima.
+- **Un client che chiude prima delle prime parole** chiude il flusso del provider, ma la chiamata non risulta nelle statistiche, né riuscita né fallita.
+- **Un corpo JSON rotto** su `/v1` dà ancora un 500, come su `/api` (HANDOFF §7, limiti accettati).

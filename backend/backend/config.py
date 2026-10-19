@@ -56,6 +56,7 @@ class Config:
             for k in list(self.value["pacing"].keys()):
                 self.value["pacing"][k] = 20
             self.value["providers"]["mock"]["latencyMs"] = [10, 40]
+            self.value["providers"]["mock"]["streamMs"] = [1, 2]  # spec 11 T05: the pauses of a simulated stream
         staff = [{"id": self.value["ceo"]["id"], "name": self.value["ceo"]["name"], "team": "ceo", "kind": "ceo"}]
         for team, t in self.value["teams"].items():
             if t.get("lead"):
