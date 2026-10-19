@@ -1,7 +1,7 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-19. In breve:*
-- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Niente unito né spinto; decisioni D1–D5 (T01) confermate dall'utente, D6–D11 (T02) da confermare. **Prossimo: T03** (sezione 3).*
+- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout). Niente unito né spinto; decisioni D1–D5 (T01) confermate dall'utente, D6–D11 (T02) da confermare. **Prossimo: T03** (sezione 3).*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
@@ -78,7 +78,6 @@ Lezioni del porting ancora valide:
 - **N10 — Client lento senza pause** (D10 della spec 03): con frame oltre i 50 ms il mondo resta indietro, e recupera solo con la spinta delle code. Proposta: riallineare anche quando l'arretrato supera una soglia di tempo del mondo. È lo stesso `dt` limitato a 0,05 s che rallentava le animazioni della camera nel runner (sezione 6).
 - **N8 — Pinch su touch screen sopra le etichette** (dalla review della spec 02): le etichette prendono i puntatori, quindi un pinch che inizia sopra un'etichetta non arriva al canvas. È un'ipotesi per costruzione, non misurata.
 - **N18 — Le anteprime dalla rete** (spec 11 §4.6, D9): con la chiave d'accesso, `/preview/<id>/` risponde ancora senza chiave a chi conosce l'id di una run (8 cifre esadecimali). Un cookie non arriva alle richieste di una pagina in sandbox; proposta: un segmento firmato nel percorso, dato dalla UI solo a chi ha la sessione.
-- **N19 — `scripts/backend-boot-test.js` scrive nel checkout** (trovato chiudendo T02, il 19/10): avvia il backend con l'ambiente intero, senza `demoEnv()` né una home temporanea, quindi ogni `npm test` lascia una cartella `data/runs/` vuota accanto al codice, e quel server legge `.env` e `config/local.json` dell'utente. La guardia N15 di `conftest.py` conta solo i file e non lo vede. Proposta: `demoEnv(ROOT, { PORT, AGENT_WORLD_HOME: ownedDir('boot') })`, come gli altri script.
 - **Skill Hub:**
   - la fonte "claudia" la ri-aggiunge l'utente dalla UI;
   - la raccolta vera di skill di Vercel è `vercel-labs/agent-skills`: da proporre, senza aggiungerla da soli.
@@ -232,7 +231,7 @@ npm run screenshots                          # gli screenshot del README
 
 ## 7. Bug noti e limiti
 
-- **Ticket aperti:** N18, N19, N10, N8, più il backlog della spec 03 (sezione 4).
+- **Ticket aperti:** N18, N10, N8, più il backlog della spec 03 (sezione 4).
 - **Limiti accettati:**
   - un solo run attivo alla volta (409 "the team is already working");
   - la chat con gli agenti sta solo in memoria;
@@ -254,6 +253,16 @@ npm run screenshots                          # gli screenshot del README
 - **Branch `claude/youthful-bun-b80533`** (worktree omonimo), portato in avanti senza merge su `349f903`: sopra c'è un commit per T02. Unire questo branch porta T01 e T02 insieme. Niente unito, niente spinto: si unisce in locale come la spec 10 (sezione 3), quando l'utente approva.
 - `main` resta il merge della spec 10 (`33c6135`), già su `origin`.
 
+### Completato: N19 — il test di avvio senza scritture nel checkout (19/10, commit a parte su questo branch, chiesto dall'utente)
+- **Il difetto** (trovato chiudendo T02): `scripts/backend-boot-test.js` avviava il backend con l'ambiente intero, senza `demoEnv()` né una home temporanea. Ogni `npm test` lasciava una cartella `data/runs/` vuota accanto al codice, e quel server leggeva `.env` (con le chiavi vere sarebbe partito in LIVE, anche se faceva solo `GET /`) e `config/local.json` dell'utente. La guardia N15 di `conftest.py` contava solo i file, e non vedeva né questa cartella né la `skills/vendor/` vuota che un test di T02 creava prima del commit (corretto lì: il test dà alla libreria una cartella temporanea).
+- **File toccati:**
+  - `scripts/backend-boot-test.js`: `demoEnv(ROOT, { PORT, AGENT_WORLD_HOME })` con una cartella di `ownedDir('boot')`, tolta alla fine; in più tre controlli: il server è in demo, tiene i dati nella sua home, e il checkout non cambia (`data/`, `skills/vendor/`, `config/local.json`);
+  - `scripts/launcher-test.js`: ogni script che chiama `spawnBackend()` costruisce l'ambiente con `demoEnv()` (letto dai sorgenti di `scripts/`);
+  - `backend/tests/conftest.py`: la guardia N15 conta anche le cartelle (una cartella nuova, anche vuota, è una fuga; una cartella non è mai "cambiata", perché il suo tempo segue i file dentro, controllati uno per uno); `backend/tests/test_isolation.py`: il test della guardia su un checkout finto in una cartella temporanea;
+  - README (Test, "Igiene"), questo file.
+- **Decisione (da confermare):** la guardia di `pytest` vede anche le cartelle nuove, non solo i file. Nessun test della suite di oggi ne crea: la suite intera è verde con la guardia nuova.
+- **Verifiche:** i tre controlli nuovi visti rossi prima della correzione (il boot test: "did not keep its data in its temp home" e "the checkout changed: folders [] -> ["data"]"; il launcher: `backend-boot-test.js` senza `demoEnv()`; `pytest`: la guardia che non vedeva le cartelle), poi verdi. `npm test` verde in 6 min 41 s (**pytest 1094 passati e 3 saltati**), e alla fine nel worktree non c'è né `data/` né `skills/vendor/`. Mutazioni: la guardia senza le cartelle e il boot test senza `demoEnv()` tornano rossi.
+
 ### Completato: spec 11, T02 — shell a fiducia zero e autenticazione in LAN (dettagli: spec 11 §4)
 - **File toccati:**
   - `backend/backend/tools.py`: `SECRET_WORDS`, `shell_env()`, `config_key_names()`; `run_command` passa sempre l'ambiente senza chiavi (`secrets=` per i nomi in più);
@@ -267,7 +276,7 @@ npm run screenshots                          # gli screenshot del README
   - documenti: README (Configurazione, Sicurezza, Usarlo in LAN, Test), spec 11 (§2, §4), questo file.
 - **Decisioni prese in sessione, da confermare (spec 11 §4.3):** D6 dalla shell esce ogni variabile con una parola segreta nel nome (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIALS`, `AUTH`…) più ogni `keyEnv` della configurazione: la regola letterale ne lasciava passare 4 su 23; D7 locale = `Host` **e** indirizzo di loopback, perché l'`Host` lo scrive il client; D8 senza chiave sul server la rete è chiusa (prima `AGENT_WORLD_ALLOWED_HOSTS` bastava ad aprirla); D9 dalla rete anche `/v1` vuole la chiave, la pagina e le anteprime no (N18); D10 login con la chiave e cookie `aw_session` = scadenza firmata, `HttpOnly`, `SameSite=Strict`, 7 giorni fissi; D11 N13: frase tradotta, dettaglio tecnico com'è, git che fallisce = 502.
 - **Difetti trovati e corretti nel perimetro:** `POST /api/skills/repo` con git che fallisce dava un 500 nudo con un messaggio italiano nel log (ora 502 tradotto); il login si poteva chiudere con Esc o un clic fuori, lasciando la pagina ferma a metà avvio.
-- **Nuovi ticket fuori perimetro:** N18, le anteprime dalla rete; N19, `backend-boot-test.js` che lascia `data/runs/` nel checkout (sezione 4).
+- **Nuovi ticket fuori perimetro:** N18, le anteprime dalla rete (sezione 4); N19, `backend-boot-test.js` che lasciava `data/runs/` nel checkout, chiuso subito dopo (qui sotto).
 
 ### Completato: spec 11, T01 — budget e circuit breaker (dettagli: spec 11 §3)
 - **File toccati:**
@@ -295,7 +304,7 @@ npm run screenshots                          # gli screenshot del README
 
 ### Ticket aperti
 - Spec 11: T03–T10.
-- N18 (le anteprime dalla rete), N19 (il test di avvio che scrive `data/runs/` nel checkout), N8, N10 e il backlog della spec 03 (sezione 4).
+- N18 (le anteprime dalla rete), N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
 - **T02 da un dispositivo vero della rete** (un telefono): `server.host` `0.0.0.0`, `AGENT_WORLD_ALLOWED_HOSTS` con l'indirizzo del PC, `AGENT_WORLD_API_KEY`; il login, il cookie, il flusso di eventi, un'anteprima. Il firewall di Windows chiede il permesso a Python la prima volta. Il runner lo prova con `lan.localhost`, che per il server è un nome della rete ma arriva da questa macchina.

@@ -41,16 +41,20 @@ def no_edge_tts(monkeypatch):
 # and compared when it ends: any file a test wrote there turns the run red, with
 # the list. If the app itself is running from this folder while the tests run, its
 # own writes to data/ show up too: stop it, or ignore that part of the report.
+# N19: a folder that appears is a leak too, even empty ("data/runs/"); a folder is
+# never "changed": its time moves with the files inside, checked one by one.
 
 REPO = Path(__file__).resolve().parents[2]
 WATCHED_TREES = ("data", "skills/vendor")
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv"}
 
 
-def _tree(root: Path) -> dict[str, int]:
-    files: dict[str, int] = {}
+def _tree(root: Path) -> dict[str, int | None]:
+    files: dict[str, int | None] = {f"{root.relative_to(REPO).as_posix()}/": None}  # folders end with "/"
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in dirnames:
+            files[f"{(Path(dirpath) / name).relative_to(REPO).as_posix()}/"] = None
         for name in filenames:
             p = Path(dirpath) / name
             try:

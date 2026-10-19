@@ -5,8 +5,8 @@
 // and no clone of skills.repos at startup. Checked on the environment and on a real
 // server: a preference saved through it must leave config/local.json untouched.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { demoEnv, launchCommand, READY_MARKER, spawnBackend } from './lib/backend-launcher.js';
 import { onExit, ownedDir, removeDir, sweepDirs } from './lib/temp.js';
@@ -52,6 +52,21 @@ await check('demoEnv without a temp home is refused: it would use the user files
 // N16: the venv's own python of this system. uv makes .venv/Scripts/python.exe on
 // Windows and .venv/bin/python elsewhere; only the first was looked for, so outside
 // Windows npm test did not start at all.
+// N19: backend-boot-test.js started its server with the whole environment: it read the
+// user's .env and local.json and kept its runs in the checkout (an empty data/runs/
+// after every npm test). Every script that starts a backend goes through demoEnv().
+await check('every script that starts a backend gives it demoEnv(): no keys, no .env, a temp home', () => {
+  const scripts = join(ROOT, 'scripts');
+  const bare = readdirSync(scripts, { recursive: true })
+    .map((f) => String(f).split(sep).join('/'))
+    .filter((f) => f.endsWith('.js') && f !== 'lib/backend-launcher.js')
+    .filter((f) => {
+      const src = readFileSync(join(scripts, f), 'utf8');
+      return /spawnBackend\(/.test(src) && !/demoEnv\(/.test(src);
+    });
+  assert.deepEqual(bare, []);
+});
+
 await check('the launcher runs the venv python of this system', () => {
   const want = process.platform === 'win32' ? join(ROOT, 'backend', '.venv', 'Scripts', 'python.exe') : join(ROOT, 'backend', '.venv', 'bin', 'python');
   assert.equal(launchCommand(ROOT).cmd, want);

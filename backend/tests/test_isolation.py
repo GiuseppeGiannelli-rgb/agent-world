@@ -178,3 +178,22 @@ def test_the_guard_reports_every_kind_of_leak():
         "skills/vendor/o-r/SKILL.md was created",
     ]
     assert repo_leaks(before, before) == []
+
+
+def test_the_guard_sees_an_empty_folder(tmp_path, monkeypatch):
+    """N19: `npm test` left an empty data/runs/ in the checkout (the boot test's
+    server), and a spec 11 test an empty skills/vendor/: the guard counted only
+    files. A folder that appears is a leak too; one that only changes is not
+    (its time moves with the files inside, which are checked one by one)."""
+    import conftest
+
+    monkeypatch.setattr(conftest, "REPO", tmp_path)  # a stand-in checkout: the real one is never written
+    (tmp_path / "skills" / "vendor").mkdir(parents=True)
+    before = repo_snapshot()
+    (tmp_path / "data" / "runs").mkdir(parents=True)
+    (tmp_path / "skills" / "vendor" / "owner-repo").mkdir()
+    assert repo_leaks(before, repo_snapshot()) == ["data/ was created", "data/runs/ was created", "skills/vendor/owner-repo/ was created"]
+    (tmp_path / "data" / "runs" / "r1.json").write_text("{}", encoding="utf-8")
+    after = repo_snapshot()
+    assert "data/runs/r1.json was created" in repo_leaks(before, after)
+    assert repo_leaks(after, repo_snapshot()) == []

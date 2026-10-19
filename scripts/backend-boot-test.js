@@ -2,9 +2,14 @@
 // HTTP, and exits cleanly on SIGINT, with no orphaned process left behind
 // (measured risk R1: `uv run` as a wrapper orphans its grandchild on
 // Windows -- see scripts/lib/backend-launcher.js). No application routes yet.
+//
+// N19: the server is a test server like the others: it keeps its data in a temp home
+// and never touches the checkout (data/, skills/vendor/, config/local.json).
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { READY_MARKER, spawnBackend } from './lib/backend-launcher.js';
+import { demoEnv, READY_MARKER, spawnBackend } from './lib/backend-launcher.js';
+import { ownedDir, removeDir } from './lib/temp.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4398;
@@ -16,7 +21,17 @@ const fail = (msg) => {
   failed = true;
 };
 
-const env = { ...process.env, PORT: String(PORT) };
+// what the user keeps next to the code: the folders that exist, the preferences file
+const LOCAL_JSON = join(ROOT, 'config', 'local.json');
+const checkout = () => ({
+  folders: ['data', 'skills/vendor'].filter((d) => existsSync(join(ROOT, d))),
+  local: existsSync(LOCAL_JSON) ? { mtime: statSync(LOCAL_JSON).mtimeMs, bytes: readFileSync(LOCAL_JSON, 'utf8') } : null,
+});
+const before = checkout();
+const home = ownedDir('boot');
+
+// demoEnv: every key blanked, no .env, its own preferences file in the temp home
+const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_HOME: home });
 const server = spawnBackend(ROOT, env, { stderr: 'pipe' });
 let out = '';
 server.stdout.on('data', (d) => (out += d.toString()));
@@ -51,6 +66,11 @@ if (!ready) {
   }
   if (res) console.log(`GET / -> ${res.status}`);
   else fail(`could not reach the server: ${lastErr?.message}`);
+  if (res) {
+    const st = await fetch(base + '/api/state').then((r) => r.json()).catch(() => null);
+    if (st?.mode !== 'demo') fail(`the server is not in demo (mode ${st?.mode}): it saw an API key`);
+    if (!existsSync(join(home, 'data', 'runs'))) fail(`the server did not keep its data in its temp home (${home})`);
+  }
 
   const t0 = Date.now();
   server.kill('SIGINT');
@@ -71,6 +91,11 @@ try {
 } catch {
   // Connection refused/aborted is the expected outcome: nothing is listening.
 }
+
+const after = checkout();
+if (JSON.stringify(after.folders) !== JSON.stringify(before.folders)) fail(`the checkout changed: folders ${JSON.stringify(before.folders)} -> ${JSON.stringify(after.folders)}`);
+if (JSON.stringify(after.local) !== JSON.stringify(before.local)) fail('the checkout changed: config/local.json was written');
+await removeDir(home);
 
 if (failed) {
   console.log(`--- server output ---\n${out}`);
