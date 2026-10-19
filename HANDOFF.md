@@ -1,7 +1,7 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-19. In breve:*
-- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run) sul branch `claude/core-hardening-intent-engine-cdd150`, non unito né spinto; decisioni D1–D5 da confermare. **Prossimo: T02** (sezione 3).*
+- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run) sul branch `claude/core-hardening-intent-engine-cdd150`, non unito né spinto; decisioni D1–D5 confermate dall'utente. **Prossimo: T02** (sezione 3).*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
@@ -52,7 +52,7 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **16/10:** chiusi N14 (la demo parla la lingua della run), N15 (i test non toccano i file dell'utente) e N16 (test uguali su ogni sistema). Spec 08 (router, cascata, profiler, RAG su misura del modello, media sempre reali in LIVE). Da qui questo file è tracciato.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
-- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 da confermare).
+- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente).
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -61,7 +61,7 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-0. **Spec 11, a contesto pulito:** se l'utente approva T01 e le sue decisioni D1–D5 (spec 11 §3.3), il prossimo step è **T02, shell a fiducia zero e autenticazione in LAN** (spec 11 §2): l'`env` ripulito per `run_command` in `tools.py`, `AGENT_WORLD_API_KEY` su `/api/*` e `/api/events` quando l'host non è locale in `security.py`, e i 403/400 nella lingua attiva (N13). Si riparte dal branch `claude/core-hardening-intent-engine-cdd150` (o da `main`, se nel frattempo è stato unito).
+0. **Spec 11, a contesto pulito:** T01 e le sue decisioni D1–D5 sono approvati (spec 11 §3.3); il prossimo step è **T02, shell a fiducia zero e autenticazione in LAN** (spec 11 §2): l'`env` ripulito per `run_command` in `tools.py`, `AGENT_WORLD_API_KEY` su `/api/*` e `/api/events` quando l'host non è locale in `security.py`, e i 403/400 nella lingua attiva (N13). Si riparte dal branch `claude/core-hardening-intent-engine-cdd150` (o da `main`, se nel frattempo è stato unito).
 1. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
 2. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
@@ -258,7 +258,7 @@ npm run screenshots                          # gli screenshot del README
   - `scripts/browser-test.js`: la fase `budget`;
   - `backend/tests/test_budget.py` (nuovo, 33 test), `backend/tests/test_run.py` (la forma di `run.data` e `usage`);
   - documenti: README (Configurazione, SSE, Test), spec 11, questo file.
-- **Decisioni prese in sessione, da confermare (spec 11 §3.3):** D1 il simulatore non conta (misurato: la missione demo più grande fa 228 chiamate su 250); D2 costo stimato da `router.pricing`, budget di serie 5 $, prezzi di listino indicativi da verificare; D3 un blocco alla volta, "Ferma la run" la ferma e si può riprendere; D4 limite delle chiamate esatto, quello del costo superabile del costo delle chiamate in volo; D5 le chiamate chieste dal proprietario si contano ma non si fermano.
+- **Decisioni confermate dall'utente il 19/10 (spec 11 §3.3):** D1 il simulatore non conta (misurato: la missione demo più grande fa 228 chiamate su 250); D2 costo stimato da `router.pricing`, budget di serie 5 $, prezzi di listino indicativi da verificare; D3 un blocco alla volta, "Ferma la run" la ferma e si può riprendere; D4 limite delle chiamate esatto, quello del costo superabile del costo delle chiamate in volo; D5 le chiamate chieste dal proprietario si contano ma non si fermano.
 - **Un difetto trovato da una mutazione, corretto:** con la richiesta di budget aperta e la run tolta dalla pausa, `budget_gate()` girava senza mai cedere il loop; ora rimette la pausa.
 
 ### Verifiche (Windows 11)
@@ -281,7 +281,7 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. **L'utente rivede T01** e conferma (o cambia) D1–D5.
+1. **T01 approvato** con D1–D5 (19/10): resta da unire in locale, quando l'utente lo chiede.
 2. **T02, a contesto pulito** (spec 11 §2): `tools.py` passa a `run_command` un `env` senza `*_API_KEY`, `GITHUB_TOKEN`, `AGENT_WORLD_API_KEY`; `security.py` chiede `AGENT_WORLD_API_KEY` (Bearer o cookie di sessione) su `/api/*` e `/api/events` quando l'host non è `127.0.0.1` / `localhost` / `::1`; i 403/400 nella lingua attiva (N13). Prima: leggere `security.py`, `tools.py`, `routes/events.py` e `tests/test_security.py`.
 3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
 4. Le verifiche qui sopra.

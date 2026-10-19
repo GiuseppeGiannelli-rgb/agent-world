@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3). Prossimo: T02.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente. Prossimo: T02.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -77,7 +77,7 @@
 - **`i18n.py`:** 10 testi nuovi nelle cinque lingue; gli importi seguono la lingua della run ("$0.65", "0,65 $").
 - **UI** (`public/js/main.js`, `public/js/i18n.js`, 13 chiavi × 5 lingue): la richiesta "budget raggiunto" con "Prosegui (un altro blocco)" e "Ferma la run" e le note per la squadra, e un avviso suo dopo la risposta (non quello del piano); nel pannello della missione le chiamate pagate su limite e il costo stimato su budget (solo quando ha risposto un provider vero); nelle Impostazioni i due limiti, con 0 = nessun limite.
 
-### 3.3 Decisioni (prese in questa sessione, da confermare)
+### 3.3 Decisioni (confermate dall'utente il 19/10/2026)
 
 - **D1 — Il simulatore non conta.** Le risposte del simulatore (demo, emergenza in live) restano in `usage.calls` ma non in `usage.providerCalls` né nel costo, quindi non fanno scattare il budget. Misurato in §3.1: con il simulatore contato, la missione demo più grande arriverebbe a 228 chiamate su 250, e il flusso a doppio binario della T10 supererà la soglia in demo, fermando una demo che non costa nulla.
 - **D2 — Il costo è una stima, con un budget di serie di 5 $.** `router.pricing.models` (chiave esatta, poi il primo glob in ordine) e poi `router.pricing.tiers` sul `costTier` del profiler (spec 10): `local` e `free` 0, `low` [1, 5], `high` [5, 25]. I prezzi dei modelli di serie sono listini indicativi da verificare (Claude Opus [5, 25], Sonnet [3, 15], Haiku [1, 5], GPT-5 [1,25, 10], GPT-5 mini [0,25, 2], Gemini Pro [2, 12], Grok [3, 15], DeepSeek [0,6, 2,2], Mistral Large [2, 6], Codestral [0,3, 0,9], Sonar Pro [3, 15], Sonar [1, 1]); un modello sconosciuto a pagamento vale come il suo livello, che è prudente. I livelli gratuiti del profiler (Groq, Cerebras, NVIDIA, Cloudflare, Gemini Flash) valgono 0.
