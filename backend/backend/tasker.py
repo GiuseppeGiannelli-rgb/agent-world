@@ -2,7 +2,12 @@
 conversation survives revisions, so a worker sent back by review keeps
 everything it already learned. compact() keeps the context bounded: the
 brief stays, old steps become a one-line log, and the content of old file
-writes is replaced by its length."""
+writes is replaced by its length.
+
+Spec 11 T04: a light snapshot after the brief and after every valid step (a
+mark in the conversation, which only grows at its end). The first error makes
+the context dirty; at the escalation rewind() goes back to the last clean
+snapshot, and the attempts the review rejected come back as one revision."""
 
 import json
 import re
@@ -13,8 +18,11 @@ from backend.rag_budget import shape as shape_of
 from backend.router.hiring import chain_keys
 
 KEEP_RECENT = 16
-KEPT_PREFIXES = ("REVISION REQUESTED", "MESSAGE FROM THE USER", "MESSAGE FROM THE OWNER", "FILES FROM THE OWNER")
+OWNER_PREFIXES = ("MESSAGE FROM THE USER", "MESSAGE FROM THE OWNER", "FILES FROM THE OWNER")
+KEPT_PREFIXES = ("REVISION REQUESTED", *OWNER_PREFIXES)
 ALL_TOOLS = list(TOOL_DOCS.keys())
+# spec 11 T04: the steps that leave a file in the project folder
+WRITE_TOOLS = ("write_file", "generate_image", "generate_speech", "use_attachment")
 
 
 def _dumps(obj) -> str:
@@ -36,6 +44,24 @@ def shrink_step(content: str) -> str:
     if a and a.get("tool") == "write_file" and isinstance(a.get("args"), dict) and isinstance(a["args"].get("content"), str) and len(a["args"]["content"]) > 300:
         return _dumps({**a, "args": {**a["args"], "content": f"[{len(a['args']['content'])} chars written]"}})
     return content
+
+
+def from_owner(m: dict) -> bool:
+    """What the owner said to this worker, or the files they gave it."""
+    return m["role"] == "user" and isinstance(m.get("content"), str) and m["content"].startswith(OWNER_PREFIXES)
+
+
+def owner_messages(messages: list[dict]) -> list[dict]:
+    """Spec 11 T04: what a rewind keeps of the messages it undoes: the owner's
+    words and files, and the owner's answers to the worker (ask_user), each
+    after the question it answers."""
+    out = []
+    for i, m in enumerate(messages):
+        if from_owner(m):
+            out.append(m)
+        elif m["role"] == "user" and str(m.get("content")).startswith("RESULT of ask_user") and i and messages[i - 1]["role"] == "assistant":
+            out += [messages[i - 1], m]
+    return out
 
 
 def compact(messages: list[dict]) -> list[dict]:
@@ -158,6 +184,14 @@ class Tasker:
         self.cross_cursor: int | None = None  # spec 10: the newest run-memory item this worker has seen
         self.switched = False  # spec 10: its model changed since the last step
         self.shape = "general"  # spec 10 §R4: the shape of the prompt, from the hired model
+        # spec 11 T04: the snapshots of this subtask and what a rewind needs
+        self.checkpoints: list[dict] = []  # {step, attempt, at, cursor, clean}: a mark in the conversation, not a copy
+        self.steps = 0  # the valid steps in the conversation
+        self.clean = True  # no error in the context since the brief (or the last rewind)
+        self.rejections: list[dict] = []  # the review's feedback since then, attempt by attempt
+        self.written: list[tuple[int, str]] = []  # (message index, path) of the files written since then
+        self.base: dict | None = None  # the clean point of a resumed conversation that was dirty
+        self.rewound: dict | None = None  # a rewind whose revision has not been written yet
 
     def _use(self) -> str | None:
         """The combo of this worker's calls: the escalation, or router.roles.sub
@@ -193,10 +227,15 @@ class Tasker:
             {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=ctx["skills"], language=run.data.get("language"), json_contract=ctx["jsonContract"], shape=self.shape)},
             {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=ctx["memory"], shared=ctx["shared"], owner_files=owner, lead=ctx.get("lead") or "")},
         ]
+        if hasattr(run, "memory_cursor"):
+            self.cross_cursor = run.memory_cursor()  # spec 10: the brief holds what came before
+        self.snapshot()  # spec 11 T04: the brief is always a clean point
 
     def restore(self, session: dict) -> None:
         """Spec 09: the conversation saved when the run stopped, and a note that
-        it resumed. The owner's files it already saw are not announced again."""
+        it resumed. The owner's files it already saw are not announced again.
+        Spec 11 T04 (D18): the clean point of a dirty conversation, or a rewind
+        still waiting for its revision, survives the resume."""
         run, task = self.run, self.task
         self.messages = list(session.get("messages") or [])
         self.profile = self._profile()
@@ -208,6 +247,96 @@ class Tasker:
         seen = run.seen_attachments.setdefault(task["id"], set())
         seen.update(a["id"] for a in run.data.get("attachments") or [] if a["path"] in seen_text)
         self.messages.append({"role": "user", "content": "RUN RESUMED: the run was stopped and started again. Your earlier steps are above; the project folder may have changed since (the owner's files, your teammates' work): look at it again, then go on with your task."})
+        self.steps = int(session.get("step") or 0)
+        self.checkpoints, self.written, self.base, self.rewound, self.rejections = [], [], None, None, []
+        clean, rewound = session.get("clean"), session.get("rewound")
+        if isinstance(rewound, dict):
+            self.rewound = {"files": list(rewound.get("files") or [])}
+            self.rejections = list(rewound.get("rejections") or [])
+            self.clean = True
+        elif isinstance(clean, dict) and isinstance(clean.get("messages"), list):
+            # the run memory is rebuilt at a resume: the old cursor means nothing in it
+            self.base = {"messages": clean["messages"], "owner": list(clean.get("owner") or []), "files": list(clean.get("files") or []), "step": int(clean.get("step") or 0), "cursor": None, "from": len(self.messages)}
+            self.rejections = list(clean.get("rejections") or [])
+            self.clean = False
+        else:
+            self.clean = True
+        if self.clean:
+            self.snapshot()
+
+    # ---------- spec 11 T04: checkpoints and time-travel ----------
+
+    def snapshot(self) -> dict:
+        """D16: a light snapshot of the subtask, after the brief and after every
+        valid step. The conversation only grows at its end, so the snapshot marks
+        its length, with the step, the attempt, the cross-agent cursor and whether
+        the context is still clean; the run keeps it on disk."""
+        cp = {"step": self.steps, "attempt": self.task.get("attempts", 0), "at": len(self.messages), "cursor": self.cross_cursor, "clean": self.clean}
+        self.checkpoints.append(cp)
+        if hasattr(self.run, "checkpoint"):
+            self.run.checkpoint(self.task, self, cp)
+        return cp
+
+    def _clean_point(self) -> dict | None:
+        """The last clean snapshot as a rewind uses it: the conversation up to it,
+        and what came after it that stays (the owner's words, the files written)."""
+        cp = next((c for c in reversed(self.checkpoints) if c["clean"]), None)
+        if cp is not None:
+            at = cp["at"]
+            return {"messages": self.messages[:at], "owner": owner_messages(self.messages[at:]), "files": [p for i, p in self.written if i >= at], "step": cp["step"], "cursor": cp["cursor"]}
+        if self.base is not None:
+            at = self.base["from"]
+            return {
+                "messages": list(self.base["messages"]),
+                "owner": [*self.base["owner"], *owner_messages(self.messages[at:])],
+                "files": [*self.base["files"], *(p for i, p in self.written if i >= at)],
+                "step": self.base["step"],
+                "cursor": self.base["cursor"],
+            }
+        return None
+
+    def rewind(self) -> dict | None:
+        """D17: the time-travel of the escalation. The conversation goes back to
+        the last clean snapshot, the owner's words said since come back after it,
+        and the next revision sums up every rejection since: the stronger model
+        starts from a clean context, not from the trail of errors. The files stay
+        in the folder. None when the context is clean (nothing to undo)."""
+        if self.messages is None or self.clean:
+            return None
+        point = self._clean_point()
+        if point is None:
+            return None
+        before = len(self.messages)
+        self.messages = [*point["messages"], *point["owner"]]
+        self.checkpoints = [c for c in self.checkpoints if c["clean"]]  # all of them come before the first error
+        self.steps = point["step"]
+        self.cross_cursor = point["cursor"]  # the linked work delivered since then comes again, in one block
+        self.rewound = {"files": list(dict.fromkeys(point["files"]))}
+        self.written, self.base, self.clean = [], None, True
+        return {"step": point["step"], "dropped": before - len(self.messages)}
+
+    def _rewound_revision(self, lessons: str, shared: str) -> str:
+        """The one message that replaces the attempts the review rejected."""
+        lines = "\n".join(f"- attempt {r['attempt']}: {str(r['feedback'])[:1500]}" for r in self.rejections)
+        files = self.rewound["files"]
+        left = f"\n\nFILES FROM THE REJECTED ATTEMPTS (still in the project folder: read them before you change them): {', '.join(files[:20])}" if files else ""
+        return (
+            f"REVISION REQUESTED (attempt {self.task['attempts']}):\n"
+            "You now work on a stronger model, and your context went back to your last clean step: the attempts the review rejected are not replayed. "
+            f"This is what the review said about them:\n{lines}{left}{lessons}{shared}\n\nFix every point, check the files, then call finish again."
+        )
+
+    def session(self) -> dict:
+        """Spec 09 + T04 (D18): what a resume needs. The conversation (compacted),
+        and, when its context is dirty, its clean point compacted with the owner's
+        words, the files written and the rejections since; or the rewind still
+        waiting for its revision."""
+        out = {"messages": compact(self.messages), "model": self.model_key, "step": self.steps}
+        if self.rewound is not None:
+            out["rewound"] = {"files": self.rewound["files"], "rejections": self.rejections}
+        elif not self.clean and (point := self._clean_point()) is not None:
+            out["clean"] = {"messages": compact(point["messages"]), "owner": point["owner"], "files": list(dict.fromkeys(point["files"])), "rejections": self.rejections, "step": point["step"]}
+        return out
 
     async def _switched(self, res: dict) -> None:
         """A fallback or an escalation moved this worker to another model: it gets
@@ -238,16 +367,25 @@ class Tasker:
         run, task, agent = self.run, self.task, self.agent
         if self.messages is None:
             await self.init()
-        if feedback:
+        if feedback or self.rewound is not None:
             fresh = self._profile()
             if self.model_key and fresh["key"] != self.model_key:
                 # spec 10: the revision hired another model; it gets its own shape from its first step
                 await self._switched({"target": fresh["key"], "profile": fresh})
+            if feedback:
+                self.rejections.append({"attempt": task["attempts"] - 1, "feedback": feedback})
             # spec 08: the QA lessons and the run context for this kind of task and error
-            ctx = await run.rag_context(task, agent, self.profile, reason="revision", extra=feedback)
+            ctx = await run.rag_context(task, agent, self.profile, reason="revision", extra=feedback or "\n".join(str(r["feedback"]) for r in self.rejections))
             shared = f"\n\nFROM THE TEAM (this run):\n{ctx['shared']}" if ctx["shared"] else ""
             lessons = f"\n\nLESSONS THAT APPLY:\n{ctx['memory']}" if ctx["memory"] else ""
-            self.messages.append({"role": "user", "content": f"REVISION REQUESTED (attempt {task['attempts']}):\n{feedback}{lessons}{shared}\n\nFix every point, check the files, then call finish again."})
+            if self.rewound is None:
+                self.messages.append({"role": "user", "content": f"REVISION REQUESTED (attempt {task['attempts']}):\n{feedback}{lessons}{shared}\n\nFix every point, check the files, then call finish again."})
+                self.clean = False  # spec 11 T04: a rejection is an error in the context
+            else:
+                # spec 11 T04: after the rewind, one revision for every rejection since the clean point
+                self.messages.append({"role": "user", "content": self._rewound_revision(lessons, shared)})
+                self.rejections, self.rewound = [], None
+                self.snapshot()
         max_steps = run.cfg["limits"]["maxSteps"]
         for _step in range(max_steps):
             await run.gate(agent)
@@ -286,6 +424,7 @@ class Tasker:
             if not action:
                 self.messages.append({"role": "assistant", "content": res["text"][:2000]})
                 self.messages.append({"role": "user", "content": f'FORMAT ERROR: reply with exactly one JSON object {{"thought": "...", "tool": "one of {", ".join(self.tools)}", "args": {{...}}}} and nothing else.'})
+                self.clean = False  # spec 11 T04: the first error makes the context dirty
                 run.note(task, agent, "error", run.t("invalid_answer"))
                 continue
             missing = missing_args(action) if self.shape == "small" else []
@@ -294,6 +433,7 @@ class Tasker:
                 self.messages.append({"role": "assistant", "content": _dumps(action)})
                 needs = ", ".join(f'"{k}"' for k in missing)
                 self.messages.append({"role": "user", "content": f"FORMAT ERROR: {action['tool']} needs {needs}. {TOOL_DOCS[action['tool']]}\nReply again with the complete JSON object."})
+                self.clean = False
                 run.note(task, agent, "error", run.t("invalid_answer"))
                 continue
             self.messages.append({"role": "assistant", "content": _dumps(action)})
@@ -303,10 +443,20 @@ class Tasker:
                 missing = await run.missing_outputs(task)
                 if missing:
                     self.messages.append({"role": "user", "content": f"CANNOT FINISH YET: these expected files are missing or empty: {', '.join(missing)}. Create them first."})
+                    self.clean = False
                     continue
                 files = action["args"].get("files")
+                self.steps += 1
+                self.snapshot()  # spec 11 T04: a finish accepted is a valid step
                 return {"summary": str(action["args"].get("summary") or "")[:2000], "files": [str(f) for f in files] if isinstance(files, list) else task["outputs"]}
             observation = await run.exec_tool(task, agent, action)
             reminder = f"\n\n{contract_reminder(self.tools)}" if self.shape == "small" else ""  # spec 10: the contract at every turn
             self.messages.append({"role": "user", "content": f"RESULT of {action['tool']}:\n{observation}{reminder}"})
+            if str(observation).startswith("ERROR"):
+                self.clean = False  # spec 11 T04: a tool that failed is no valid step
+                continue
+            self.steps += 1
+            if action["tool"] in WRITE_TOOLS and action["args"].get("path"):
+                self.written.append((len(self.messages) - 2, str(action["args"]["path"])))
+            self.snapshot()
         return {"stepLimit": True}

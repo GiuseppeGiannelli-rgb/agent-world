@@ -690,7 +690,7 @@ class Run:
                     # spec 09: a question waits for the owner across sessions (answer it,
                     # then resume); a plan approval or a model request has no meaning any more
                     w["status"] = "pending" if w.get("kind") == "question" else "expired"
-            self.save_sessions()
+            self.save_sessions(immediate=True)
             for a in self.team.list():
                 if a["runId"] == self.data["id"] or a["kind"] == "ceo":
                     patch = {"state": "celebrating", "text": self.t("mission_done")} if a["kind"] == "ceo" and self.data["status"] == "completed" else {}
@@ -965,41 +965,40 @@ class Run:
 
     # ---------- spec 09: resume from the block point ----------
 
-    def sessions_file(self) -> Path | None:
-        root = getattr(self.ctx.store, "dir", None)
-        return Path(root) / "sessions" / f"{self.data['id']}.json" if root is not None else None
-
-    def save_sessions(self) -> None:
+    def save_sessions(self, immediate: bool = False) -> None:
         """The conversation of every worker that has not finished, so a resume
         starts it from its own steps (compacted: the brief, a log of the old
-        steps, the last ones in full)."""
-        from backend.tasker import compact
-
-        f = self.sessions_file()
-        if f is None:
+        steps, the last ones in full). Spec 11 T04 (D18): after every valid step
+        (debounced, built when the write happens) and when the run ends (now),
+        with the clean point of a worker whose context is dirty."""
+        save = getattr(self.ctx.store, "save_sessions", None)
+        if save is None:
             return
-        keep = {}
-        for task_id, tasker in self.taskers.items():
-            task = self.task_by_id(task_id)
-            # only an interrupted worker goes on from its steps; a failed one starts afresh
-            # (with the owner's words and files), its history stays in the task
-            if task and (task.get("stopped") or task["status"] not in TERMINAL) and tasker.messages:
-                keep[task_id] = {"messages": compact(tasker.messages), "model": tasker.model_key}
+
+        def build() -> dict:
+            keep = {}
+            for task_id, tasker in self.taskers.items():
+                task = self.task_by_id(task_id)
+                # only an interrupted worker goes on from its steps; a failed one starts afresh
+                # (with the owner's words and files), its history stays in the task
+                if task and (task.get("stopped") or task["status"] not in TERMINAL) and tasker.messages:
+                    keep[task_id] = tasker.session()
+            return keep
+
         try:
-            if keep:
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
-            elif f.exists():
-                f.unlink()
+            save(self.data["id"], build, immediate)
         except OSError:
             pass  # a resume without sessions starts those tasks afresh, nothing is lost on disk
 
     def load_sessions(self) -> dict:
-        f = self.sessions_file()
-        try:
-            return json.loads(f.read_text(encoding="utf-8")) if f is not None and f.exists() else {}
-        except (OSError, ValueError):
-            return {}
+        load = getattr(self.ctx.store, "load_sessions", None)
+        return load(self.data["id"]) if load is not None else {}
+
+    def checkpoint(self, task: dict, tasker: Tasker, cp: dict) -> None:
+        """Spec 11 T04: a worker took a snapshot (its brief, a valid step): the task
+        says where it is, and its conversation reaches the disk within 0.4 s."""
+        task["checkpoint"] = {"step": cp["step"], "attempt": cp["attempt"], "clean": cp["clean"]}
+        self.save_sessions()
 
     async def _prepare_resume(self) -> None:
         d = self.data
@@ -1503,6 +1502,10 @@ class Run:
                 self.data["usage"]["escalations"] += 1
                 self.note(task, agent, "escalate", self.t("escalation_note", combo=router_cfg["escalationCombo"]))
                 self.message((lead or self.ceo)["id"], agent["id"], "escalate", self.t("escalation_msg", n=task["revisions"], id=task["id"], combo=router_cfg["escalationCombo"]))
+                # spec 11 T04 (D17): the stronger model starts from the last clean snapshot
+                back = tasker.rewind()
+                if back:
+                    self.note(task, agent, "rewind", self.t("rewind_note", step=back["step"], dropped=back["dropped"]), step=back["step"], dropped=back["dropped"])
             if task["revisions"] > limits["maxRevisions"]:
                 if rescued:
                     raise Exception(self.t("still_failing", feedback=feedback[:300]))

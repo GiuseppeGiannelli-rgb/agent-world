@@ -23,7 +23,8 @@
 // (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
 // Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings),
 // lan (T02: the login of a page on the LAN, its cookie, the page on this machine that never asks),
-// brain (T03: a consolidation reloads the open Brain list and moves the office label).
+// brain (T03: a consolidation reloads the open Brain list and moves the office label),
+// checkpoint (T04: an escalated task says in its timeline that it went back to its last clean step).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
@@ -57,7 +58,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,brain,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,brain,checkpoint,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -105,7 +106,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan', T03: 'brain' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan', T03: 'brain', T04: 'checkpoint' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -814,6 +815,52 @@ async function brainPhase(cdp) {
   await shot(cdp, 'brain-consolidate');
 }
 
+// ---------- spec 11 T04: the time-travel of an escalated task ----------
+
+// A worker that moves to the stronger model goes back to its last clean step, and its
+// task says so in the timeline (⏪), right after the escalation (⬆️). The runner's mission
+// does not always escalate, so the run that did enters through the page's own stream, as
+// in the budget phase: one workstream, one task with the two notes the backend writes.
+async function checkpointPhase(cdp) {
+  await cdp.send('Page.enable');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  const now = Date.now();
+  const ESC = 'Escalated to the "frontier" model';
+  const REWIND = 'Back to the last clean point, after 3 valid steps: 9 messages with the errors leave the context, the rejections go in one message';
+  const verdict = (attempt) => ({ verdict: 'revise', score: 5 + attempt, feedback: 'The booking form has no date validation.', judgeId: 'bruno', attempt, security: true, ts: now });
+  const task = {
+    id: 'w1.1', wsId: 'w1', team: 'dev', title: 'The booking page', description: 'Build the booking page with its form.', acceptance: ['The form checks the date'], outputs: ['index.html'], dependsOn: [],
+    skills: [], brief: '', pitfalls: [], status: 'working', agentId: 'nina', attempts: 3, revisions: 2, escalated: true, summary: '', files: [], error: null,
+    verdicts: [verdict(1), verdict(2)], startedAt: new Date(now).toISOString(), finishedAt: null, checkpoint: { step: 3, attempt: 3, clean: true },
+    history: [
+      { ts: now, agentId: 'nina', kind: 'step', text: 'I write the page', tool: 'write_file', target: 'index.html' },
+      { ts: now, agentId: 'nina', kind: 'escalate', text: ESC },
+      { ts: now, agentId: 'nina', kind: 'rewind', text: REWIND, step: 3, dropped: 9 },
+    ],
+  };
+  const fx = {
+    id: 'spec11-rewind', slug: 'an-escalated-task-spec11-rewind', goal: 'An escalated task', status: 'running', complexity: 'simple', paused: false, approvePlan: false, language: 'en', mode: 'demo',
+    createdAt: new Date(now).toISOString(), finishedAt: null, planSummary: '', report: '', error: null, messages: [], waiting: [], attachments: [], workspace: '',
+    workstreams: [{ id: 'w1', team: 'dev', title: 'The booking site', objective: 'A booking site', deliverables: ['index.html'], acceptance: [], dependsOn: [], status: 'running', leadId: 'leo', summary: '' }],
+    tasks: [task],
+    usage: { calls: 12, tokensIn: 0, tokensOut: 0, escalations: 1, subAgents: 0, providerCalls: 0, costUSD: 0 },
+  };
+  const feed = (run) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'run', payload: run }))} }); return true; })()`);
+  const fed = await until(() => feed(fx), 5000, 100);
+  await cdp.eval(`document.querySelector('[data-tab="board"]').click(); true`);
+  const opened = await until(() => cdp.eval(`(() => { const top = document.querySelector('[data-task="w1.1"] .top'); if (!top) return false; top.click(); return true; })()`), 5000, 100);
+  const rows = await until(() => cdp.eval(`(() => { const ev = [...document.querySelectorAll('[data-task="w1.1"] .timeline .ev > div')]; return ev.length >= 3 && ev.map((e) => e.textContent); })()`), 5000, 100);
+  const at = (text) => (rows || []).indexOf(text);
+  report('T04', 'an escalated task says in its timeline that it went back to its last clean step (⏪, right after ⬆️)', fed && Boolean(opened) && at(`⏪ ${REWIND}`) >= 0 && at(`⏪ ${REWIND}`) === at(`⬆️ ${ESC}`) + 1, { rows });
+  await shot(cdp, 'checkpoint-rewind');
+}
+
 // ---------- spec 11 T02: the access key on the LAN ----------
 
 // The same page and server, reached as lan.localhost: the page asks GET /api/session
@@ -1265,6 +1312,7 @@ try {
   if (PHASES.includes('hiring')) await hiring(cdp);
   if (PHASES.includes('budget')) await budgetPhase(cdp);
   if (PHASES.includes('brain')) await brainPhase(cdp);
+  if (PHASES.includes('checkpoint')) await checkpointPhase(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
   if (PHASES.includes('lan')) await lanPhase(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever

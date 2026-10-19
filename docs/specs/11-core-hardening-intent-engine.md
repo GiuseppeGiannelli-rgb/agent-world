@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente. Prossimo: T04.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 da confermare. Prossimo: T05.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -24,7 +24,7 @@
 - [x] **T03 — Tokenizer per il codice e consolidamento del Brain** (`search.py`, `crates/aw_core`, `brain.py`). Fatto: §5.
   - `tokenize()` (Python e Rust) conserva i token tecnici del codice (identificatori con `_`, `::`, `@`) e i caratteri alfanumerici Unicode, con parità 1:1 nella probe di avvio;
   - `brain.consolidate()`: deduplica le note con similarità coseno > 0,88 e aggiunge un fattore di *time-decay* nell'RRF, per premiare le lezioni del QA più recenti.
-- [ ] **T04 — Checkpoint e time-travel del Tasker** (`tasker.py`, `store.py`, `run.py`): uno snapshot leggero dello stato del sotto-task a ogni passo valido; quando un worker supera `escalateAfter` (2 bocciature) e passa a `frontier`, si torna all'ultimo snapshot pulito invece di accodare gli errori nel contesto.
+- [x] **T04 — Checkpoint e time-travel del Tasker** (`tasker.py`, `store.py`, `run.py`): uno snapshot leggero dello stato del sotto-task a ogni passo valido; quando un worker supera `escalateAfter` (2 bocciature) e passa a `frontier`, si torna all'ultimo snapshot pulito invece di accodare gli errori nel contesto. Fatto: §6.
 - [ ] **T05 — Streaming vero su `/v1`** (`routes/gateway.py`, `bus.py`): `/v1/chat/completions` con `"stream": true` manda chunk SSE compatibili OpenAI man mano che il provider risponde, invece del blocco unico finale.
 
 ### Fase 2: Intent Router e motore di Reverse Engineering
@@ -283,3 +283,83 @@
 - **Il CJK senza spazi** resta una parola sola per frase (`数据库很快` è un token): per cercare dentro servirebbero i bigrammi.
 - **Il consolidamento è per run:** due doppioni di run vecchie si uniscono solo quando una run nuova ne porta un terzo, o con `consolidate()` a mano (O(n²)).
 - **Il decadimento è solo del Brain:** le skill e la memoria della run (spec 08) non invecchiano.
+
+## 6. T04 — Checkpoint e time-travel del Tasker (fatto il 19/10/2026)
+
+### 6.1 Il punto di partenza (misurato su `0db28e2`)
+
+- **Una conversazione che cresce solo in coda.** Il Tasker tiene una conversazione per sotto-task e la allunga con `append` (`compact()` ne fa una copia ridotta per il modello, senza toccarla). Una revisione aggiunge "REVISION REQUESTED (attempt N)" con il feedback del QA, e i passi del tentativo bocciato restano tutti, con gli errori di formato e i tool falliti.
+- **L'escalation cambiava solo la combo.** Dopo `limits.escalateAfter` (2) bocciature, `run_task` metteva `tasker.use = "frontier"` (`router.escalationCombo`) e il modello più forte riceveva tutto. Misurato sulla demo "A simple document about coffee", dove il simulatore boccia `w2.1` due volte (1 missione demo su 5 provate arriva all'escalation): la prima chiamata su `frontier` portava **18 messaggi, 6293 caratteri, 2 revisioni e gli 8 passi dei due tentativi bocciati**. Nessun test copriva l'escalation di `run_task`.
+- **Le conversazioni andavano su disco solo alla fine.** `save_sessions()` (spec 09) girava nel `finally` del ciclo di vita: un server che muore a metà run perdeva tutti i worker, e la ripresa li faceva ripartire dal brief. Sulla demo il file delle sessioni non compariva mai mentre la run lavorava.
+- **Lo `Store`** riscriveva il file della run sul posto: una scrittura interrotta lascia un JSON rotto, che all'avvio si salta, cioè la run sparisce. E il salvataggio raggruppato ripartiva da capo a ogni chiamata: con chiamate più fitte di 0,4 s (la demo; 8 worker di una run live fanno un passo ogni 3 s ciascuno, cioè uno ogni 0,4 s in tutto) non scriveva mai finché duravano. Misurato: 12 salvataggi a 0,1 s l'uno dall'altro, nessun file in 1,2 s.
+
+### 6.2 Cosa fa
+
+- **`backend/backend/tasker.py`:**
+  - `snapshot()` (D16) dopo il brief (in `init()`), dopo ogni passo valido e dopo la revisione che chiude un rewind; ogni snapshot va alla run (`run.checkpoint()`). Lo stato nuovo: `checkpoints`, `steps`, `clean`, `rejections`, `written`, `base`, `rewound`.
+  - Gli errori che sporcano il contesto (`clean = False`): la risposta non JSON, gli argomenti mancanti di un modello piccolo, il finish rifiutato, il risultato di un tool che comincia con `ERROR`, una revisione.
+  - `rewind()` (D17), `_clean_point()`, `owner_messages()` (le parole e i file del proprietario e le sue risposte ad `ask_user`, con la domanda), `_rewound_revision()` (la revisione unica).
+  - `session()` e `restore()` (D18): il punto pulito di una conversazione sporca, o un rewind che aspetta ancora la sua revisione, sopravvive alla ripresa. `init()` fissa anche il cursore del bus a incrocio (spec 10) dove il brief è stato scritto.
+- **`backend/backend/run.py`:** `checkpoint()` scrive `task.checkpoint` (`step`, `attempt`, `clean`) e chiede il salvataggio delle sessioni; `save_sessions(immediate=)` passa dallo `Store` con una funzione che costruisce le sessioni quando la scrittura parte; `load_sessions()`; in `run_task`, all'escalation, `tasker.rewind()` e la nota `rewind` nella timeline del task.
+- **`backend/backend/store.py`:** `write_atomic()` (un file temporaneo, poi `os.replace`), usata anche per i file delle run; `_later()`, al più una scrittura ogni 0,4 s per chiave con lo stato più nuovo; `sessions_path()`, `save_sessions()`, `load_sessions()`; all'avvio via i `.tmp` rimasti.
+- **`backend/backend/i18n.py`:** `rewind_note` nelle cinque lingue.
+- **UI** (`public/js/main.js`): l'icona ⏪ per la nota `rewind` nella timeline (senza, le note sconosciute prendono ⚠️).
+- **Runner del browser:** la fase `checkpoint`.
+
+### 6.3 Decisioni (da confermare dall'utente)
+
+- **D16 — Lo snapshot e il passo valido.** Uno snapshot non copia la conversazione, che cresce solo in coda: ne segna la lunghezza, con il numero di passi validi, il tentativo, il cursore del bus a incrocio e se il contesto è ancora pulito. Si prende dopo il brief e dopo ogni passo valido: un tool eseguito il cui risultato non comincia con `ERROR`, o un finish accettato. Il primo errore (risposta non JSON, argomenti mancanti, finish rifiutato, tool in errore, una bocciatura del QA o del controllo dei file) rende sporco il contesto: gli snapshot dopo si prendono ancora, ma non sono puliti. Il brief è sempre un punto pulito. Anche un finish poi bocciato è un passo valido: senza errori di formato, l'ultimo punto pulito è la fine del primo tentativo (è il caso della demo).
+- **D17 — Il time-travel all'escalation.** Quando il worker passa alla combo dell'escalation (la prima volta che le revisioni arrivano a `escalateAfter`, se la combo esiste), la conversazione torna all'ultimo snapshot pulito. Sopra tornano, in ordine, le parole e i file del proprietario arrivati dopo e le sue risposte ad `ask_user` con la domanda; poi **una** revisione con ogni bocciatura da allora (tentativo per tentativo, al più 1500 caratteri ciascuna), i file che i tentativi bocciati hanno lasciato nella cartella (da leggere prima di cambiarli), le lezioni e il contesto della squadra come prima. I file su disco **non** tornano indietro: la cartella è di tutta la run, e i file bocciati sono la base da correggere. Il cursore del bus torna a quello dello snapshot, quindi il lavoro collegato consegnato da allora arriva di nuovo, in un blocco. Dopo il rewind il contesto è pulito e la revisione è il punto pulito nuovo. Il salvataggio del lead (`rescue`, oltre `maxRevisions`) non fa rewind; un contesto ancora pulito non ha niente da togliere.
+- **D18 — I checkpoint su disco.** A ogni snapshot la run chiede di scrivere `data/runs/sessions/<run>.json`: entro 0,4 s, con la conversazione (compattata) di ogni worker non finito e, se il contesto è sporco, il suo punto pulito compattato con le parole del proprietario, i file e le bocciature da allora. Prima di T04 il file si scriveva solo alla fine della run. Il cursore del bus non si salva: alla ripresa la memoria della run si ricostruisce, e un cursore vecchio lì non vuol dire niente. Ogni scrittura dello `Store` (le sessioni e i file delle run) passa da un file temporaneo e lo sostituisce, e il salvataggio raggruppato non riparte più da capo a ogni chiamata: una scrittura in attesa tiene la sua ora e prende lo stato più nuovo.
+- **D19 — Dove si vede.** Nella timeline del task, subito dopo "⬆️ Escalation…", la nota "⏪ Ripartito dall'ultimo punto pulito, dopo N passi validi: M messaggi con gli errori escono dal contesto, le bocciature stanno in un solo messaggio", nella lingua della run (campi `step` e `dropped`). In più ogni task ha `checkpoint` (`step`, `attempt`, `clean`) nel JSON della run. Nessun badge nuovo sulla scheda: c'è già "⬆️ frontier".
+
+### 6.4 Test
+
+- **`backend/tests/test_tasker.py`** (6 nuovi, con un `FakeRun` che registra gli snapshot, fa fallire i tool che gli si dice, dà le parole del proprietario prima di una chiamata scelta e ha un cursore della memoria): gli snapshot dopo il brief e dopo ogni passo valido, con lunghezza, cursore e pulizia; un tool in errore, un finish rifiutato e gli argomenti mancanti di un modello piccolo non sono passi validi e sporcano; il rewind all'ultimo punto pulito (le parole del proprietario tenute, la revisione unica con le due bocciature e i due file, il cursore dello snapshot, gli snapshot dopo); la risposta del proprietario ad `ask_user` che resta con la sua domanda; nessun rewind su un contesto pulito (e nessuna seconda copia nella sessione); la sessione di un worker sporco con il suo punto pulito, la ripresa che ci torna, e il rewind ancora senza revisione che sopravvive a un'altra ripresa.
+- **`backend/tests/test_store.py`** (4 nuovi): una scrittura che muore a metà lascia il file buono (la run e le sessioni, anche dopo un riavvio); le sessioni raggruppate, l'immediata che vince sulla scrittura in attesa, il file tolto quando non resta niente, un file rotto; una run che salva ogni 0,1 s arriva su disco con lo stato più nuovo; i `.tmp` rimasti tolti all'avvio.
+- **`backend/tests/test_checkpoint.py`** (nuovo, 3 test): `run_task` vero con un worker e un QA scritti a mano (la prima chiamata su `frontier` porta solo il brief, il passo pulito e la revisione unica; la nota `rewind` dopo `escalate`; `task.checkpoint`); la missione demo che arriva all'escalation; il file delle sessioni su disco mentre la run lavora (in pausa, quindi nessun salvataggio di fine run).
+- **Runner del browser, fase `checkpoint`** (1 verifica, criterio `T04`): la run di un task con l'escalation entra dal flusso di eventi della pagina, come nella fase `budget`; la scheda aperta mostra "⏪ …" subito dopo "⬆️ …".
+- **Mutazioni:** ognuna deve far diventare rosso il suo test.
+
+  | Mutazione | Test che la prende | Rosso in |
+  |---|---|---|
+  | nessuno snapshot dopo un passo valido | gli snapshot dopo ogni passo valido; il rewind; la risposta ad `ask_user`; la ripresa | 1 s |
+  | un tool fallito vale come passo valido | un tool in errore non è un passo valido | 1 s |
+  | un errore di formato lascia il contesto pulito | gli snapshot; il rewind; la risposta ad `ask_user`; la ripresa | 1 s |
+  | una bocciatura lascia il contesto pulito | la missione demo che arriva all'escalation | 7 s |
+  | il rewind va all'ultimo snapshot, pulito o no | il rewind (unitario e in `run_task`); la risposta ad `ask_user`; la ripresa; la demo | 7 s |
+  | il rewind toglie le parole del proprietario | il rewind; la risposta ad `ask_user`; la ripresa | 1 s |
+  | la risposta ad `ask_user` si perde | la risposta ad `ask_user` | 1 s |
+  | la revisione unica ha solo l'ultima bocciatura | il rewind (unitario e in `run_task`); la ripresa; la demo | 8 s |
+  | il cursore del bus non torna indietro | il rewind | 1 s |
+  | il numero dei passi non torna indietro | il rewind (unitario e in `run_task`) | 8 s |
+  | nessun punto pulito dopo la revisione del rewind | il rewind | 1 s |
+  | la sessione di un worker sporco senza punto pulito | la ripresa | 1 s |
+  | un rewind in attesa non si salva | la ripresa | 1 s |
+  | l'escalation non fa rewind | `run_task` con l'escalation; la demo | 7 s |
+  | i checkpoint su disco solo a fine run | il file delle sessioni mentre la run lavora | 15 s |
+  | lo `Store` scrive sul posto | una scrittura che muore a metà | 3 s |
+  | una scrittura in attesa riparte da capo a ogni chiamata | una run che salva ogni 0,1 s | 4 s |
+  | una scrittura immediata lascia indietro quella in attesa | le sessioni raggruppate | 3 s |
+  | i `.tmp` restano all'avvio | i `.tmp` tolti all'avvio | 3 s |
+  | UI: la nota `rewind` senza ⏪ | la verifica della fase `checkpoint` (la nota torna con ⚠️) | 15 s |
+
+  I tempi sono quelli dei file di test toccati (`test_tasker.py` dura 1 s, `test_store.py` 3 s, `test_checkpoint.py` 7–15 s) o della sola fase `checkpoint`. Dopo le 19 mutazioni del backend e quella della UI l'impronta di `git diff` è uguale a prima: nessun file resta cambiato.
+
+  **Una mutazione la prende un solo test:** "una bocciatura lascia il contesto pulito" la vede solo la missione demo, perché nei test unitari un errore di formato arriva sempre prima della bocciatura. **Due difetti trovati prima del commit, ognuno con il suo test visto rosso:** il passaggio avversario ha trovato che il rewind toglieva anche la risposta del proprietario a un `ask_user`; la misura sulla demo ha trovato che il file delle sessioni non compariva mai mentre la run lavorava, perché il salvataggio raggruppato dello `Store` ripartiva da capo a ogni chiamata (vale anche per il file della run, da prima di T04). Il test della scrittura che muore a metà è nato rosso perché `save_sessions()` non c'era: che sappia fallire anche sul file della run lo mostra la mutazione "lo `Store` scrive sul posto".
+
+### 6.5 Verifiche
+
+- `npm test` verde in 7 min 3 s: mondo 3D, dizionari, launcher, avvio, **pytest 1127 passati e 4 saltati** (prima 1114 passati e 4 saltati: 13 test nuovi, 6 in `test_tasker.py`, 4 in `test_store.py`, 3 in `test_checkpoint.py`), smoke, flussi, secret-scan, cartelle temporanee. Alla fine nel worktree non c'è né `data/` né `skills/vendor/`. T04 non tocca `crates/aw_core`: nessuna funzione Rust nuova, la parità resta quella di prima.
+- `npm run test:browser`: **275 verifiche su 275**, ALL OK, in 5 min 18 s a 104,9 fps; `known-red.json` vuoto. La nuova è la fase `checkpoint`.
+- QA visivo a 1920×1080 dallo screenshot della fase `checkpoint` (`--shots`): la scheda del task aperta nel pannello di destra, con "2 rev." e "⬆️ frontier", i due verdetti di Bruno e, in fondo alla timeline, "⬆️ Escalated to the "frontier" model" e subito sotto "⏪ Back to the last clean point, after 3 valid steps: …".
+- **La demo, prima e dopo** ("A simple document about coffee", task `w2.1`, la prima chiamata su `frontier`): da 18 messaggi, 6293 caratteri, 2 revisioni e 8 passi a 10 messaggi, 4602 caratteri, 1 revisione e 4 passi (il brief, i tre passi e il finish del primo tentativo, la revisione unica). Il file delle sessioni c'è mentre la run lavora (prima di T04 no) e sparisce a fine run, quando non resta niente da riprendere.
+
+### 6.6 Limiti noti
+
+- **I file non tornano indietro** (D17): il modello più forte li trova per nome nella revisione e li deve leggere. Un file che un tentativo bocciato ha rovinato resta rovinato finché non lo riscrive.
+- **Il punto pulito arriva fino al primo errore.** Un modello che sbaglia il formato al secondo passo lascia un punto pulito quasi vuoto: il modello più forte rifà l'esplorazione (qualche chiamata in più). Un tool che fallisce per l'ambiente (la rete che non c'è) sporca il contesto come un errore del modello.
+- **Un solo rewind per escalation**, e l'escalation è una sola per sessione del worker. Dopo una ripresa (spec 09) le revisioni ripartono da 0, quindi un worker ripreso può salire di nuovo e tornare al suo punto pulito.
+- **Le sessioni salvate prima di T04** (run fermate prima dell'aggiornamento) non hanno il punto pulito: alla ripresa vale come pulito il punto della ripresa.
+- **Un crash perde al più 0,4 s di passi**, cioè quelli dopo l'ultima scrittura.
+- **Su Windows**, se un altro processo tiene aperto il file (un antivirus, l'indicizzatore), `os.replace` fallisce: la scrittura torna sul posto, come prima di T04.

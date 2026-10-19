@@ -549,7 +549,7 @@ function taskCard(t) {
   let detail = '';
   if (open) {
     const hist = t.history.slice(-14).map((h) => {
-      const icon = { verdict: '⚖️', escalate: '⬆️', check: '🧪', switch: '🔀', decision: '💡', model_wait: '⏳' }[h.kind] ?? '⚠️';
+      const icon = { verdict: '⚖️', escalate: '⬆️', rewind: '⏪', check: '🧪', switch: '🔀', decision: '💡', model_wait: '⏳' }[h.kind] ?? '⚠️';
       const what = h.kind === 'step' ? `${label('tool', h.tool)}${h.target ? ` <code>${esc(h.target.slice(0, 60))}</code>` : ''}<br><span class="muted">${esc(h.text)}</span>` : `${icon} ${esc(h.text)}`;
       return `<div class="ev"><span class="t">${esc(agentName(h.agentId).slice(0, 2))}</span><div>${what}</div></div>`;
     });
