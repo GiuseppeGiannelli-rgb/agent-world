@@ -14,6 +14,9 @@ use std::collections::{HashMap, HashSet};
 use unicode_general_category::get_general_category;
 use unicode_normalization::UnicodeNormalization;
 
+// Spec 11 T06: the twin of backend/deconstructor.py (structural extraction)
+mod deconstruct;
+
 /// Same set as `STOP` in backend/search.py. Tokens are accent-stripped before
 /// the lookup, so "più" never actually matches; it is kept only to mirror the
 /// Python literal exactly.
@@ -319,11 +322,37 @@ fn cosine_top_k(py: Python<'_>, query: Vec<f64>, matrix: Vec<f64>, dim: usize, k
     }))
 }
 
+// ---------- Spec 11 T06: the Reverse Engineering extractor ----------
+
+/// JSON of backend.deconstructor.extract_skeleton_py(source, ext).
+#[pyfunction]
+fn extract_skeleton_json(py: Python<'_>, source: &str, ext: &str) -> String {
+    let (source, ext) = (source.to_owned(), ext.to_owned());
+    py.allow_threads(move || deconstruct::extract_skeleton_json(&source, &ext))
+}
+
+/// JSON of backend.deconstructor.inspect_artifact_metadata_py(data, name).
+#[pyfunction]
+fn inspect_artifact_json(py: Python<'_>, data: &[u8], name: &str) -> String {
+    let (data, name) = (data.to_vec(), name.to_owned());
+    py.allow_threads(move || deconstruct::inspect_artifact_json(&data, &name))
+}
+
+/// JSON of backend.deconstructor.summarize_runtime_trace_py(text).
+#[pyfunction]
+fn summarize_trace_json(py: Python<'_>, text: &str) -> String {
+    let text = text.to_owned();
+    py.allow_threads(move || deconstruct::summarize_trace_json(&text))
+}
+
 #[pymodule]
 fn aw_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Bm25>()?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(ngram_vector, m)?)?;
     m.add_function(wrap_pyfunction!(cosine_top_k, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_skeleton_json, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_artifact_json, m)?)?;
+    m.add_function(wrap_pyfunction!(summarize_trace_json, m)?)?;
     Ok(())
 }

@@ -2,7 +2,7 @@
 name = "aw_core"
 version = "0.1.0"
 edition = "2021"
-description = "Native accelerators for the Agent World backend (P6): BM25 + tokenizer"
+description = "Native accelerators for the Agent World backend (P6): BM25 + tokenizer, vectors, the deconstructor (spec 11 T06)"
 
 [lib]
 name = "aw_core"
@@ -13,3 +13,5 @@ pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
 unicode-normalization = "0.1"
 # spec 11 T03: the general category of a char (L, N, M), as Python's unicodedata.category
 unicode-general-category = "1"
+# spec 11 T06: the JSON of the deconstructor's results and the traces it reads
+serde_json = "1"
