@@ -260,7 +260,7 @@ npm run screenshots                          # gli screenshot del README
   - `scripts/launcher-test.js`: ogni script che chiama `spawnBackend()` costruisce l'ambiente con `demoEnv()` (letto dai sorgenti di `scripts/`);
   - `backend/tests/conftest.py`: la guardia N15 conta anche le cartelle (una cartella nuova, anche vuota, è una fuga; una cartella non è mai "cambiata", perché il suo tempo segue i file dentro, controllati uno per uno); `backend/tests/test_isolation.py`: il test della guardia su un checkout finto in una cartella temporanea;
   - README (Test, "Igiene"), questo file.
-- **Decisione (da confermare):** la guardia di `pytest` vede anche le cartelle nuove, non solo i file. Nessun test della suite di oggi ne crea: la suite intera è verde con la guardia nuova.
+- **Decisione (confermata dall'utente il 19/10):** la guardia di `pytest` vede anche le cartelle nuove, non solo i file. Nessun test della suite di oggi ne crea: la suite intera è verde con la guardia nuova.
 - **Verifiche:** i tre controlli nuovi visti rossi prima della correzione (il boot test: "did not keep its data in its temp home" e "the checkout changed: folders [] -> ["data"]"; il launcher: `backend-boot-test.js` senza `demoEnv()`; `pytest`: la guardia che non vedeva le cartelle), poi verdi. `npm test` verde in 6 min 41 s (**pytest 1094 passati e 3 saltati**), e alla fine nel worktree non c'è né `data/` né `skills/vendor/`. Mutazioni: la guardia senza le cartelle e il boot test senza `demoEnv()` tornano rossi.
 
 ### Completato: spec 11, T02 — shell a fiducia zero e autenticazione in LAN (dettagli: spec 11 §4)
@@ -317,7 +317,7 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. **T01 e T02 approvati** con D1–D5 e D6–D11 (19/10): restano da unire in locale, con il commit di N19, quando l'utente lo chiede. Resta da confermare la decisione di N19 (la guardia di `pytest` vede anche le cartelle).
+1. **T01 e T02 approvati** con D1–D5 e D6–D11 (19/10): restano da unire in locale, con il commit di N19, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
 2. **T03, a contesto pulito** (spec 11 §2, sezione 3 qui sopra): `tokenize()` per il codice in Python e Rust con parità 1:1, `brain.consolidate()` (coseno > 0,88) e il time-decay nell'RRF. Dal branch `claude/youthful-bun-b80533`. Prima: leggere `search.py`, `brain.py`, `crates/aw_core/src/`, `tests/test_search.py`, `tests/test_search_rust.py`, `tests/test_brain.py`.
 3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
 4. Le verifiche qui sopra.
