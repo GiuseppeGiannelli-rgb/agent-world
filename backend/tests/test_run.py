@@ -76,14 +76,15 @@ class TestDataShape:
     def test_constructor_mirrors_node(self, make_run, tmp_path):
         run = make_run("Apri un bar sulla luna!")
         d = run.data
-        # spec 09 adds "attachments" (the owner's files); the rest is the Node shape
-        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "attachments", "report", "error", "usage", "workspace"}
+        # spec 09 adds "attachments" (the owner's files), spec 11 "budget"; the rest is the Node shape
+        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "attachments", "report", "error", "usage", "budget", "workspace"}
         assert d["attachments"] == []
         assert d["status"] == "planning" and d["paused"] is False and d["mode"] == "demo"
         assert len(d["id"]) == 8
         assert d["slug"].startswith("apri-un-bar-sulla-luna-")
         assert d["workspace"] == str(Path(tmp_path / "workspace" / d["slug"]))
-        assert d["usage"] == {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0}
+        assert d["usage"] == {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0, "providerCalls": 0, "costUSD": 0.0}
+        assert d["budget"] == {"step": {"calls": None, "costUSD": None}, "limit": {"calls": None, "costUSD": None}, "approvals": 0}  # the mini ctx sets no limit
         assert d["approvePlan"] is False
 
     def test_approve_plan_option_wins_over_config(self, make_run):
@@ -226,7 +227,8 @@ class TestChatHelpers:
         run.ctx.team = types.SimpleNamespace(get=lambda id: agent, set=lambda *a: None)
         res = await run.chat(role="dev", use=None, messages=[], json=True, max_tokens=100, agent=agent, task=None)
         assert res["text"] == '{"a": 1}'
-        assert run.data["usage"] == {"calls": 1, "tokensIn": 3, "tokensOut": 5, "escalations": 0, "subAgents": 0}
+        # spec 11 T01: the simulator's answer is a call, not a provider call, and costs nothing
+        assert run.data["usage"] == {"calls": 1, "tokensIn": 3, "tokensOut": 5, "escalations": 0, "subAgents": 0, "providerCalls": 0, "costUSD": 0.0}
         assert agent["model"] == "mock/mock-dev"
 
     @pytest.mark.asyncio

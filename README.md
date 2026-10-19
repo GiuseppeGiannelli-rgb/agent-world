@@ -193,7 +193,7 @@ flowchart LR
 ```
 
 - **Formato:** `retry: 2000` all'apertura; poi un frame `data: {"seq", "type", "payload"}` per ogni evento, e un commento `: ping` dopo 15 s di silenzio.
-- **I 17 tipi di evento:** `run`, `task`, `workstream`, `subtasks`, `plan`, `agent`, `agent.spawn`, `agent.despawn`, `message`, `chat`, `file`, `waiting`, `brain`, `skills`, `router.call`, `config`, `run.done`.
+- **I 17 tipi di evento:** `run`, `task`, `workstream`, `subtasks`, `plan`, `agent`, `agent.spawn`, `agent.despawn`, `message`, `chat`, `file`, `waiting`, `brain`, `skills`, `router.call`, `config`, `run.done`. Una richiesta in `waiting` può essere l'approvazione del piano (`plan`), una domanda (`question`), "nessun modello disponibile" (`model`) o il budget raggiunto (`budget`, spec 11).
 - **Ordine garantito:** `emit()` è sincrono e assegna `seq` nell'ordine delle chiamate. Ogni frame si serializza una volta sola, qualunque sia il numero di client.
 - **Un client lento non rallenta gli altri.** Ogni client ha la sua coda limitata; quando si riempie, quel client viene staccato. Il browser si riconnette dopo 2 s e ricostruisce lo stato da `GET /api/state`. Non c'è replay: lo stato completo basta.
 - **Spegnimento pulito:** a Ctrl+C il lifespan di FastAPI chiude i flussi aperti, perché altrimenti uvicorn aspetterebbe connessioni che non finiscono mai.
@@ -538,7 +538,7 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 |---|---|---|
 | [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 1013 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (261 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (266 verifiche) |
 
 ### Skill e plugin
 
@@ -657,7 +657,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_DISCOVER=0` | non chiede ai provider e ai server locali quali modelli hanno (lo usano i test) |
 | `AGENT_WORLD_EXIT_WITH_PARENT=1` | il server si chiude quando si chiude il suo stdin, cioè quando muore chi l'ha avviato; senza uno stdin collegato a una pipe non parte. Lo imposta `spawnBackend()` per i server dei test |
 
-I limiti della spec 09 stanno in `limits` di `config/default.json`; il tempo di risposta e `autoAnswer` si cambiano anche dalle Impostazioni:
+I limiti delle spec 09 e 11 stanno in `limits` di `config/default.json`; il tempo di risposta, `autoAnswer` e il budget si cambiano anche dalle Impostazioni:
 
 | Limite | Predefinito | Effetto |
 |---|---|---|
@@ -665,6 +665,10 @@ I limiti della spec 09 stanno in `limits` di `config/default.json`; il tempo di 
 | `autoAnswer` | `true` | `false`: la decide il worker da solo, come prima |
 | `modelRetries` / `modelWaitMaxMs` | 4 / 60000 | tentativi e attesa massima quando nessun modello risponde, prima della richiesta "nessun modello disponibile" |
 | `maxUploadMB` / `maxAttachments` | 25 / 60 | dimensione di un file del proprietario e numero di file per run |
+| `maxCallsPerRun` | 250 | chiamate ai provider veri per run; al limite la run va in pausa e chiede se proseguire (0 = nessun limite) |
+| `maxCostUSD` | 5 | costo stimato per run, in dollari, con i prezzi di `router.pricing`; stesso comportamento (0 = nessun limite) |
+
+**Il budget della run** (spec 11, T01). Una run conta le chiamate a cui ha risposto un provider vero e ne stima il costo: `router.pricing.models` dà i dollari per milione di token `[input, output]` di un modello (la chiave esatta, poi il primo pattern glob che corrisponde), altrimenti vale il prezzo del suo livello di costo (`router.pricing.tiers`: locale e gratuito a 0). Le risposte del simulatore, in demo o d'emergenza, non costano e non contano. Quando la run raggiunge `maxCallsPerRun` o `maxCostUSD` non fallisce: va in pausa, manda l'evento `waiting` con una richiesta di tipo `budget` e ogni chiamata del lavoro aspetta. "Prosegui" (o il pulsante Riprendi) aggiunge un altro blocco uguale, contato da dove la run è arrivata; "Ferma la run" la ferma, e la ripresa dal punto di blocco porta con sé un blocco nuovo. Ogni chiamata in volo tiene il suo posto, quindi i worker in parallelo non superano insieme il limite delle chiamate; il costo di una chiamata si conosce solo quando risponde. Le chiamate chieste dal proprietario ("💡 Trova tu una soluzione", una modifica, la risposta di un task) si contano ma non si fermano mai. I prezzi di serie sono listini indicativi da verificare; i livelli gratuiti di Groq, Cerebras, NVIDIA, Cloudflare e Gemini Flash valgono 0: se li paghi, aggiungili a `router.pricing.models`. Il pannello della missione mostra le chiamate pagate e il costo stimato rispetto al budget.
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 
@@ -713,15 +717,15 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 261 verifiche sul front-end vero (~6 min)
+npm run test:browser   # runner headless: 266 verifiche sul front-end vero (~5-6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (1013 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`).
+- **`pytest` (1046 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
 - **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.

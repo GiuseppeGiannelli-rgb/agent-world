@@ -21,6 +21,7 @@
 // killed, interrupted and closed, and the sweep of what they leave). Spec 06: language
 // (L1-L7: the IT/EN switch, its persistence, the run payload, the voice). Spec 10: hiring
 // (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
+// Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
@@ -51,7 +52,7 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
@@ -95,7 +96,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -699,6 +700,76 @@ async function hiring(cdp) {
   await shot(cdp, 'hiring-router');
 }
 
+// ---------- spec 11 T01: the budget of a run ----------
+
+// A demo never reaches its budget (D1: the simulator costs nothing). The live run that
+// did comes in through the page's own event stream: an EventSource wrapper installed
+// before the page loads keeps the stream main.js opens, and the run frame of a run paused
+// at its budget is handed to its onmessage, as the server would send it. The answer the
+// owner gives goes to the page's own fetch, which records it.
+const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+
+async function budgetPhase(cdp) {
+  const en = await uiWords();
+  await cdp.send('Page.enable'); // the scripts for a new document need the Page domain on
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => { const ES = window.EventSource; window.__es = []; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es.push(this); } }; })()`,
+  });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  const runs = await api('/api/runs');
+  const base = runs.find((r) => TERMINAL_RUN.includes(r.status)) && (await api(`/api/runs/${runs.find((r) => TERMINAL_RUN.includes(r.status)).id}`));
+  const fx = JSON.parse(JSON.stringify(base ?? { tasks: [], workstreams: [], messages: [], attachments: [] }));
+  Object.assign(fx, { id: 'spec11-budget', goal: 'A paid run at its budget', status: 'running', paused: true, mode: 'live', finishedAt: null, error: null, createdAt: new Date().toISOString() });
+  fx.usage = { ...(fx.usage ?? {}), calls: 250, providerCalls: 250, costUSD: 1.2345 };
+  fx.budget = { step: { calls: 250, costUSD: 5 }, limit: { calls: 250, costUSD: 5 }, approvals: 0 };
+  const item = { id: 'b11', kind: 'budget', status: 'open', from: 'ada', reason: 'calls', answer: null, createdAt: Date.now(), spent: { calls: 250, costUSD: 1.2345 }, limit: fx.budget.limit, step: fx.budget.step, text: 'Budget reached: 250 model calls (limit 250). Spent so far: 250 calls, $1.23 estimated. Approve to go on with one more block (250 calls · $5.00); reject to stop the run (you can resume it later from where it stopped).' };
+  fx.waiting = [item];
+  const feed = (run) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'run', payload: run }))} }); return true; })()`);
+  const fed = await until(() => feed(fx), 5000, 100); // main.js opens the stream at the end of its boot
+
+  // 1. the request: what it is, the numbers, the two answers; the panel shows the spend
+  const panel = await until(() => cdp.eval(`(() => {
+    const w = document.querySelector('#waiting'); const it = w?.querySelector('.wait-item'); if (!it || w.classList.contains('hidden')) return null;
+    const b = [...it.querySelectorAll('[data-answer="b11"]')];
+    return { who: it.querySelector('.who')?.textContent, q: it.querySelector('.q')?.textContent, placeholder: it.querySelector('textarea')?.placeholder,
+      buttons: b.map((x) => ({ text: x.textContent, decision: x.dataset.decision })),
+      calls: document.querySelector('#current [data-budget="calls"]')?.textContent, cost: document.querySelector('#current [data-budget="cost"]')?.textContent, paused: document.querySelector('#current .status')?.textContent }; })()`), 10000, 100);
+  report('T01', 'a run at its budget asks the owner: the request, its numbers and the two answers', fed && Boolean(panel) && panel.who.includes(en['wait.budget']) && panel.q === item.text && panel.placeholder === en['wait.notes'] && JSON.stringify(panel.buttons) === JSON.stringify([{ text: en['wait.budgetGo'], decision: 'approve' }, { text: en['wait.budgetStop'], decision: 'reject' }]), { fed, ...(panel ?? {}) });
+  report('T01', 'the mission panel shows the paid calls and the estimated cost against the budget', Boolean(panel) && panel.calls === fill(en['current.paidCalls'], { n: 250, limit: 250 }) && panel.cost === fill(en['current.cost'], { usd: '$1.23', limit: '$5.00' }) && panel.paused.includes(en['current.paused'].trim()), panel ?? {});
+  await shot(cdp, 'budget-waiting');
+
+  // 2. "Go on": the page posts the owner's go-ahead and notes for this request
+  await cdp.eval(`(() => { window.__posted = []; const real = window.fetch.bind(window);
+    window.fetch = (url, opts) => String(url).endsWith('/api/runs/spec11-budget/answer') ? (window.__posted.push(JSON.parse(opts.body)), Promise.resolve(new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }))) : real(url, opts);
+    document.querySelector('textarea[data-wait="b11"]').value = 'Ok, then wrap it up';
+    document.querySelector('[data-answer="b11"][data-decision="approve"]').click(); return true; })()`);
+  const posted = await until(() => cdp.eval('window.__posted?.length ? window.__posted : null'), 5000, 100);
+  const toastText = await until(() => cdp.eval(`[...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' | ') || null`), 5000, 100);
+  report('T01', 'going on posts the go-ahead with the notes for the team, and says so', Boolean(posted) && posted.length === 1 && posted[0].itemId === 'b11' && posted[0].decision === 'approve' && posted[0].text === 'Ok, then wrap it up' && toastText === en['answer.budgetGo'], { posted, toast: toastText });
+
+  // 3. the next run frame (answered, running again): the request is gone, the spend stays
+  item.status = 'answered';
+  item.answer = { text: 'Ok, then wrap it up', decision: 'approve', at: Date.now() };
+  fx.paused = false;
+  fx.budget = { ...fx.budget, limit: { calls: 500, costUSD: 6.23 }, approvals: 1 };
+  await feed(fx);
+  const after = await until(() => cdp.eval(`(() => { const w = document.querySelector('#waiting'); return w.classList.contains('hidden') && { calls: document.querySelector('#current [data-budget="calls"]')?.textContent, cost: document.querySelector('#current [data-budget="cost"]')?.textContent }; })()`), 5000, 100);
+  report('T01', 'after the go-ahead the request closes and the panel counts against the new block', Boolean(after) && after.calls === fill(en['current.paidCalls'], { n: 250, limit: 500 }) && after.cost === fill(en['current.cost'], { usd: '$1.23', limit: '$6.23' }), after || {});
+
+  // 4. the Settings: the two limits of the config, editable
+  const cfg = (await api('/api/config')).limits ?? (await api('/api/state')).config.limits;
+  await cdp.eval(`document.querySelector('#btn-settings').click(); true`);
+  const inputs = await until(() => cdp.eval(`(() => { const c = document.querySelector('#settings [data-limit="maxCallsPerRun"]'), u = document.querySelector('#settings [data-limit="maxCostUSD"]'); return c && u && { calls: Number(c.value), cost: Number(u.value), hint: document.querySelector('#settings')?.textContent.includes(${JSON.stringify(en['settings.budgetHint'])}) }; })()`), 5000, 100);
+  report('T01', 'the Settings show the two limits of the budget', Boolean(inputs) && inputs.calls === cfg.maxCallsPerRun && inputs.cost === cfg.maxCostUSD && inputs.hint, { ...(inputs ?? {}), config: { calls: cfg.maxCallsPerRun, cost: cfg.maxCostUSD } });
+  await shot(cdp, 'budget-settings');
+  await cdp.eval(`document.querySelector('#settings [data-act="close-modal"]')?.click(); true`);
+}
+
 // ---------- spec 09: the owner's files, the box of a task, resume, changes ----------
 
 // files built in the page, as a user's would be: a 1x1 PNG, a text file
@@ -1089,6 +1160,7 @@ try {
   if (PHASES.includes('language')) await language(cdp);
   if (PHASES.includes('run')) await run(cdp);
   if (PHASES.includes('hiring')) await hiring(cdp);
+  if (PHASES.includes('budget')) await budgetPhase(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });

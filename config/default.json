@@ -16,7 +16,9 @@
     "modelWaitMaxMs": 60000,
     "maxUploadMB": 25,
     "maxAttachments": 60,
-    "commandTimeoutMs": 60000
+    "commandTimeoutMs": 60000,
+    "maxCallsPerRun": 250,
+    "maxCostUSD": 5
   },
 
   "pacing": {
@@ -44,6 +46,24 @@
     "arbiter": { "provider": "typesafe", "model": "jev-latest", "minConfidence": 0.55 },
     "roles": { "lead": "smart", "sub": "fast" },
     "hiring": { "enabled": true, "chain": 6 },
+    "pricing": {
+      "tiers": { "local": [0, 0], "free": [0, 0], "low": [1, 5], "high": [5, 25] },
+      "models": {
+        "anthropic/claude-opus-*": [5, 25],
+        "anthropic/claude-sonnet-*": [3, 15],
+        "anthropic/claude-haiku-*": [1, 5],
+        "openai/gpt-5-nano*": [0.05, 0.4],
+        "openai/gpt-5-mini*": [0.25, 2],
+        "openai/gpt-5*": [1.25, 10],
+        "gemini/gemini-*-pro*": [2, 12],
+        "xai/grok-*": [3, 15],
+        "deepseek/*": [0.6, 2.2],
+        "mistral/mistral-large*": [2, 6],
+        "mistral/codestral*": [0.3, 0.9],
+        "perplexity/sonar-pro": [3, 15],
+        "perplexity/sonar": [1, 1]
+      }
+    },
     "aliases": {
       "gemini/gemini-2.5-pro": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-2.5-flash"],
       "gemini/gemini-2.5-pro-preview": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-2.5-flash"],

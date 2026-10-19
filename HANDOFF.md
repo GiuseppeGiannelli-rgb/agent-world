@@ -1,10 +1,11 @@
 # HANDOFF — Agent World
 
-*Aggiornato il 2026-10-18, notte. In breve:*
+*Aggiornato il 2026-10-19. In breve:*
+- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run) sul branch `claude/core-hardening-intent-engine-cdd150`, non unito né spinto; decisioni D1–D5 da confermare. **Prossimo: T02** (sezione 3).*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
-- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 18/10/2026, notte".*
+- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 19/10/2026".*
 
 ## 1. Stato
 
@@ -26,6 +27,7 @@
   - 08 router, RAG e media;
   - 09 file del proprietario, dialogo, ripresa e failover;
   - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt.
+- **Spec aperta:** 11, Core Hardening e Intent Engine a doppia modalità (`docs/specs/11-core-hardening-intent-engine.md`, ticket T01–T10). Si fa **un ticket per sessione**, e si passa al successivo solo con `npm test` verde al 100% (regole di sessione dell'utente, §1 della spec). T01 è fatto sul branch `claude/core-hardening-intent-engine-cdd150` (worktree omonimo in `.claude/worktrees/`), non ancora unito né spinto.
 - **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 3 test saltati di pytest, 2 sono la parità Rust e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
@@ -34,7 +36,7 @@
 - **Questo file è tracciato su `main`** (dal 16/10, decisione dell'utente). `scripts/secret-scan.js` ne scansiona il contenuto come per ogni altro file: chiavi, percorsi assoluti, parole personali.
 - **Push su Windows:** `git push` apre la finestra "Select an account" di Git Credential Manager. Va scelto l'account proprietario del repo (quello nell'indirizzo di `origin`); con l'altro GitHub risponde 403. Il push si lancia in background e si avvisa l'utente.
 
-## 2. Storia in breve (13–18 ottobre)
+## 2. Storia in breve (13–19 ottobre)
 
 La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 
@@ -50,6 +52,7 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **16/10:** chiusi N14 (la demo parla la lingua della run), N15 (i test non toccano i file dell'utente) e N16 (test uguali su ogni sistema). Spec 08 (router, cascata, profiler, RAG su misura del modello, media sempre reali in LIVE). Da qui questo file è tracciato.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
+- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 da confermare).
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -58,6 +61,7 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
+0. **Spec 11, a contesto pulito:** se l'utente approva T01 e le sue decisioni D1–D5 (spec 11 §3.3), il prossimo step è **T02, shell a fiducia zero e autenticazione in LAN** (spec 11 §2): l'`env` ripulito per `run_command` in `tools.py`, `AGENT_WORLD_API_KEY` su `/api/*` e `/api/events` quando l'host non è locale in `security.py`, e i 403/400 nella lingua attiva (N13). Si riparte dal branch `claude/core-hardening-intent-engine-cdd150` (o da `main`, se nel frattempo è stato unito).
 1. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
 2. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
@@ -139,7 +143,8 @@ Lezioni del porting ancora valide:
   - `gateway` (`/v1`, formato OpenAI);
   - `static` (`public/`, `/vendor/three*` da `node_modules`, `/preview/<run>/` in sandbox);
 - motore:
-  - `run.py` (missione, scheduler a tick, review, report, ripresa);
+  - `run.py` (missione, scheduler a tick, review, report, ripresa; spec 11: il cancello del budget in `chat()`);
+  - `budget.py` (spec 11 T01: limiti della run, prezzi di `router.pricing`, costo stimato, il circuit breaker);
   - `tasker.py` (il loop di un worker);
   - `team.py`, `bus.py`, `tools.py` + `paths.py` (una regola dei percorsi per ogni sistema);
   - `run_memory.py`, `rag_budget.py` (misura del contesto e, spec 10, forma del prompt), `json_repair.py`;
@@ -187,9 +192,9 @@ Lezioni del porting ancora valide:
 
 ```sh
 npm start                                    # il server (cd backend && uv run python -m backend)
-npm test                                     # mondo 3D, dizionari, launcher, avvio, pytest, smoke, flussi, secret-scan, temp (~7 min)
+npm test                                     # mondo 3D, dizionari, launcher, avvio, pytest, smoke, flussi, secret-scan, temp (~6-8 min)
 npm run test:backend                         # avvio del backend e pytest
-npm run test:browser                         # runner headless completo, missione inclusa (261 verifiche, ~6 min)
+npm run test:browser                         # runner headless completo, missione inclusa (266 verifiche, ~5-6 min)
 node scripts/browser-test.js --only views,input
 node scripts/browser-test.js --skip-run      # senza la missione
 node scripts/browser-test.js --shots DIR --json FILE --port N
@@ -201,7 +206,7 @@ npm run screenshots                          # gli screenshot del README
 
 **Runner del browser** (`scripts/browser-test.js`):
 - avvia un server demo proprio sulla porta 4397 e Edge o Chrome headless via DevTools. Il browser viene da `scripts/browser/headless.js`, le cartelle (home `agent-world-browser-<pid>-*`, profilo `agent-world-profile-<pid>-*`) da `scripts/lib/temp.js`;
-- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `hiring` (spec 10: le assunzioni live e il subentro vengono dalla risposta di rete di una run salvata, perché la demo non assume nessuno), `recovery`;
+- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `hiring` (spec 10: le assunzioni live e il subentro vengono dalla risposta di rete di una run salvata, perché la demo non assume nessuno), `budget` (spec 11 T01: una demo non arriva mai al budget, quindi la run live ferma al budget entra dal flusso di eventi della pagina, con un `EventSource` avvolto prima del caricamento; serve `Page.enable`), `recovery`;
 - script lato pagina in `scripts/browser/`, con `lib.js` per primo; i rossi attesi in `known-red.json` (oggi vuoto);
 - a fine suite fallisce se restano processi del browser con il suo profilo, o le sue cartelle;
 - **stampa quanti frame al secondo disegna il browser.** Le attese della camera contano i frame (`__t.still()`: nessun movimento in corso e l'immagine ferma su 8 frame). Un controllo di `views` è verde solo a camera ferma;
@@ -216,6 +221,7 @@ npm run screenshots                          # gli screenshot del README
 - **Il pannello browser dell'app** è largo circa 476 px e spesso nascosto, quindi niente rAF né `ResizeObserver`. Le misure 3D si fanno con il runner o con gli helper di `scripts/browser/lib.js`.
 - **I worktree** (`.claude/worktrees/…`) hanno una git dir propria, `.git/worktrees/<nome>`: ciò che sta in `.git/info/` (come `personal-words`) si legge da `git rev-parse --git-common-dir`. Fino al 18/10 `secret-scan.js` non lo faceva e bloccava ogni commit da un worktree che nominava gli agenti.
 - **Heredoc della shell:** con testi lunghi pieni di apici o di lettere accentate a volte si rompe; meglio un file e un piccolo script Python, oppure l'editor.
+- **`timeout` di Git Bash non chiude pytest su Windows** (19/10): uccide `uv`, ma il python figlio resta e la pipe aspetta per sempre. Per le mutazioni serve uno script Python con `subprocess` e `taskkill /T /F` alla scadenza, e test con `asyncio.wait_for`, così una mutazione è rossa in secondi e non per timeout.
 
 **Debug:**
 - `window.agentWorld` espone `camera`, `controls`, `view`, `insets`, `autoFrame`, `resetView()`, `moveCamera()`, `screenScale()`, `centreLens()`, `footprint()`, `regrab()`, `fx`, `cubes`, `actors`, `labels`, `roomLabels` e `layout`;
@@ -238,40 +244,35 @@ npm run screenshots                          # gli screenshot del README
 - **claude-mem** può non avere le sessioni più recenti: fa fede questo file.
 
 
-## Stato al 18/10/2026, notte
+## Stato al 19/10/2026
 
-- `main` = il merge `--no-ff` in locale (identità `agent-world-dev`) di `claude/spec10-parametric-hiring`, sopra `937673a`. I commit del branch:
-  - `71c46c6` fix(secret-scan): la scansione della history lascia passare i merge che GitHub ha fatto per le PR;
-  - `354f9a7` spec 10, parte 1: matrice di competenza, assunzione per sotto-task, subentro, bus a incrocio (R1–R3);
-  - `be1c96e` spec 10, parte 2: il prompt nella forma del modello assunto (R4);
-  - `bee15ca` spec 10, parte 2: il badge nella scheda Task, il catalogo nella scheda Router, la fase `hiring` del runner (R5);
-  - il commit dei documenti: README, spec 10 e questo file.
-  
-  La parte 2 è nata nel worktree `claude/spec10-parametric-hiring-p2-…` ed è arrivata su `claude/spec10-parametric-hiring` con un fast-forward. Poi `git push origin main`.
-- Il debito tecnico del branch precedente (N13, N17, le attese del runner in frame) è descritto in `docs/specs/06-language.md` §5 e `docs/specs/09-multimodal-interactive-recovery.md`, "Limiti noti".
+- **Branch `claude/core-hardening-intent-engine-cdd150`** (worktree in `.claude/worktrees/core-hardening-intent-engine-cdd150`), partito da `main` = `33c6135`: un commit per T01, con codice, test e documenti. Non unito, non spinto: si unisce in locale come la spec 10 (sezione 3), quando l'utente approva.
+- `main` resta il merge della spec 10 (`33c6135`), già su `origin`.
 
-### Completate (spec 10, parte 2)
-- **R4, la forma del prompt** (dettagli: spec 10 §6):
-  - `rag_budget.shape()`: piccolo (locale, gratuito, 14B e meno), reasoning, coder, generale, in quest'ordine (D6);
-  - piccolo: passi atomici numerati, un esempio dalla skill, il contratto in fondo e dopo ogni risultato, il validatore che ferma un'azione a cui manca un argomento;
-  - reasoning: checklist del QA, vincoli, lezioni del Brain, tutto prima della descrizione;
-  - coder: albero esatto del progetto, interfacce dei file collegati, snippet delle skill;
-  - generale e demo: il prompt di prima.
-- **R5, l'interfaccia:** il badge 🤝 (modello, tier, specialità) e 🔀 nella scheda Task; le assunzioni e il catalogo profilato nella scheda Router; 52 chiavi nelle cinque lingue.
-- **Due difetti trovati dai test, corretti** (D10, D11):
-  - alla revisione che assume un altro modello, il primo passo del modello nuovo partiva con la forma vecchia: ora il `MODEL SWITCH` arriva prima del passo. Una mutazione (senza il cambio anticipato) fa rosso il test live;
-  - un titolo come "Bad examples" veniva preso come l'esempio da imitare.
+### Completato: spec 11, T01 — budget e circuit breaker (dettagli: spec 11 §3)
+- **File toccati:**
+  - `backend/backend/budget.py` (nuovo): limiti congelati nella run, prezzi di `router.pricing`, costo stimato, `over()` / `extend()` / `ensure()`;
+  - `backend/backend/run.py`: il cancello `budget_gate()` in `chat()` e nella vista delle foto, un posto per ogni chiamata in volo (`_in_flight`), `trip_budget()`, `answer_budget()`, il pulsante Riprendi come "Prosegui", la ripresa dal punto di blocco con un blocco nuovo, le chiamate del proprietario contate ma mai fermate (`owner=True`);
+  - `backend/backend/i18n.py`: 10 testi × 5 lingue; `config/default.json`: `limits.maxCallsPerRun` 250, `limits.maxCostUSD` 5, `router.pricing`;
+  - `public/js/main.js`, `public/js/i18n.js` (13 chiavi × 5 lingue): la richiesta di budget, la spesa nel pannello della missione, i limiti nelle Impostazioni, l'avviso dopo la risposta;
+  - `scripts/browser-test.js`: la fase `budget`;
+  - `backend/tests/test_budget.py` (nuovo, 33 test), `backend/tests/test_run.py` (la forma di `run.data` e `usage`);
+  - documenti: README (Configurazione, SSE, Test), spec 11, questo file.
+- **Decisioni prese in sessione, da confermare (spec 11 §3.3):** D1 il simulatore non conta (misurato: la missione demo più grande fa 228 chiamate su 250); D2 costo stimato da `router.pricing`, budget di serie 5 $, prezzi di listino indicativi da verificare; D3 un blocco alla volta, "Ferma la run" la ferma e si può riprendere; D4 limite delle chiamate esatto, quello del costo superabile del costo delle chiamate in volo; D5 le chiamate chieste dal proprietario si contano ma non si fermano.
+- **Un difetto trovato da una mutazione, corretto:** con la richiesta di budget aperta e la run tolta dalla pausa, `budget_gate()` girava senza mai cedere il loop; ora rimette la pausa.
 
 ### Verifiche (Windows 11)
-- `npm test` verde in 7 min 45 s: mondo 3D, dizionari, launcher, avvio, **pytest 1013 passati e 3 saltati** (la parità Rust ×2, ffmpeg assente), smoke, flussi, secret-scan, cartelle temporanee. Prima della spec 10 erano 934 passati.
-- **`npm run test:browser`: 261 verifiche su 261, ALL OK** in 6 min 2 s, a 55,7 fps, con `known-red.json` vuoto. I 6 controlli nuovi sono la fase `hiring` (R5).
-- **`npm run scan:secrets`: pulito.**
-- QA visivo a 1920×1080 dagli screenshot del runner (`--shots`): scheda Task in demo e con un subentro, scheda Router con il catalogo.
+- **`npm test` verde** in 6 min 20 s: mondo 3D, dizionari, launcher, avvio, **pytest 1046 passati e 3 saltati** (la parità Rust ×2 senza il modulo compilato, ffmpeg assente; prima della spec 11 erano 1013), smoke, flussi, secret-scan, cartelle temporanee. T01 non tocca `crates/aw_core`: nessuna funzione Rust nuova, la parità resta quella di prima.
+- **`npm run test:browser`: 266 verifiche su 266, ALL OK** in 4 min 58 s, a 108 fps, con `known-red.json` vuoto. Le 5 nuove sono la fase `budget` (criterio `T01`).
+- **Mutazioni:** 8 sul backend e 1 sulla UI, tutte prese (spec 11 §3.4).
+- QA visivo a 1920×1080 dagli screenshot della fase `budget` (`--shots`): la richiesta nel pannello di sinistra con "Go on (one more block)" e "Stop the run", la run "running · paused" con "250/250 paid calls" e "≈ $1.23 of $5.00"; le Impostazioni con "Run budget".
 
 ### Ticket aperti
+- Spec 11: T02–T10.
 - N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
+- **T01 con chiavi vere:** una run LIVE con `maxCallsPerRun` basso (per esempio 10, dalle Impostazioni) per vedere la pausa, "Prosegui" e "Ferma la run" con un provider vero, e confrontare il costo stimato con la fattura del provider.
 - **Spec 10 con chiavi vere:** una run LIVE con modelli di famiglie diverse (un locale o `:free`, un reasoning, un coder) per vedere le quattro forme del prompt e un subentro vero per credito finito. Finora solo server finti.
 - La voce in una run LIVE senza credito OpenAI ed ElevenLabs: deve parlare edge-tts, senza `uv add`. Senza rete, o con `media.providers.edgetts.enabled: false`, la voce di sistema (SAPI).
 - La scoperta dei modelli con Ollama o LM Studio attivi.
@@ -280,6 +281,7 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
-2. Le verifiche qui sopra, a partire dalla run LIVE della spec 10.
-3. Il prossimo ciclo SDD, dal backlog.
+1. **L'utente rivede T01** e conferma (o cambia) D1–D5.
+2. **T02, a contesto pulito** (spec 11 §2): `tools.py` passa a `run_command` un `env` senza `*_API_KEY`, `GITHUB_TOKEN`, `AGENT_WORLD_API_KEY`; `security.py` chiede `AGENT_WORLD_API_KEY` (Bearer o cookie di sessione) su `/api/*` e `/api/events` quando l'host non è `127.0.0.1` / `localhost` / `::1`; i 403/400 nella lingua attiva (N13). Prima: leggere `security.py`, `tools.py`, `routes/events.py` e `tests/test_security.py`.
+3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
+4. Le verifiche qui sopra.

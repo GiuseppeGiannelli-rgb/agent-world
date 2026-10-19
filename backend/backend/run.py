@@ -24,7 +24,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend import attachments, crossbus
+from backend import attachments, budget, crossbus
 from backend.i18n import MESSAGES
 from backend.i18n import check as check_language
 from backend.i18n import team_label, tr
@@ -110,7 +110,9 @@ class Run:
             "attachments": [],  # spec 09: the owner's own files, in attachments/ of the workspace
             "report": "",
             "error": None,
-            "usage": {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0},
+            # spec 11 T01: providerCalls and costUSD (an estimate) feed the budget's circuit breaker
+            "usage": {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0, "providerCalls": 0, "costUSD": 0.0},
+            "budget": budget.initial(ctx.config.get()["limits"]),
             "workspace": str(Path(ctx.workspace_root) / slug),
         }
         self.ws = Workspace(self.data["workspace"])
@@ -148,6 +150,9 @@ class Run:
         self._model_items: dict[str, dict] = {}  # spec 09: the open "model" request of each blocked call
         self._model_events: dict[str, asyncio.Event] = {}
         self._switches: set[tuple] = set()  # (agent, from, to) already reported
+        self._budget_item: dict | None = None  # spec 11 T01: the open "budget" request, while the run waits on it
+        self._budget_ceo: dict | None = None  # what the CEO was doing when the budget tripped
+        self._in_flight = 0  # the run's model calls sent and not yet counted, each holding a slot of the budget
         self._last_run_emit = 0.0
         self._run_emit_timer: asyncio.TimerHandle | None = None
         self._finish_schedule: asyncio.Event | None = None
@@ -262,6 +267,11 @@ class Run:
     def resume(self) -> None:
         if not self.data["paused"]:
             return
+        item = self._budget_item
+        if item is not None and item["status"] == "open":
+            # spec 11 T01: "Resume" while the budget asks is the owner's go-ahead
+            self.answer(item["id"], {"text": "", "decision": "approve"})
+            return
         self.data["paused"] = False
         self._resume.set()
         self.message(self.ceo["id"], "*", "system", self.t("resumed"))
@@ -338,6 +348,9 @@ class Run:
                 event.set()
             self.emit_run(True)
             return True
+        if item and item.get("kind") == "budget" and item["status"] == "open":
+            self.answer_budget(item, str(text), decision)
+            return True
         done = self.answer_waiters.get(id)
         if not item or not done or item["status"] != "open":
             return False
@@ -350,36 +363,42 @@ class Run:
 
     # ---------- model calls ----------
 
-    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None, chain=None) -> dict:
+    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None, chain=None, owner=False) -> dict:
         # spec 09: zero-stop. When every model of the cascade fails, the call
         # waits for the soonest one to come back instead of failing the task
         # (or the run, for the CEO); the conversation is never lost.
+        # spec 11 T01: the run's own work waits at the budget and holds its slot
+        # while it runs; a call the owner asked for (owner=True: "find a
+        # solution", a change) is counted, never held
+        held = False if owner else await self.budget_gate(agent)
         tries = 0
-        while True:
-            try:
-                # spec 10: a subtask's hired chain goes first (only when there is one: demo has none)
-                extra = {"chain": chain} if chain else {}
-                res = await self.ctx.router.chat(
-                    role=role,
-                    use=use,
-                    messages=messages,
-                    json=json,
-                    max_tokens=max_tokens,
-                    meta={"runId": self.data["id"], "taskId": task["id"] if task else None, "agentId": agent["id"] if agent else None},
-                    **extra,
-                )
-                break
-            except ProviderError as err:
-                tries += 1
-                await self.wait_for_model(err, tries, role=role, use=use, agent=agent, task=task)
+        try:
+            while True:
+                try:
+                    # spec 10: a subtask's hired chain goes first (only when there is one: demo has none)
+                    extra = {"chain": chain} if chain else {}
+                    res = await self.ctx.router.chat(
+                        role=role,
+                        use=use,
+                        messages=messages,
+                        json=json,
+                        max_tokens=max_tokens,
+                        meta={"runId": self.data["id"], "taskId": task["id"] if task else None, "agentId": agent["id"] if agent else None},
+                        **extra,
+                    )
+                    break
+                except ProviderError as err:
+                    tries += 1
+                    await self.wait_for_model(err, tries, role=role, use=use, agent=agent, task=task)
+        finally:
+            if held:
+                self._in_flight -= 1  # no await until spend() below: nobody sees the slot free and the call uncounted
         if tries:
             self.model_back(res, self._model_key(agent, task, role), agent)
         if res.get("failed"):
             self.report_switch(res, agent, task)
         usage = self.data["usage"]
-        usage["calls"] += 1
-        usage["tokensIn"] += (res.get("usage") or {}).get("in", 0)
-        usage["tokensOut"] += (res.get("usage") or {}).get("out", 0)
+        budget.spend(usage, res, self.cfg)
         if res.get("emergency"):
             # spec 08: no provider answered, the simulator did: say it once, count every one
             usage["emergencies"] = usage.get("emergencies", 0) + 1
@@ -388,6 +407,108 @@ class Run:
         if agent and self.team.get(agent["id"]):
             self.team.get(agent["id"])["model"] = res["target"]
         return res
+
+    # ---------- spec 11 T01: the budget and its circuit breaker ----------
+
+    def money(self, usd: float) -> str:
+        """An estimated amount in the run's language ("$1.25", "1,25 $")."""
+        s = f"{usd:.2f}"
+        return self.t("budget_usd", usd=s if (self.lang or "en") == "en" else s.replace(".", ","))
+
+    def budget_what(self, reason: str) -> str:
+        """Which limit the run reached, with the count and the limit."""
+        u, limit = self.usage_now(), self.data["budget"]["limit"]
+        if reason == "calls":
+            return self.t("budget_calls", n=u.get("providerCalls", 0), limit=limit["calls"])
+        return self.t("budget_cost", cost=self.money(u.get("costUSD", 0.0)), limit=self.money(limit["costUSD"]))
+
+    def budget_text(self, limits: dict) -> str:
+        """A block or a limit as the owner reads it: "250 calls · $5.00"."""
+        parts = []
+        if limits.get("calls"):
+            parts.append(self.t("budget_block_calls", n=limits["calls"]))
+        if limits.get("costUSD"):
+            parts.append(self.money(limits["costUSD"]))
+        return " · ".join(parts)
+
+    def usage_now(self) -> dict:
+        """The usage with the calls already sent: each one holds its slot, so
+        parallel workers never pass limits.maxCallsPerRun together (D4)."""
+        u = self.data["usage"]
+        return {**u, "providerCalls": u.get("providerCalls", 0) + self._in_flight}
+
+    async def budget_gate(self, agent: dict | None = None) -> bool:
+        """Before a model call of the run's work. Under the budget the call takes
+        its slot and goes (True: the caller frees it when the answer is counted).
+        At the limit the run pauses (once: one "budget" request) and every call
+        of the run waits here for the owner. The cost of the calls already sent
+        when the cost limit trips is not known before they answer (D4)."""
+        if self.detached or self.data["status"] in TERMINAL_RUN:
+            return False
+        while (reason := budget.over(self.usage_now(), self.data.get("budget"))) is not None:
+            if self._abort.is_set():
+                raise RunStopped("Stopped by the user")
+            item = self._budget_item
+            if item is None or item["status"] != "open":
+                self.trip_budget(reason)
+            elif not self.data["paused"]:
+                # unpaused while the request is still open: hold again, or this
+                # loop would spin without ever yielding to the event loop
+                self.data["paused"] = True
+                self._resume.clear()
+            await self.gate(agent)
+        self._in_flight += 1
+        return True
+
+    def trip_budget(self, reason: str) -> dict:
+        """The run reached its budget: it does not fail, it pauses and asks the
+        owner (the `waiting` event of a "budget" request)."""
+        u, b = self.usage_now(), self.data["budget"]
+        what = self.budget_what(reason)
+        self.data["paused"] = True
+        self._resume.clear()
+        ceo = self.ceo
+        self._budget_ceo = {"state": ceo.get("state"), "text": ceo.get("text")}
+        self.message(ceo["id"], "*", "system", self.t("budget_paused", what=what))
+        item = self.add_waiting(
+            {
+                "kind": "budget",
+                "from": ceo["id"],
+                "reason": reason,
+                "spent": {"calls": u.get("providerCalls", 0), "costUSD": u.get("costUSD", 0.0)},
+                "limit": dict(b["limit"]),
+                "step": dict(b["step"]),
+                "text": self.t("budget_question", what=what, calls=u.get("providerCalls", 0), cost=self.money(u.get("costUSD", 0.0)), block=self.budget_text(b["step"])),
+            }
+        )
+        self._budget_item = item
+        self.team.set(ceo["id"], {"state": "asking", "text": self.t("budget_asking")})
+        return item
+
+    def answer_budget(self, item: dict, text: str, decision: str | None) -> None:
+        """The owner's answer to the budget. "reject" stops the run (it can be
+        resumed from where it stopped); anything else goes on with one more
+        block of each limit, and the owner's words reach the whole team."""
+        item["answer"] = {"text": text[:4000], "decision": decision, "at": _now_ms()}
+        item["status"] = "answered"
+        self._budget_item = None
+        label = f"{self.t('answer_approved') if decision == 'approve' else self.t('answer_rejected')}{': ' + text if text else ''}" if decision else text
+        if label:
+            self.message("user", item["from"], "reply", label)
+        self.ctx.bus.emit("waiting", {"runId": self.data["id"], "item": item})
+        if decision == "reject":
+            self.data["error"] = self.t("budget_stopped", what=self.budget_what(item.get("reason") or "calls"))
+            self.emit_run(True)
+            self.stop()
+            return
+        limit = budget.extend(self.usage_now(), self.data["budget"])
+        if text:
+            self.steer("all", text)
+        self.message(self.ceo["id"], "*", "system", self.t("budget_extended", limits=self.budget_text(limit)))
+        if self._budget_ceo is not None:
+            self.team.set(self.ceo["id"], self._budget_ceo)
+            self._budget_ceo = None
+        self.resume()
 
     # ---------- spec 09: zero-stop failover ----------
 
@@ -895,6 +1016,11 @@ class Run:
         await self.restore_memory()
         todo = self.reopen_for_resume()
         self.message(self.ceo["id"], "*", "system", self.t("resumed_from_block", tasks=todo["tasks"], workstreams=todo["workstreams"], done=len([t for t in d["tasks"] if t["status"] == "done"])))
+        # spec 11 T01: a run stored before the budget gets one; resuming a run that
+        # stopped at its budget is the owner's go-ahead for one more block
+        b = budget.ensure(d, self.cfg["limits"])
+        if budget.over(d["usage"], b) is not None:
+            self.message(self.ceo["id"], "*", "system", self.t("budget_resumed", limits=self.budget_text(budget.extend(d["usage"], b))))
 
     def reopen_for_resume(self) -> dict:
         """Every task that is not done goes back in the queue; a workstream that
@@ -1009,7 +1135,7 @@ class Run:
                 max_tokens=500,
                 meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]},
             )
-            self.data["usage"]["calls"] += 1
+            budget.spend(self.data["usage"], res, self.cfg)  # the owner asked: counted, never held at the budget
             return res["text"].strip()[:1500]
         except ProviderError:
             return self.t("direct_ack", name=agent["name"])
@@ -1551,10 +1677,11 @@ class Run:
 
     # ---------- spec 09: deciding for the owner ----------
 
-    async def auto_answer(self, task: dict, asker: dict, question: str) -> dict:
+    async def auto_answer(self, task: dict, asker: dict, question: str, *, owner: bool = False) -> dict:
         """The lead of the task's team (the CEO when the lead is the one asking)
         writes 2-4 options and picks one; TypeSafe's Jev, when configured, picks
-        among them, and its pick wins at router.arbiter.minConfidence or above."""
+        among them, and its pick wins at router.arbiter.minConfidence or above.
+        owner: the owner asked for it ("find a solution"), so the budget never holds it."""
         from backend.arbiter import typesafe_choose
         from backend.prompts import arbiter_prompt
 
@@ -1562,7 +1689,7 @@ class Run:
         responder = self.ceo if not lead or lead["id"] == asker.get("id") or asker.get("kind") == "ceo" else lead
         ceo = responder["kind"] == "ceo"
         obj = await self.chat_json(
-            {"role": "ceo" if ceo else task["team"], "use": None if ceo else self.role_combo("lead"), "messages": arbiter_prompt(responder=responder, goal=self.data["goal"], task=task, asker=asker.get("name") or asker.get("id") or "?", question=question, progress=self.progress_text(task["team"]), owner_files=self.owner_files_text(task), language=self.lang), "max_tokens": 900, "agent": responder, "task": task},
+            {"role": "ceo" if ceo else task["team"], "use": None if ceo else self.role_combo("lead"), "messages": arbiter_prompt(responder=responder, goal=self.data["goal"], task=task, asker=asker.get("name") or asker.get("id") or "?", question=question, progress=self.progress_text(task["team"]), owner_files=self.owner_files_text(task), language=self.lang), "max_tokens": 900, "agent": responder, "task": task, "owner": owner},
             lambda o: isinstance(o.get("options"), list) and len(o["options"]) > 0,
         )
         options = []
@@ -1610,7 +1737,7 @@ class Run:
         item, task, asker = self._question_parts(id, ("open",))
         if item is None or task is None:
             return None
-        decision = await self.auto_answer(task, asker, item["text"])
+        decision = await self.auto_answer(task, asker, item["text"], owner=True)
         if item["status"] != "open":
             return decision  # the owner answered while the team was deciding: their words win
         answer = self._auto_close(item, decision)
@@ -1624,7 +1751,7 @@ class Run:
         item, task, asker = self._question_parts(id, ("pending", "open"))
         if item is None or task is None:
             return None
-        decision = await self.auto_answer(task, asker, item["text"])
+        decision = await self.auto_answer(task, asker, item["text"], owner=True)
         self._auto_close(item, decision)
         self.add_interaction(task, "user", f"{decision['solution']} ({decision['byName']} decided for you; why: {decision['why'] or '-'})", answers=item["id"], question=item["text"][:300], by=decision["by"])
         self.emit_run(True)
@@ -1643,7 +1770,7 @@ class Run:
             return []
         files = "\n".join(line for line in self.owner_files_text().split("\n") if any(a["path"] in line for a in self.data.get("attachments") or [] if a["id"] in attachment_ids))
         obj = await self.chat_json(
-            {"role": "ceo", "messages": refiner_prompt(ceo=self.ceo, goal=self.data["goal"], directive=text, files=files, tasks=done, language=self.lang), "max_tokens": 1200, "agent": self.ceo},
+            {"role": "ceo", "messages": refiner_prompt(ceo=self.ceo, goal=self.data["goal"], directive=text, files=files, tasks=done, language=self.lang), "max_tokens": 1200, "agent": self.ceo, "owner": True},
             lambda o: isinstance(o.get("targets"), list),
         )
         ids = {t["id"] for t in done}
@@ -1812,12 +1939,14 @@ class Run:
             try:
                 # one vision combo, no cascade (a model without vision fails on the image),
                 # no invented answer in a live run
-                res = await self.ctx.router.chat(use="vision", messages=messages, max_tokens=600, meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]}, cascade=False, emergency=None if self.data.get("mode") == "demo" else False)
+                held = await self.budget_gate(agent)  # spec 11 T01
+                try:
+                    res = await self.ctx.router.chat(use="vision", messages=messages, max_tokens=600, meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]}, cascade=False, emergency=None if self.data.get("mode") == "demo" else False)
+                finally:
+                    if held:
+                        self._in_flight -= 1
                 seen, by = res["text"].strip()[:1500], res.get("target")
-                usage = self.data["usage"]
-                usage["calls"] += 1
-                usage["tokensIn"] += (res.get("usage") or {}).get("in", 0)
-                usage["tokensOut"] += (res.get("usage") or {}).get("out", 0)
+                budget.spend(self.data["usage"], res, self.cfg)
             except ProviderError:
                 seen = None
         origin = self.owner_of(p)

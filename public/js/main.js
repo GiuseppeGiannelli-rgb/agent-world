@@ -54,6 +54,8 @@ const ago = (iso) => {
   if (s < 86400) return t('ago.h', { n: Math.round(s / 3600) });
   return new Date(iso).toLocaleDateString(locale());
 };
+// spec 11 T01: an estimated amount in USD, written the way the UI language writes money
+const usd = (n) => new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: n > 0 && n < 0.01 ? 4 : 2 }).format(n ?? 0);
 const dur = (a, b) => {
   const s = Math.max(0, Math.round(((b ? new Date(b) : new Date()) - new Date(a)) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
@@ -299,16 +301,18 @@ function renderWaiting() {
     el.innerHTML = `<h3>${live ? t('wait.title', { n: open.length }) : t('wait.pendingTitle', { n: open.length })}</h3>${open
       .map((w) => {
         const a = S.agents.get(w.from);
-        const what = w.kind === 'plan' ? t('wait.plan') : w.kind === 'model' ? t('wait.model') : t('wait.question', { task: esc(w.taskId ?? '') });
+        const what = w.kind === 'plan' ? t('wait.plan') : w.kind === 'model' ? t('wait.model') : w.kind === 'budget' ? t('wait.budget') : t('wait.question', { task: esc(w.taskId ?? '') });
         const buttons = w.kind === 'plan'
           ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.approve')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.reject')}</button>`
+          : w.kind === 'budget'
+            ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.budgetGo')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.budgetStop')}</button>`
           : w.kind === 'model'
             ? `<button class="btn go" data-answer="${w.id}">${t('wait.retry')}</button>`
             : `<button class="btn go" data-answer="${w.id}">${t('wait.reply')}</button><button class="btn" data-solve="${w.id}">${t('wait.solve')}</button>`;
         return `<div class="wait-item">
           <div class="who"><b style="color:${agentColor(w.from)}">${esc(a?.name ?? w.from)}</b> · ${what}</div>
           <div class="q">${esc(w.text)}</div>
-          <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
+          <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' || w.kind === 'budget' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
           <div class="row">${buttons}</div>
         </div>`;
       })
@@ -331,6 +335,12 @@ function renderCurrent() {
   // spec 09: a stopped run (or one with failures) starts again from where it stopped
   const resumable = !isLive(run) && ['stopped', 'completed_with_failures', 'failed'].includes(run.status) && !isLive(S.run);
   const pendingQ = (run.waiting ?? []).filter((w) => w.status === 'pending').length;
+  // spec 11 T01: what the real providers cost, against the run budget (a demo answer costs nothing: not shown)
+  const u = run.usage ?? {};
+  const lim = run.budget?.limit ?? {};
+  const spend = u.providerCalls
+    ? `${lim.calls ? `<span data-budget="calls">${t('current.paidCalls', { n: u.providerCalls, limit: lim.calls })}</span>` : ''}<span data-budget="cost" title="${esc(t('current.costTitle'))}">${lim.costUSD ? t('current.cost', { usd: usd(u.costUSD), limit: usd(lim.costUSD) }) : t('current.costOnly', { usd: usd(u.costUSD) })}</span>`
+    : '';
   const controls = isLive(run) && run.id === S.run?.id
     ? `<div class="row" style="margin-top:10px">${run.paused ? `<button class="btn" data-act="resume">${t('current.resume')}</button>` : `<button class="btn" data-act="pause">${t('current.pause')}</button>`}<button class="btn danger" data-act="stop">${t('current.stop')}</button></div>`
     : resumable
@@ -347,7 +357,7 @@ function renderCurrent() {
     <div class="row" style="flex-wrap:wrap"><span class="status ${run.status}">${label('status', run.status)}${run.paused ? t('current.paused') : ''}</span>${run.complexity ? `<span class="badge cx">${run.complexity === 'complex' ? t('current.complex') : t('current.simple')}</span>` : ''}${run.mode === 'demo' ? '<span class="badge">demo</span>' : ''}</div>
     ${run.planSummary ? `<div class="plan-summary">${esc(run.planSummary)}</div>` : ''}
     <div class="progress"><div style="width:${(done / total) * 100}%"></div></div>
-    <div class="meta"><span>${done}/${run.tasks.length} task</span><span>⏱ ${dur(run.createdAt, run.finishedAt)}</span><span>${t('current.calls', { n: run.usage?.calls ?? 0 })}</span>${run.usage?.escalations ? `<span>⬆️ ${run.usage.escalations}</span>` : ''}</div>
+    <div class="meta"><span>${done}/${run.tasks.length} task</span><span>⏱ ${dur(run.createdAt, run.finishedAt)}</span><span>${t('current.calls', { n: run.usage?.calls ?? 0 })}</span>${spend}${run.usage?.escalations ? `<span>⬆️ ${run.usage.escalations}</span>` : ''}</div>
     ${ws.length ? `<div class="ws-mini">${ws.join('')}</div>` : ''}
     ${run.error ? `<div class="verdict revise" style="margin-top:8px">${esc(run.error)}</div>` : ''}
     ${controls}`;
@@ -1005,6 +1015,12 @@ function openSettings() {
       <label class="check" style="margin:0"><input type="checkbox" data-bool="autoAnswer" ${L.autoAnswer !== false ? 'checked' : ''}> ${t('settings.autoAnswer')}</label>
     </div>
     <div class="hint" style="margin-top:6px">${t('settings.shell', { state: L.allowShell ? t('settings.shellOn') : t('settings.shellOff') })}</div>
+    <h3>${t('settings.budget')}</h3>
+    <div class="row" style="flex-wrap:wrap;gap:14px">
+      <label>${t('settings.maxCalls')} <input type="number" min="0" max="100000" step="10" data-limit="maxCallsPerRun" value="${L.maxCallsPerRun ?? 0}"></label>
+      <label>${t('settings.maxCost')} <input type="number" min="0" step="0.5" data-limit="maxCostUSD" value="${L.maxCostUSD ?? 0}"></label>
+    </div>
+    <div class="hint" style="margin-top:6px">${t('settings.budgetHint')}</div>
     <h3>${t('settings.pacing')}</h3>
     <div class="row" style="flex-wrap:wrap;gap:14px">${Object.entries(P).map(([k, v]) => `<label>${esc(k)} <input type="number" min="0" step="100" data-pace="${k}" value="${v}"></label>`).join('')}</div>
     <h3>${t('settings.textProviders')}</h3><table>${provRows}</table>
@@ -1127,8 +1143,9 @@ async function answerWaiting(id, decision) {
   const text = document.querySelector(`textarea[data-wait="${id}"]`)?.value ?? '';
   const run = shown(); // spec 09: a stopped run's question too
   try {
+    const budget = (run.waiting ?? []).find((w) => w.id === id)?.kind === 'budget'; // spec 11 T01
     const r = await api(`/api/runs/${run.id}/answer`, { method: 'POST', body: JSON.stringify({ itemId: id, text, decision }) });
-    toast(r.resumable ? t('wait.saved') : decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
+    toast(r.resumable ? t('wait.saved') : budget ? t(decision === 'reject' ? 'answer.budgetStop' : 'answer.budgetGo') : decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
     if (r.resumable) await refreshView(run);
   } catch (err) {
     toast(err.message, true);
