@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 da confermare. Prossimo: T04.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente. Prossimo: T04.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -233,7 +233,7 @@
 - **UI** (`public/js/main.js`): la scheda Brain aperta ricarica l'elenco anche dopo un evento `consolidate`, non solo dopo `remember`.
 - **Runner del browser:** la fase `brain`.
 
-### 5.3 Decisioni (prese in questa sessione, da confermare)
+### 5.3 Decisioni (confermate dall'utente il 19/10/2026)
 
 - **D12 — La grammatica dei token.** Un carattere di parola è una lettera, una cifra o un segno Unicode (categoria L, N o M: i segni servono, per esempio, al devanagari, dove le vocali sono segni). `_` fa parte della parola; `::` e `@` uniscono due parole quando dopo viene un carattere di parola, e `@` può aprire un token. Un token composto dà anche le sue parti: `budget_gate` → `budget_gate`, `budget`, `gate`, così le parole semplici lo trovano ancora e l'identificatore esatto vince. Restano: minuscole, NFD, via i diacritici latini (U+0300–U+036F), almeno 3 caratteri (contati come caratteri, non byte), le stesse stopword. In più `ς` diventa `σ`: il Python minuscola il sigma finale in `ς`, il Rust carattere per carattere in `σ`, e così coincidono (e una query scritta in maiuscolo trova la parola). Il punto non unisce (`app.get` → `app`, `get`), il trattino nemmeno.
 - **D13 — La parità con il Rust passa dalla probe d'avvio.** I testi di prova (`TOKENIZE_PROBES`: identificatori, `::`, `@`, sigma finale, cirillico, un segno devanagari, CJK, lettere senza NFD) devono dare gli stessi token in Python e in Rust, se no `aw_core` non si usa né per BM25 né per i vettori locali. Indici e query non possono dividere le parole in due modi diversi.
