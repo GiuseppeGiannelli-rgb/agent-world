@@ -7,6 +7,7 @@
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
 - *Dopo il push, sempre il 20/10, su richiesta dell'utente: il README rifatto sull'app di oggi, con 11 schemi Mermaid (architettura, missione, bridge Rust, gerarchia, RAG aggiornati; nuovi: le fasi della clean room, il ritorno al punto pulito, il budget, la chiave dalla LAN) e 13 catture in italiano (`npm run screenshots` fa ora due missioni, la seconda di reverse engineering). Le catture hanno mostrato un difetto, corretto: il visualizzatore Markdown della UI non sapeva le tabelle, e `blueprint.md` usciva con i `|` su una riga (tabelle GFM in `public/js/md.js`, test nuovo `scripts/md-test.js` in `npm test`). `npm test` verde in una copia pulita di `main` (7 min 44 s, pytest 1232 passati e 5 saltati), runner del browser 275 su 275 in 5 min 38 s. Spinto su `origin`.*
+- *Pulizia finale del 20/10, su richiesta dell'utente: su GitHub e in locale resta solo `main`: cancellati gli 8 branch vecchi su `origin` e gli ultimi 13 locali, tutti già contenuti in `main`; tolti tutti i worktree di `.claude/worktrees/`; archiviate le sessioni delle spec 10 e 11. Si riparte da `main`, con una sessione nuova o un branch a parte.*
 - *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 20/10/2026".*
 
 ## 1. Stato
@@ -67,7 +68,7 @@ Lezioni del porting ancora valide:
 
 0. **Spec 11 chiusa e unita** in `main` il 20/10 (`43ad2b7`): T01–T10 e N19, decisioni D1–D35 confermate dall'utente.
 1. **`main` spinto su `origin`** il 20/10, su richiesta dell'utente: `origin/main` passa da `33c6135` (la spec 10) alla spec 11 chiusa. I push successivi come sempre: Git Credential Manager chiede l'account (sezione 1), il push si lancia in background.
-2. **I branch e i worktree della spec 11** sono stati tolti il 20/10, su richiesta dell'utente (tutto è in `main`).
+2. **Branch, worktree e sessioni:** il 20/10, su richiesta dell'utente, su GitHub e in locale resta solo `main`: cancellati gli 8 branch vecchi su `origin` e gli ultimi 13 locali, tutti già contenuti in `main`; tolti tutti i worktree di `.claude/worktrees/`; archiviate le sessioni delle spec 10 e 11. Si riparte da `main`.
 3. **I merge successivi** si fanno allo stesso modo: in locale, `git -C <checkout principale> merge --no-ff <branch>` con l'identità `agent-world-dev`, mai con il pulsante di GitHub.
 4. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 5. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
@@ -131,7 +132,7 @@ Lezioni del porting ancora valide:
 7. Questo file tiene stato, decisioni, prossimi passi e regole; la storia sta nei documenti della spec.
 8. Profondità proporzionata al rischio, e un riassunto di 5 righe in testa ai documenti lunghi.
 9. **Un'attesa in un test conta i frame o aspetta una condizione, mai i millisecondi** (18/10): il mondo avanza al massimo 0,05 s per frame, e un browser senza GPU ne disegna 1–2 al secondo.
-10. **Mai un server di anteprima nello stesso worktree mentre gira pytest** (18/10, spec 10): l'app scrive in `data/` e lo Skiller scarica in `skills/vendor/`, e la guardia N15 di `conftest.py` fa fallire la sessione. Prima della suite: anteprima chiusa, e le due cartelle tolte se le ha create lei.
+10. **Mai un server di anteprima nello stesso worktree mentre gira pytest** (18/10, spec 10): l'app scrive in `data/` e lo Skiller scarica in `skills/vendor/`, e la guardia N15 di `conftest.py` fa fallire la sessione. Prima della suite: anteprima chiusa, e le due cartelle tolte se le ha create lei. Lo stesso vale per l'`npm start` dell'utente nella cartella principale (20/10): una sua run LIVE scriveva in `data/calls/` durante `npm test`. Lì il server non si tocca: `npm test` si fa in una copia usa e getta (`git worktree add --detach <cartella temporanea> HEAD`, `npm ci`, `uv sync` in `backend/`: circa 30 s), poi `git worktree remove`.
 
 ## 6. Contesto tecnico
 
@@ -270,6 +271,7 @@ npm run screenshots                          # gli screenshot del README
   - le 8 catture di prima rifatte, più 5 della missione `deconstruct_and_build` (`reverse-team`, `clean-room-build`, `clean-room-messages`, `blueprint`, `parity-qa`); `scripts/readme-shots.js` mette l'app in italiano nella sua cartella home temporanea e si ferma con un errore se non vede un momento atteso;
   - difetti visti nelle catture e corretti: le tabelle Markdown nel visualizzatore dei file (`public/js/md.js`, `public/css/app.css`, `scripts/md-test.js` con 7 test, visti rossi prima della correzione); la frase del simulatore "1 modelli di dati" (`router/mock_texts.py`, 5 lingue, ora senza accordo del numero);
   - verifiche: `npm test` verde in 7 min 44 s (pytest 1232 passati e 5 saltati) in una copia pulita di `main`, perché nella cartella principale la run LIVE dell'utente sulla porta 4300 scriveva in `data/calls/` e la guardia N15 la contava come una fuga dei test; runner del browser 275 su 275 in 5 min 38 s.
+- **Pulizia finale** (20/10, su richiesta dell'utente): su GitHub e in locale resta solo `main`: cancellati gli 8 branch vecchi su `origin` e gli ultimi 13 locali, tutti già contenuti in `main`; tolti tutti i worktree di `.claude/worktrees/`; archiviate le sessioni delle spec 10 e 11. Ogni branch è stato controllato con `git merge-base --is-ancestor <branch> main` prima di cancellarlo.
 
 ### Completato: spec 11, Fase 2 — T06–T10, l'Intent Engine (dettagli: spec 11 §8)
 - **Come:** su richiesta dell'utente in un'unica passata, non un ticket per sessione. Il punto di partenza è il lavoro parcheggiato su `claude/spec11-phase2-wip`: `4581acc` (T06, completo) è diventato `50ddcb5`; `9fc9f02` (T07–T09, mai verificato) è nel commit della Fase 2, con il simulatore, i test e le correzioni.
