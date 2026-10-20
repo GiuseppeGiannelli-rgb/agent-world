@@ -10,8 +10,9 @@
 ![L'ufficio 3D durante una missione](docs/assets/office-3d.png)
 
 - **Nessun servizio esterno da installare.** Router dei modelli, orchestrazione, skill, memoria e mondo 3D stanno tutti in questa cartella.
-- **Backend ibrido.** FastAPI (Python 3.13) dirige il lavoro; Rust (PyO3) è un acceleratore opzionale per la ricerca BM25.
+- **Backend ibrido.** FastAPI (Python 3.13) dirige il lavoro; Rust (PyO3) è un acceleratore opzionale per la ricerca BM25, il tokenizer e il deconstructor, usato solo se dà esattamente quello che dà il Python.
 - **Front-end senza build.** three.js servito così com'è; gli eventi arrivano dal server in streaming (SSE).
+- **Costruire o decodificare.** La CEO capisce se la missione è costruire qualcosa di nuovo, decodificare un'applicazione esistente in un blueprint, o decodificarla e ricostruirla da zero in clean-room ([sotto](#reverse-engineering-e-ricostruzione-clean-room)).
 - **Modalità demo.** Senza chiavi API un simulatore interpreta ogni ruolo, e vedi l'intero flusso senza spendere nulla.
 
 ---
@@ -645,10 +646,10 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 
 | Linguaggio | Dove | Righe (circa) |
 |---|---|---|
-| **Python** 3.13 | `backend/` (codice 4.400, test e benchmark 3.200) | 7.500 |
-| **JavaScript** (ES modules) | `public/js/` (front-end 4.200), `scripts/` (strumenti di test 3.700) | 7.900 |
+| **Python** 3.13 | `backend/` (codice 16.000, test e benchmark 13.700) | 29.700 |
+| **JavaScript** (ES modules) | `public/js/` (front-end 5.400), `scripts/` (strumenti di test 5.200) | 10.600 |
 | **Rust** (edition 2021) | `crates/aw_core/` | 3.400 |
-| **HTML / CSS** | `public/` | 500 |
+| **HTML / CSS** | `public/` | 600 |
 | **JSON** | `config/default.json` | — |
 | **Markdown** | `docs/specs/`, `skills/*/SKILL.md` | — |
 
@@ -806,4 +807,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md), il core hardening e l'intent engine la [spec 11](docs/specs/11-core-hardening-intent-engine.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md), il core hardening e l'intent engine la [spec 11](docs/specs/11-core-hardening-intent-engine.md). Le spec 01–11 sono chiuse e unite in `main` (la 03 congelata dopo T2).

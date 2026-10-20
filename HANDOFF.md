@@ -1,7 +1,7 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-20. In breve:*
-- ***Spec 11 CHIUSA e UNITA in `main`** (T01–T10 + N19): il 20/10 il merge `--no-ff` in locale `43ad2b7` (identità `agent-world-dev`) del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`), sopra `33c6135` (la spec 10). Tutte le decisioni D1–D35 confermate dall'utente; `npm run scan:secrets` pulito dopo il merge. **Non ancora spinto** su `origin`.*
+- ***Spec 11 CHIUSA e UNITA in `main`** (T01–T10 + N19): il 20/10 il merge `--no-ff` in locale `43ad2b7` (identità `agent-world-dev`) del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`), sopra `33c6135` (la spec 10). Tutte le decisioni D1–D35 confermate dall'utente; `npm run scan:secrets` pulito dopo il merge. **Spinto su `origin`** il 20/10, su richiesta dell'utente, con README e questo file aggiornati.*
 - *La spec 11 (`docs/specs/11-core-hardening-intent-engine.md`). Fase 1, Core Hardening: T01 budget e circuit breaker della run, T02 shell senza chiavi e chiave d'accesso dalla rete (N13 chiuso del tutto), N19 (il test di avvio che scriveva nel checkout), T03 tokenizer per il codice e consolidamento del Brain, T04 checkpoint del Tasker, T05 streaming vero su `/v1`. Fase 2, Intent Engine (in un'unica passata, su richiesta dell'utente): T06 il deconstructor con il gemello Rust, T07 i tool di Reverse Engineering e il blueprint, T08 il team `reverse` (Kira, Zero), T09 l'intento della missione con la clean room e la QA di parità, T10 il simulatore demo. Il branch parcheggiato `claude/spec11-phase2-wip` è stato cancellato il 20/10. **Prossimo:** sezione 3.*
 - *`main` = `43ad2b7`, il merge `--no-ff` in locale (identità `agent-world-dev`) della spec 11, sopra `33c6135` (la spec 10, a sua volta sopra `937673a`, il debito tecnico N13/N17). Le spec 01–11 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
@@ -29,7 +29,7 @@
   - 09 file del proprietario, dialogo, ripresa e failover;
   - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt;
   - 11 core hardening (budget, fiducia zero, tokenizer, checkpoint, streaming) e intent engine (reverse engineering e ricostruzione clean-room).
-- **Spec aperta:** nessuna. La 11 (`docs/specs/11-core-hardening-intent-engine.md`, T01–T10 e N19) è unita in `main` dal 20/10 con il merge `43ad2b7`, non ancora spinto. I branch dei suoi ticket (`claude/core-hardening-intent-engine-cdd150`, `claude/youthful-bun-b80533`, `claude/t04-tasker-checkpointing-90fa3a`, `claude/laughing-gates-c8d3a0`) e i loro worktree sono stati tolti il 20/10, su richiesta dell'utente: tutto è in `main`.
+- **Spec aperta:** nessuna. La 11 (`docs/specs/11-core-hardening-intent-engine.md`, T01–T10 e N19) è unita in `main` dal 20/10 con il merge `43ad2b7`, spinto su `origin` lo stesso giorno. I branch dei suoi ticket (`claude/core-hardening-intent-engine-cdd150`, `claude/youthful-bun-b80533`, `claude/t04-tasker-checkpointing-90fa3a`, `claude/laughing-gates-c8d3a0`) e i loro worktree sono stati tolti il 20/10, su richiesta dell'utente: tutto è in `main`.
 - **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 5 test saltati di pytest, 4 sono la parità Rust (dalla Fase 2 della spec 11 anche quella del deconstructor) e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
@@ -65,7 +65,7 @@ Lezioni del porting ancora valide:
 ## 3. Prossimo passo
 
 0. **Spec 11 chiusa e unita** in `main` il 20/10 (`43ad2b7`): T01–T10 e N19, decisioni D1–D35 confermate dall'utente.
-1. **`git push origin main`**, quando l'utente lo chiede: Git Credential Manager chiede l'account (sezione 1); il push si lancia in background.
+1. **`main` spinto su `origin`** il 20/10, su richiesta dell'utente: `origin/main` passa da `33c6135` (la spec 10) alla spec 11 chiusa. I push successivi come sempre: Git Credential Manager chiede l'account (sezione 1), il push si lancia in background.
 2. **I branch e i worktree della spec 11** sono stati tolti il 20/10, su richiesta dell'utente (tutto è in `main`).
 3. **I merge successivi** si fanno allo stesso modo: in locale, `git -C <checkout principale> merge --no-ff <branch>` con l'identità `agent-world-dev`, mai con il pulsante di GitHub.
 4. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
@@ -260,7 +260,7 @@ npm run screenshots                          # gli screenshot del README
 
 ## Stato al 20/10/2026
 
-- **`main` = `43ad2b7`** (20/10): il merge `--no-ff` in locale, con l'identità `agent-world-dev` per autore e committer, del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`) sopra `33c6135` (la spec 10). L'albero del merge è identico a `d9d23d9`, quello verificato (`npm test` verde, runner 275/275). **Non ancora spinto** su `origin`, che resta a `33c6135`.
+- **`main` = `43ad2b7`** (20/10): il merge `--no-ff` in locale, con l'identità `agent-world-dev` per autore e committer, del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`) sopra `33c6135` (la spec 10). L'albero del merge è identico a `d9d23d9`, quello verificato (`npm test` verde, runner 275/275). **Spinto su `origin`** il 20/10 (prima `origin/main` era `33c6135`).
 - **I branch dei ticket**, tutti contenuti in `main`, tolti il 20/10 con i loro worktree, su richiesta dell'utente: `claude/core-hardening-intent-engine-cdd150` (T01: `f66d1d7`, `349f903`), `claude/youthful-bun-b80533` (T02, N19 `a918f4d`, T03 `1c64ba7`), `claude/t04-tasker-checkpointing-90fa3a` (T04 `1a028ce`, `848dcde`), `claude/laughing-gates-c8d3a0` (T05 `6b99d20`, `5a8cd96`, T06 `50ddcb5`, T07–T10 `d6162f9`, `d9d23d9`).
 - **`claude/spec11-phase2-wip` cancellato** il 20/10, su richiesta dell'utente: era `9fc9f02` (sopra `4581acc` e `1b40c97`), lavoro ripreso nel branch unito. Finché git non ripulisce i commit irraggiungibili si ricrea con `git branch claude/spec11-phase2-wip 9fc9f02`.
 - **`npm run scan:secrets` pulito** prima e dopo il merge.
@@ -411,7 +411,7 @@ npm run screenshots                          # gli screenshot del README
 
 ### Prossimi passi
 1. **Spec 11 chiusa e unita** in `main` (`43ad2b7`, 20/10): T01–T10 e N19, decisioni D1–D35 confermate dall'utente.
-2. **`git push origin main`**, quando l'utente lo chiede (sezione 1).
+2. **`main` spinto su `origin`** il 20/10, con README e questo file aggiornati.
 3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
 4. Le verifiche qui sopra.
 5. Il prossimo ciclo dal backlog (N18–N22, la spec 03; sezione 4), quando l'utente lo sceglie.
