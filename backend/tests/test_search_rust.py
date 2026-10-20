@@ -26,6 +26,11 @@ GOLDEN_DOCS = [
     ("tests", [{"text": "unit tests integration tests end to end tests", "weight": 2}]),
     ("brain", [{"text": "memory notes recall past decisions and facts", "weight": 3}]),
     ("router", [{"text": "route each prompt to the cheapest capable model"}]),
+    # spec 11 T03: code tokens and other scripts
+    ("gate", [{"text": "budget_gate() and std::collections::HashMap", "weight": 2}, {"text": "@pytest.fixture for user@example.com"}]),
+    ("ru", [{"text": "Сервер отвечает на запросы"}]),
+    ("el", [{"text": "Ο λόγος της απόφασης", "weight": 2}]),
+    ("hi", [{"text": "हिन्दी भाषा का सर्वर"}]),
 ]
 
 GOLDEN_QUERIES = [
@@ -40,6 +45,12 @@ GOLDEN_QUERIES = [
     "   ",          # no terms -> []
     "xyzzy",        # no hits -> []
     "image image image",  # repeated terms are deduped
+    "budget_gate",
+    "HashMap std::collections",
+    "@pytest",
+    "СЕРВЕР",
+    "ΛΟΓΟΣ",
+    "भाषा",
 ]
 
 
@@ -97,9 +108,70 @@ def test_tokenize_contract_unchanged():
     assert tokenize(None) == []
 
 
+# ---------- spec 11 T03: the tokenizer in the startup probe ----------
+
+
+def test_the_probe_texts_cover_code_and_every_script():
+    from backend.search import TOKENIZE_PROBES
+
+    joined = " ".join(TOKENIZE_PROBES)
+    for piece in ("_", "::", "@", "ς", "λ", "м", "ि", "数", "ø", "İ"):
+        assert piece in joined, piece
+
+
+def test_rust_tokenize_matches_python_on_the_probes():
+    aw_core = pytest.importorskip("aw_core")
+    from backend.search import TOKENIZE_PROBES
+
+    for text in TOKENIZE_PROBES:
+        assert list(aw_core.tokenize(text)) == tokenize(text), text
+
+
+def _old_tokenize(text):
+    """The [a-z0-9] tokenizer of spec 04-05: what an aw_core built before T03 does."""
+    import re
+    import unicodedata
+
+    s = re.sub(r"[̀-ͯ]", "", unicodedata.normalize("NFD", str(text or "").lower()))
+    return [w for w in re.split(r"[^a-z0-9]+", s) if len(w) > 2 and w not in search_mod.STOP]
+
+
+def test_a_native_module_with_the_old_tokenizer_is_refused(monkeypatch):
+    """The gate at startup: an aw_core whose BM25 ranks like Python on the old
+    probe but tokenizes like before T03 must not be used, or the index and the
+    queries would split words differently from the Python code around them."""
+    import sys
+    import types
+
+    from backend import embed
+
+    old = types.SimpleNamespace(Bm25=Bm25, tokenize=_old_tokenize, ngram_vector=lambda text, dim=256: _old_ngram(text, dim))
+    monkeypatch.setitem(sys.modules, "aw_core", old)
+    assert search_mod._load_rust() is None
+    assert embed._load_rust_ngram() is None
+    same = types.SimpleNamespace(Bm25=Bm25, tokenize=tokenize, ngram_vector=embed.ngram_vector)
+    monkeypatch.setitem(sys.modules, "aw_core", same)
+    assert search_mod._load_rust() is Bm25
+    assert embed._load_rust_ngram() is embed.ngram_vector
+
+
+def _old_ngram(text, dim):
+    import zlib
+
+    from backend.embed import normalize
+
+    vec = [0.0] * dim
+    for token in _old_tokenize(text):
+        padded = f" {token} "
+        for g in [f"w:{token}"] + [padded[i : i + n] for n in (3, 4) for i in range(len(padded) - n + 1)]:
+            h = zlib.crc32(g.encode("ascii"))
+            vec[h % dim] += -1.0 if h & 0x80000000 else 1.0
+    return normalize(vec)
+
+
 # ---------- Spec 05: vectors (run when aw_core is built) ----------
 
-VECTOR_TEXTS = ["Caffè e tipografia", "Check the HMAC signature of every incoming webhook", "", "il la di", "x", "İstanbul ŞEHİR", "naïve façade — 2026!"]
+VECTOR_TEXTS = ["Caffè e tipografia", "Check the HMAC signature of every incoming webhook", "", "il la di", "x", "İstanbul ŞEHİR", "naïve façade — 2026!", "budget_gate() std::mem::take @app", "Ο λόγος, Сервер, हिन्दी, 数据库"]
 
 
 def test_rust_ngram_vector_is_bit_identical():

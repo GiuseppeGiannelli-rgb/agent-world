@@ -288,7 +288,9 @@ document.querySelectorAll('section').forEach((s) => observer.observe(s));
 """
 
 
-def file_content(path: str, task: str, goal: str, revised: bool, files: list[str], lang: str = DEFAULT) -> str:
+def file_content(path: str, task: str, goal: str, revised: bool, files: list[str], lang: str = DEFAULT, endpoints=()) -> str:
+    if path.endswith("server.js") and endpoints:
+        return server_js(list(endpoints), lang)  # spec 11 T10: a clean-room rebuild's server, from the blueprint
     if path.endswith(".css"):
         return CSS
     if path.endswith(".html"):
@@ -308,6 +310,8 @@ def _owner_pick(out: str, files: list[str]) -> str:
 
 
 def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
+    if team == "reverse":
+        return reverse_turn(messages, lang)  # spec 11 T10
     t = _texts(lang)
     say = t["thoughts"]
     brief = messages[1]["content"] if len(messages) > 1 else ""
@@ -318,6 +322,7 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
     skills = csv(field(brief, "SKILLS"))
     input_files = [f for m in re.finditer(r"^\s+files: (.*)$", brief, re.MULTILINE) for f in csv(m.group(1)) if not IMG_RE.search(f) and not AUDIO_RE.search(f)]
     files = [m.group(1) for m in re.finditer(r"^(\S+) \(\d+ B\)$", brief, re.MULTILINE)]
+    contract = CONTRACT_ENDPOINT_RE.findall(brief)  # spec 11 T10: the endpoints of a clean-room brief
 
     owner_text = "\n".join(str(m["content"]) for m in messages[1:] if m["role"] == "user" and "FILES FROM THE OWNER" in str(m["content"]))
     owner = list(dict.fromkeys(OWNER_RE.findall(owner_text)))
@@ -372,7 +377,7 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
         elif AUDIO_RE.search(out):
             steps.append({"thought": say["voice"].format(file=out), "tool": "generate_speech", "args": {"text": t["voice_text"].format(goal=short_goal(goal)), "path": out}})
         else:
-            steps.append({"thought": (say["fix"] if revised else say["write"]).format(file=out), "tool": "write_file", "args": {"path": out, "content": file_content(out, title, goal, revised, files, lang)}})
+            steps.append({"thought": (say["fix"] if revised else say["write"]).format(file=out), "tool": "write_file", "args": {"path": out, "content": file_content(out, title, goal, revised, files, lang, contract)}})
     if text_out:
         steps.append({"thought": say["check"], "tool": "read_file", "args": {"path": text_out[-1]}})
     if not revised and h % 3 == 2:
@@ -388,6 +393,224 @@ def worker_turn(messages: list[dict], team: str, lang: str = DEFAULT) -> dict:
         }
     )
     return steps[min(since, len(steps) - 1)]
+
+
+
+# ---------- spec 11 T10: the three kinds of mission ----------
+# The simulator decides the intent with intent.guess(), plans the reverse
+# team's work, and its reverse workers build the blueprint from what the
+# tools really answered in their conversation (routes, traces, files): the
+# demo's blueprint describes the sample target it scanned.
+
+REVERSE_INTENTS = ("reverse_only", "deconstruct_and_build")
+CODE_HINT_RE = re.compile(r"\.(?:py|js|mjs|ts|tsx|jsx|rs|go|java|html?|css|zip|jar|whl|so|dll|exe|wasm|har|log)\b", re.IGNORECASE)
+SKELETON_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|tsx|jsx|rs|html?|css|har|log)$", re.IGNORECASE)
+ENTRY_NAMES = ("server.js", "app.py", "main.py", "index.js", "main.rs", "index.html")
+TRACE_LINE_RE = re.compile(r"^\s+([A-Z]+) (/\S*) ×\d+(?: -> [\d, ]+)?(?: \| request (.+?))?(?: \| response (.+))?$")
+CONTRACT_ENDPOINT_RE = re.compile(r"^\| ([A-Z]+) \| `(/[^`]*)` \|", re.MULTILINE)
+
+
+def intent_answer(user: str, lang: str = DEFAULT) -> dict:
+    from backend.intent import guess
+
+    r = _texts(lang)["reverse"]
+    goal = block(user, "GOAL") or field(user, "GOAL")
+    target = block(user, "TARGET")
+    owner = user.split("OWNER FILES", 1)[1] if "OWNER FILES" in user else ""
+    has_target = bool(target) and "(no folder given)" not in target or bool(CODE_HINT_RE.search(owner))
+    intent = guess(goal, has_target)
+    return {"intent": intent, "why": r["why"][intent]}
+
+
+def _ws(r: dict, key: str, team: str, n: int, goal: str, deliverables: list[str], deps: list[str]) -> dict:
+    w = r[key]
+    return {"id": f"w{n}", "team": team, "title": w["title"], "objective": w["objective"].format(goal=short_goal(goal)), "deliverables": deliverables, "acceptance": list(w["acceptance"]), "dependsOn": deps}
+
+
+def reverse_plan(goal: str, lang: str = DEFAULT) -> dict:
+    """Phase A: the reverse team maps the target, then writes the blueprint."""
+    r = _texts(lang)["reverse"]
+    ws = [_ws(r, "ws_map", "reverse", 1, goal, ["reverse/map.md"], []), _ws(r, "ws_blueprint", "reverse", 2, goal, ["blueprint.json", "blueprint.md"], ["w1"])]
+    return {"complexity": "simple", "summary": r["plan"], "workstreams": ws}
+
+
+def rebuild_plan(user: str, lang: str = DEFAULT) -> dict:
+    """Phase B, the CEO's half: design and texts, then the new application (a server when the blueprint has endpoints)."""
+    r = _texts(lang)["reverse"]
+    goal = field(user, "GOAL") or block(user, "GOAL")
+    dev = ["index.html", "js/app.js"] + (["server.js"] if CONTRACT_ENDPOINT_RE.search(user) else [])  # a row of the endpoints table
+    ws = [_ws(r, "ws_design", "design", 1, goal, ["css/style.css"], []), _ws(r, "ws_content", "content", 2, goal, ["content/copy.md"], []), _ws(r, "ws_dev", "dev", 3, goal, dev, ["w1", "w2"])]
+    return {"complexity": "simple", "summary": r["plan_rebuild"], "workstreams": ws}
+
+
+def handover_briefs(user: str, lang: str = DEFAULT) -> dict:
+    """Phase B, Pia's half: one clean-room brief per workstream."""
+    r = _texts(lang)["reverse"]
+    briefs = []
+    for m in re.finditer(r"^- (w\d+) \| team (\S+) \| (.*?) \| files: (.*?) \| ", user, re.MULTILINE):
+        briefs.append({"id": m.group(1), "brief": r["brief"].format(title=m.group(3), files=m.group(4)), "acceptance": []})
+    return {"briefs": briefs}
+
+
+def parity_answer(user: str, lang: str = DEFAULT) -> dict:
+    """Phase D: the simulator's QA finds every criterion met."""
+    r = _texts(lang)["reverse"]
+    section = user.split("PARITY CRITERIA:", 1)[1].split("\n\n", 1)[0] if "PARITY CRITERIA:" in user else ""
+    criteria = [re.sub(r"^\d+\.\s*", "", x).strip() for x in section.strip().splitlines() if x.strip()]
+    return {"verdict": "pass", "criteria": [{"criterion": c, "ok": True, "note": r["parity_note"]} for c in criteria], "fix": []}
+
+
+def _results(messages: list[dict], tool: str) -> list[str]:
+    head = f"RESULT of {tool}:\n"
+    return [str(m["content"])[len(head) :] for m in messages if m["role"] == "user" and str(m["content"]).startswith(head)]
+
+
+def _scan_files(scan: str, limit: int = 4) -> list[str]:
+    """The files of a scan worth an X-ray: the entry points first, then the rest, at most `limit`."""
+    files = [f for f in re.findall(r"^  (\S+) \(\d+ B\)$", scan, re.MULTILINE) if SKELETON_FILE_RE.search(f)]
+    first = [f for f in files if f.rsplit("/", 1)[-1] in ENTRY_NAMES or f.lower().endswith(".har")]
+    return list(dict.fromkeys(first + files))[:limit]
+
+
+def _json_or_none(s: str | None):
+    try:
+        return json.loads(s) if s else None
+    except ValueError:
+        return None
+
+
+def _model_name(path: str) -> str:
+    parts = [p for p in path.split("/") if p and not p.startswith("{") and p != "api"]
+    name = parts[-1] if parts else "item"
+    name = name[:-1] if name.endswith("s") and len(name) > 3 else name
+    return name[:1].upper() + name[1:]
+
+
+def demo_blueprint(messages: list[dict], lang: str = DEFAULT) -> dict:
+    """The blueprint the reverse worker writes, from the results of its own tools."""
+    r = _texts(lang)["reverse"]
+    skeletons = _results(messages, "extract_code_skeleton")
+    scan = (_results(messages, "scan_target_tree") or [""])[0]
+    endpoints: dict[tuple, dict] = {}
+    models: dict[str, dict] = {}
+    server_files, page_files = [], []
+    for text in skeletons:
+        head = re.match(r"^SKELETON (\S+):", text)
+        for line in text.splitlines():
+            if line.startswith("ROUTES: "):
+                for part in line[len("ROUTES: ") :].split("; "):
+                    m = re.match(r"([A-Z]+) (/\S*)", part)
+                    if not m:
+                        continue
+                    if "(calls out)" in part:
+                        if head and head.group(1) not in page_files:
+                            page_files.append(head.group(1))
+                        continue
+                    path = re.sub(r":(\w+)", r"{\1}", m.group(2))
+                    endpoints.setdefault((m.group(1), path), {"method": m.group(1), "path": path})
+                    if head and head.group(1) not in server_files:
+                        server_files.append(head.group(1))
+            t = TRACE_LINE_RE.match(line)
+            if t:
+                ep = endpoints.setdefault((t.group(1), t.group(2)), {"method": t.group(1), "path": t.group(2)})
+                request, response = _json_or_none(t.group(3)), _json_or_none(t.group(4))
+                if request is not None:
+                    ep["request"] = request
+                if response is not None:
+                    ep["response"] = response
+                shape = response[0] if isinstance(response, list) and response and isinstance(response[0], dict) else response
+                if isinstance(shape, dict) and shape:
+                    fields = [{"name": k, "type": v if isinstance(v, str) else "array" if isinstance(v, list) else "object", "required": True} for k, v in shape.items()]
+                    models.setdefault(_model_name(t.group(2)), {"name": _model_name(t.group(2)), "fields": fields})
+        if head and head.group(1).lower().endswith((".html", ".htm")) and head.group(1) not in page_files:
+            page_files.append(head.group(1))
+    styles = [f for f in re.findall(r"^  (\S+) \(\d+ B\)$", scan, re.MULTILINE) if f.lower().endswith(".css")]
+    comps = []
+    for (name, job), files in zip(r["components"], (server_files, page_files, styles)):
+        if files:
+            comps.append({"name": name, "kind": "", "responsibility": job, "files": files})
+    if not comps:
+        comps = [{"name": r["app"], "kind": "", "responsibility": r["style"], "files": []}]
+    stack = []
+    for line in scan.splitlines():
+        if line.startswith("LANGUAGES: "):
+            stack += [x.split(" ")[0] for x in line[len("LANGUAGES: ") :].split("; ") if x.split(" ")[0] not in ("trace", "artifact")]
+        if line.startswith("DEPENDENCIES: "):
+            stack += [x.split(" ")[1] for x in line[len("DEPENDENCIES: ") :].split("; ") if len(x.split(" ")) > 1]
+    eps = list(endpoints.values())
+    return {
+        "name": r["app"],
+        "summary": r["summary"].format(name=r["app"], components=len(comps), endpoints=len(eps), models=len(models)),
+        "architecture": {"style": r["style"], "components": comps, "stack": list(dict.fromkeys(stack))},
+        "dataModels": list(models.values()),
+        "endpoints": eps,
+        "businessRules": list(r["rules"]),
+        "edgeCases": list(r["edges"]),
+        "parityCriteria": [r["criterion"].format(method=e["method"], path=e["path"]) for e in eps] + list(r["criteria"]),
+    }
+
+
+def reverse_notes(messages: list[dict], title: str, goal: str, lang: str = DEFAULT) -> str:
+    """The map of the target: what the scan and the X-rays showed."""
+    t = _texts(lang)
+    parts = [f"# {t['reverse']['notes_title']}: {title}", "", f"> {t['md']['goal_label']}: {goal}", ""]
+    for text in _results(messages, "scan_target_tree") + _results(messages, "extract_code_skeleton"):
+        parts += ["```", text[:1500].rstrip(), "```", ""]
+    return "\n".join(parts) + f"_{t['md']['signature']}_\n"
+
+
+def reverse_turn(messages: list[dict], lang: str = DEFAULT) -> dict:
+    """A worker of the reverse team: scan, X-ray the files the scan found, then write its notes or the blueprint."""
+    t = _texts(lang)
+    say = t["reverse"]["thoughts"]
+    brief = messages[1]["content"] if len(messages) > 1 else ""
+    goal, title = field(brief, "GOAL"), field(brief, "TASK")
+    outputs = csv(field(brief, "OUTPUTS"))
+    rev_index = max((i for i, m in enumerate(messages) if m["role"] == "user" and str(m["content"]).startswith("REVISION REQUESTED")), default=-1)
+    since = len([m for m in messages[rev_index if rev_index >= 0 else 2 :] if m["role"] == "assistant"])
+    revised = rev_index >= 0
+    steps = []
+    if not revised:
+        steps.append({"thought": say["scan"], "tool": "scan_target_tree", "args": {"path": "target"}})
+        scans = _results(messages, "scan_target_tree")
+        steps += [{"thought": say["skeleton"].format(file=f), "tool": "extract_code_skeleton", "args": {"path": f}} for f in (_scan_files(scans[0]) if scans else [])]
+    if "blueprint.json" in outputs:
+        steps.append({"thought": say["blueprint"], "tool": "write_blueprint", "args": {"data": demo_blueprint(messages, lang)}})
+        steps.append({"thought": say["check"], "tool": "read_file", "args": {"path": "blueprint.md"}})
+    for out in [o for o in outputs if o not in ("blueprint.json", "blueprint.md")]:
+        steps.append({"thought": say["notes"].format(file=out), "tool": "write_file", "args": {"path": out, "content": reverse_notes(messages, title, goal, lang)}})
+    summary = t["finish_revised"].format(files=", ".join(outputs)) if revised else t["finish_done"].format(title=title, files=", ".join(outputs) or t["notes_word"])
+    steps.append({"thought": t["thoughts"]["finish"], "tool": "finish", "args": {"summary": summary, "files": outputs}})
+    return steps[min(since, len(steps) - 1)]
+
+
+def server_js(endpoints: list[tuple[str, str]], lang: str = DEFAULT) -> str:
+    """The server of a clean-room rebuild, from the endpoints of the blueprint contract."""
+    routes = ",\n".join(f"  ['{m}', '{p}']" for m, p in endpoints)
+    return f"""// {_texts(lang)['reverse']['server_comment']}
+const http = require('http');
+
+const routes = [
+{routes},
+];
+
+function match(method, url) {{
+  const path = url.split('?')[0];
+  return routes.find(([m, p]) => m === method && new RegExp('^' + p.replace(/\\{{[^}}]+\\}}/g, '[^/]+') + '$').test(path));
+}}
+
+const server = http.createServer((req, res) => {{
+  const route = match(req.method, req.url);
+  res.setHeader('content-type', 'application/json');
+  if (!route) {{
+    res.statusCode = 404;
+    return res.end(JSON.stringify({{ error: 'not found' }}));
+  }}
+  res.end(JSON.stringify({{ ok: true, route: route.join(' ') }}));
+}});
+
+server.listen(process.env.PORT || 3000);
+"""
 
 
 # ---------- QA, lead help, CEO wrap-up ----------
@@ -475,7 +698,17 @@ def answer(kind: str, messages: list[dict], team: str) -> str:
         return t["vision"].format(file=m.group(1) if m else "?", head=m.group(2) if m else "")
     user = messages[1]["content"] if len(messages) > 1 else ""
     if kind == "planner":
+        if field(user, "INTENT") in REVERSE_INTENTS:  # spec 11 T10: Phase A, the reverse team's plan
+            return json.dumps(reverse_plan(block(user, "GOAL") or field(user, "GOAL"), lang))
         return json.dumps(ceo_plan(block(user, "GOAL") or field(user, "GOAL"), lang))
+    if kind == "intent":
+        return json.dumps(intent_answer(user, lang))
+    if kind == "rebuilder":
+        return json.dumps(rebuild_plan(user, lang))
+    if kind == "handover":
+        return json.dumps(handover_briefs(user, lang))
+    if kind == "parity":
+        return json.dumps(parity_answer(user, lang))
     if kind == "lead":
         return json.dumps(lead_plan(user, lang))
     if kind == "librarian":
@@ -502,7 +735,8 @@ def answer(kind: str, messages: list[dict], team: str) -> str:
 ROLE_RE = re.compile(r"\[\[role:([a-z]+)(?::([a-z]+))?\]\]")
 
 
-async def mock_chat(provider: dict, model: str, req: dict) -> dict:
+async def _mock_answer(provider: dict, req: dict) -> tuple[str, dict]:
+    """The simulated answer after the simulated latency, with its usage."""
     system = next((m["content"] for m in req["messages"] if m["role"] == "system"), "")
     m = ROLE_RE.search(system)
     marker, team = (m.group(1), m.group(2) or "") if m else ("other", "")
@@ -511,4 +745,33 @@ async def mock_chat(provider: dict, model: str, req: dict) -> dict:
     await asyncio.sleep((lo + random.random() * (hi - lo)) * slow / 1000)
     text = answer(marker, req["messages"], team)
     prompt_chars = sum(len(str(m["content"])) for m in req["messages"])
-    return {"text": text, "model": model, "usage": {"in": -(-prompt_chars // 4), "out": -(-len(text) // 4)}}
+    return text, {"in": -(-prompt_chars // 4), "out": -(-len(text) // 4)}
+
+
+async def mock_chat(provider: dict, model: str, req: dict) -> dict:
+    text, usage = await _mock_answer(provider, req)
+    return {"text": text, "model": model, "usage": usage}
+
+
+STREAM_PIECE_RE = re.compile(r"\S+\s*|\s+")
+
+
+def stream_pieces(text: str, words: int = 3) -> list[str]:
+    """The answer in pieces of a few words, spaces included: joined, the same text."""
+    tokens = STREAM_PIECE_RE.findall(text)
+    return ["".join(tokens[i : i + words]) for i in range(0, len(tokens), words)]
+
+
+async def mock_stream(provider: dict, model: str, req: dict):
+    """Spec 11 T05: the simulator streams like a provider: the answer of
+    mock_chat in pieces of a few words, a short pause between them (the
+    whole stream stays under ~2.5 s however long the answer)."""
+    text, usage = await _mock_answer(provider, req)
+    pieces = stream_pieces(text)
+    lo, hi = provider.get("streamMs", [8, 20])
+    pause = min(lo + random.random() * (hi - lo), 2500 / max(1, len(pieces))) / 1000
+    for i, piece in enumerate(pieces):
+        if i:
+            await asyncio.sleep(pause)
+        yield {"text": piece}
+    yield {"end": True, "usage": usage, "finish": "stop", "model": model}

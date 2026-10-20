@@ -28,12 +28,13 @@
 8. [Il router OmniRoute](#il-router-omniroute)
 9. [Ogni sotto-task assume il suo modello](#ogni-sotto-task-assume-il-suo-modello)
 10. [File, dialogo e ripresa](#file-dialogo-e-ripresa)
-11. [Tech stack](#tech-stack)
-12. [Lingue supportate](#lingue-supportate)
-13. [Configurazione](#configurazione)
-14. [Sicurezza](#sicurezza)
-15. [Test](#test)
-16. [Struttura del repository](#struttura-del-repository)
+11. [Reverse Engineering e ricostruzione clean-room](#reverse-engineering-e-ricostruzione-clean-room)
+12. [Tech stack](#tech-stack)
+13. [Lingue supportate](#lingue-supportate)
+14. [Configurazione](#configurazione)
+15. [Sicurezza](#sicurezza)
+16. [Test](#test)
+17. [Struttura del repository](#struttura-del-repository)
 
 ---
 
@@ -168,7 +169,7 @@ sequenceDiagram
         W->>W: pensa → tool → risultato … → finish
         W->>E: agent · file · message
         W->>Q: consegna
-        Q-->>W: revise con feedback (dopo 2: escalation a "frontier")
+        Q-->>W: revise con feedback (dopo 2: escalation a "frontier", dall'ultimo passo pulito)
     end
     Q->>E: task done (lezione nel Brain)
     C->>E: report finale · run.done
@@ -193,11 +194,11 @@ flowchart LR
 ```
 
 - **Formato:** `retry: 2000` all'apertura; poi un frame `data: {"seq", "type", "payload"}` per ogni evento, e un commento `: ping` dopo 15 s di silenzio.
-- **I 17 tipi di evento:** `run`, `task`, `workstream`, `subtasks`, `plan`, `agent`, `agent.spawn`, `agent.despawn`, `message`, `chat`, `file`, `waiting`, `brain`, `skills`, `router.call`, `config`, `run.done`.
+- **I 17 tipi di evento:** `run`, `task`, `workstream`, `subtasks`, `plan`, `agent`, `agent.spawn`, `agent.despawn`, `message`, `chat`, `file`, `waiting`, `brain`, `skills`, `router.call`, `config`, `run.done`. Una richiesta in `waiting` può essere l'approvazione del piano (`plan`), una domanda (`question`), "nessun modello disponibile" (`model`) o il budget raggiunto (`budget`, spec 11).
 - **Ordine garantito:** `emit()` è sincrono e assegna `seq` nell'ordine delle chiamate. Ogni frame si serializza una volta sola, qualunque sia il numero di client.
 - **Un client lento non rallenta gli altri.** Ogni client ha la sua coda limitata; quando si riempie, quel client viene staccato. Il browser si riconnette dopo 2 s e ricostruisce lo stato da `GET /api/state`. Non c'è replay: lo stato completo basta.
 - **Spegnimento pulito:** a Ctrl+C il lifespan di FastAPI chiude i flussi aperti, perché altrimenti uvicorn aspetterebbe connessioni che non finiscono mai.
-- **Gateway `/v1`:** `/v1/chat/completions` con `"stream": true` risponde in formato SSE compatibile OpenAI, con tutto il testo in un solo blocco. Lo streaming token per token è previsto in futuro.
+- **Gateway `/v1`** (spec 11 T05): `/v1/chat/completions` con `"stream": true` manda il testo man mano che il modello lo scrive, in chunk SSE compatibili OpenAI (`chat.completion.chunk` con `delta.content`), poi il chunk con `finish_reason` e `usage`, poi `data: [DONE]`. Vale per i provider compatibili OpenAI, per Anthropic e per il simulatore demo. Fino alle prime parole visibili il router può ancora passare al modello successivo; un modello che si interrompe a metà chiude il flusso con un frame `error`. Un client che chiude la connessione chiude anche il flusso verso il provider. Questo flusso è della sola richiesta e non passa da `/api/events`.
 
 ---
 
@@ -216,7 +217,7 @@ flowchart TD
     R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
 ```
 
-- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk).
+- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk). Dalla spec 11 il tokenizer tiene i token del codice e ogni scrittura (serve il crate `unicode-general-category`), e la probe d'avvio controlla anche lui: un `aw_core` compilato prima della spec 11 viene ignorato. Dalla spec 11 (T06) c'è anche il gemello del deconstructor (`deconstruct.rs`: `extract_skeleton_json`, `inspect_artifact_json`, `summarize_trace_json`, che restituiscono JSON): il backend lo usa solo se dà esattamente quello che dà `deconstructor.py` su ogni probe. È scritto ma non ancora compilato.
 - **Stessa interfaccia:** chi chiama non sa quale implementazione sta usando.
 - **Due livelli di sicurezza:**
   - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
@@ -243,8 +244,8 @@ uv run python bench/bm25_bench.py
 ```mermaid
 flowchart TD
     U(["Tu"]) -->|missione · chat · risposte| CEO["Ada · CEO<br/>pianifica e coordina"]
-    CEO -->|workstream con dipendenze| LEADS["Lead dei team di lavoro<br/>Rino · Leo · Teo · Iris · Luna · Pia"]
-    LEADS -->|sotto-task| WK["Worker<br/>Sara · Nina · Gaia · Ugo · Dario · Max"]
+    CEO -->|workstream con dipendenze| LEADS["Lead dei team di lavoro<br/>Rino · Leo · Teo · Iris · Luna · Pia · Kira"]
+    LEADS -->|sotto-task| WK["Worker<br/>Sara · Nina · Gaia · Ugo · Dario · Max · Zero"]
     LEADS -->|più lavoro che persone| SUB["Sub-agenti temporanei<br/>nella sub-agent bay"]
     SH["Skill Hub · Otto<br/>bibliotecario"] -.->|1–3 skill per sotto-task| WK
     SH -.-> SUB
@@ -278,25 +279,29 @@ flowchart TD
 | Design | Iris, Ugo | — | 2 |
 | AI Generativa | Luna, Dario | `generate_image`, `generate_speech` | 3 |
 | Prompt Lab | Pia, Max | — | 1 |
+| Reverse Engineering | Kira, Zero | `scan_target_tree`, `extract_code_skeleton`, `write_blueprint` (spec 11, solo nelle missioni di reverse engineering) | 2 |
 
 Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `read_skill`, `recall`, `remember`, `ask_lead`, `ask_user` e `finish`.
 
 **Revisioni ed escalation.** Dopo 2 revisioni il worker passa alla combo `frontier` (`escalateAfter`). Oltre `maxRevisions` (3) decide il lead.
+
+**Checkpoint e time-travel** (spec 11, T04). Il worker prende uno snapshot leggero del suo sotto-task dopo il brief e dopo ogni passo valido (un tool che ha funzionato, un finish accettato); il primo errore (una risposta non JSON, un tool fallito, un finish rifiutato, una bocciatura) sporca il contesto. Quando passa a `frontier` non si porta dietro i tentativi bocciati: la conversazione torna all'ultimo snapshot pulito, con sopra le tue parole e i tuoi file arrivati dopo e le tue risposte alle sue domande, e una sola revisione che riassume ogni bocciatura e nomina i file lasciati nella cartella (che non tornano indietro). La scheda del task lo dice con ⏪ subito dopo ⬆️. Misurato sulla demo: la prima chiamata del modello più forte passa da 18 messaggi con 2 revisioni a 10 con una.
 
 ### Le utility
 
 | Componente | File | Ruolo |
 |---|---|---|
 | **Run** | `backend/backend/run.py` | Il ciclo di vita della missione: piano, approvazione, scheduler a tick, preparazione dei workstream, skill, brief, esecuzione, review, report. Gestisce pausa, ripresa e stop. |
-| **Tasker** | `backend/backend/tasker.py` | Il loop di un worker su un sotto-task: il modello risponde con un'azione JSON (`thought`, `tool`, `args`), il tool restituisce il risultato, si ripete fino a `finish`. Compatta il contesto: resta il brief, i passi vecchi diventano un registro di una riga. |
+| **Tasker** | `backend/backend/tasker.py` | Il loop di un worker su un sotto-task: il modello risponde con un'azione JSON (`thought`, `tool`, `args`), il tool restituisce il risultato, si ripete fino a `finish`. Compatta il contesto: resta il brief, i passi vecchi diventano un registro di una riga. Prende uno snapshot dopo ogni passo valido e, all'escalation, torna all'ultimo pulito (spec 11 T04). |
 | **Team** | `backend/backend/team.py` | Chi esiste, chi è libero, cosa fa ognuno. Assegna le persone con una coda d'attesa, crea e ritira i sub-agenti. Ogni cambio di stato diventa un evento `agent`, ed è questo che muove i personaggi in 3D. |
 | **Bus** | `backend/backend/bus.py` | Numera ogni evento (`seq`) e lo distribuisce alle code dei client SSE. |
 | **Tools** | `backend/backend/tools.py` | Una cartella per run: ogni percorso dato da un agente viene risolto lì dentro, con la stessa regola su ogni sistema (`backend/backend/paths.py`): `\` separa come `/`, e i `:` (drive o stream nascosti di Windows) sono rifiutati, così un progetto si copia da un sistema all'altro. I comandi shell sono spenti di default; quando li accendi hanno un timeout e chiudono l'intero albero di processi. |
 | **Router** | `backend/backend/router/` | OmniRoute (sotto): combo, fallback, cooldown, adapter dei provider e il simulatore demo. |
 | **Brain** | `backend/backend/brain.py` | Memoria condivisa che sopravvive ai run (fino a 5000 note), con ricerca BM25. |
 | **Skill Hub** | `backend/backend/skills.py` | Indice di ogni `SKILL.md` delle fonti configurate, più le repo GitHub predefinite. |
+| **Deconstructor** | `backend/backend/deconstructor.py`, `intent.py` | Scheletri del codice, metadati degli artefatti e riassunti delle tracce, con il gemello Rust (spec 11 T06); l'intento della missione (T09). |
 | **Media** | `backend/backend/media.py` | Immagini e voce dai provider, oppure PNG e WAV veri generati in demo. |
-| **Store** | `backend/backend/store.py` | Un file JSON per run in `data/runs/`, con un salvataggio raggruppato ogni 400 ms. |
+| **Store** | `backend/backend/store.py` | Un file JSON per run in `data/runs/`, con un salvataggio raggruppato ogni 400 ms; accanto, in `data/runs/sessions/`, le conversazioni dei worker non finiti, scritte a ogni passo valido (spec 11 T04). Ogni scrittura passa da un file temporaneo: una scrittura interrotta lascia il file di prima, non uno rotto. |
 | **Web** | `backend/backend/web.py` | Ricerca su DuckDuckGo, letture mirate di GitHub, Reddit e Hacker News. |
 
 ---
@@ -328,8 +333,8 @@ L'app recupera il contesto con una **ricerca ibrida**: **BM25**, un ranking less
 
 ```mermaid
 flowchart LR
-    T["testo"] --> N["minuscole → NFD<br/>→ via i diacritici"]
-    N --> SP["split su [^a-z0-9]+"]
+    T["testo"] --> N["minuscole → NFD<br/>→ via i diacritici, ς → σ"]
+    N --> SP["parole Unicode (lettere, cifre, segni),<br/>unite da _ :: @, più le loro parti"]
     SP --> FI["token di almeno 3 caratteri,<br/>senza stopword IT/EN"]
     FI --> IX["indice: tf pesata per campo,<br/>df, lunghezza media"]
     Q["query"] --> N2["stessa tokenizzazione"] --> SC["punteggio BM25<br/>k1 = 1.4 · b = 0.75"]
@@ -396,6 +401,10 @@ Un documento trovato in tutti e due i modi sale in cima. Ogni risultato riporta 
 
 **Il Brain** aggiunge una nota a BM25 in modo incrementale; prima ricostruiva tutto l'indice a ogni nota, circa 0,4–0,7 s a 5000 note. Le note ancora senza vettore ne ricevono uno, tutte in un colpo, alla ricerca successiva.
 
+**I token del codice e di ogni scrittura** (spec 11 T03). Un token è una parola di lettere, cifre o segni Unicode, quindi anche il greco, il cirillico, il devanagari e il CJK hanno i loro (prima nessuno). `_`, `::` e `@` tengono insieme un identificatore, che porta con sé anche le sue parti: `budget_gate` dà `budget_gate`, `budget` e `gate`, quindi chi cerca l'identificatore esatto trova prima il suo file, e chi cerca le parole lo trova ancora. Il Rust ha la stessa regola, e la probe d'avvio controlla anche il tokenizer.
+
+**Il Brain invecchia e si ripulisce** (spec 11 T03). Nella ricerca il punteggio fuso delle note degli agenti (lezioni del QA, note, riassunti delle run) si moltiplica per un fattore di tempo: 1 oggi, 0,75 a 30 giorni, mai sotto 0,5. Così una lezione recente passa davanti a una vecchia anche se corrisponde un po' meno. Alla fine di ogni run le note di quella run si confrontano con le altre: due note dello stesso tipo con coseno sopra 0,88 diventano una, la più recente, con i tag di tutte e due e il conto delle ripetizioni (`repeats`). Le tue note e i tuoi file non invecchiano e non si uniscono mai. Le soglie stanno in `rag.brain` di `config/default.json` (`dedupeCosine`, `halfLifeDays`, `decayFloor`; `halfLifeDays` 0 spegne il decadimento).
+
 ---
 
 ## Il router OmniRoute
@@ -424,7 +433,12 @@ Il gateway dei modelli dell'app, ispirato a OmniRoute ma interno.
 ```sh
 curl http://127.0.0.1:4300/v1/chat/completions -H "content-type: application/json" \
   -d '{"model": "combo:smart", "messages": [{"role": "user", "content": "ciao"}]}'
+# il testo man mano che arriva (spec 11 T05)
+curl -N http://127.0.0.1:4300/v1/chat/completions -H "content-type: application/json" \
+  -d '{"model": "combo:smart", "stream": true, "messages": [{"role": "user", "content": "ciao"}]}'
 ```
+
+Il modello è una combo (`combo:smart`; l'elenco è in `GET /v1/models`) o un `provider/modello`. Un nome che non è né l'uno né l'altro risponde 404 (`invalid_request_error`), con il messaggio nella lingua dell'app.
 
 I nomi dei modelli nelle combo sono un punto di partenza: controlla che corrispondano ai tuoi account e cambiali dalle Impostazioni.
 
@@ -476,19 +490,41 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 - **Parlare con un task.** Dalla sua scheda ("Parla con l'agente · dai una soluzione o dei file") o dall'inspector dell'agente. Le parole e i file arrivano al worker al passo successivo; se il task era fallito, torna in coda con quello che aveva bloccato.
 - **Domande che non scadono.** Una domanda ancora aperta quando la run si ferma resta `pending`: la ritrovi riaprendo la run da "Previous runs", anche dopo un riavvio del server.
 - **Nessun collo di bottiglia.** Senza risposta entro `limits.askUserTimeoutMs`, o con "💡 Trova tu una soluzione", decide il lead del team (il CEO, se è il lead a chiedere), con l'arbitro TypeSafe se configurato. `limits.autoAnswer: false` lascia la decisione al worker.
-- **Ripresa dal punto di blocco.** "⟲ Riprendi il workflow" fa ripartire una run salvata (ferma, fallita o con errori) senza rifare il lavoro consegnato: la memoria della run viene ricostruita e un worker interrotto riparte dalla sua conversazione.
+- **Ripresa dal punto di blocco.** "⟲ Riprendi il workflow" fa ripartire una run salvata (ferma, fallita o con errori) senza rifare il lavoro consegnato: la memoria della run viene ricostruita e un worker interrotto riparte dalla sua conversazione. Dalla spec 11 (T04) la conversazione va su disco entro 0,4 s da ogni passo valido, non solo a fine run: riparte da lì anche dopo un server che si è fermato di colpo.
 - **Modifiche dopo la fine.** "Non mi piace la hero: usa questa foto" nel box sotto la missione: il CEO sceglie i task da rifare, che ripartono con la direttiva e i file; il QA li rivede e il report viene riscritto. Si possono fare quanti giri si vuole.
 
 | Endpoint | Che cosa fa |
 |---|---|
 | `POST /api/uploads?name=…` | carica un file prima della missione (il corpo sono i byte del file) |
-| `POST /api/runs {goal, attachments}` | avvia la missione con i file caricati: sono nella run prima che il CEO pianifichi |
+| `POST /api/runs {goal, attachments, intent, target}` | avvia la missione con i file caricati: sono nella run prima che il CEO pianifichi. `intent` e `target` (spec 11) fissano il tipo di missione e la cartella da decodificare |
 | `POST /api/runs/{id}/attachments?name=…&taskId=…` | aggiunge un file a una run, attiva o salvata, e facoltativamente a un task |
 | `POST /api/runs/{id}/tasks/{task}/interact {text, attachments, resume}` | parla con un task; `resume: true` riprende anche la run ferma |
 | `POST /api/runs/{id}/answer {itemId, text}` o `{itemId, solve: true}` | risponde a una domanda, anche di una run salvata, o la fa decidere alla squadra |
 | `POST /api/runs/{id}/resume` | riprende una run salvata dal punto di blocco (su una run in pausa toglie la pausa) |
 | `POST /api/runs/{id}/refine {text, attachments, taskId}` | chiede una modifica: i task coinvolti ripartono e il QA li rivede |
 | `POST /api/providers` · `DELETE /api/providers/{id}` | registra o toglie un provider compatibile OpenAI senza riavviare |
+
+---
+
+## Reverse Engineering e ricostruzione clean-room
+
+Dalla spec 11 (Fase 2, [§8](docs/specs/11-core-hardening-intent-engine.md)) la CEO capisce che tipo di missione ha davanti:
+
+| Intento | Che cosa succede |
+|---|---|
+| `direct_build` | costruire qualcosa di nuovo: il flusso di sempre, senza nessuna chiamata in più |
+| `reverse_only` | decodificare un'applicazione esistente: il team Reverse Engineering consegna `blueprint.json` e `blueprint.md` |
+| `deconstruct_and_build` | decodificarla e poi ricostruirla da zero, in clean-room, dal solo blueprint |
+
+- **Quando la CEO decide.** Solo se c'è un motivo: parole di reverse engineering o di ricostruzione nell'obiettivo (nelle 5 lingue), un bersaglio, del codice tra i tuoi file. Altrimenti la missione è `direct_build` e costa come prima. Puoi fissare l'intento tu: `POST /api/runs {goal, intent, target}`.
+- **Il bersaglio.** `target` è una cartella della macchina del server. Prima che la CEO guardi la missione viene copiata in `target/` della run, senza link, cartelle nascoste, file con il nome di un segreto (`.env`, `id_rsa`, `*.pem`…), dipendenze e build; al più 3000 file e 50 MB. Vale come bersaglio anche il codice tra i tuoi file. Una missione demo senza bersaglio usa il campione *todo-board* (`backend/backend/demo_target/`).
+- **Le quattro fasi** di `deconstruct_and_build`:
+  1. **Deconstruct:** Kira e Zero mappano il bersaglio (`scan_target_tree`), ne leggono gli scheletri (`extract_code_skeleton`, circa un decimo di quello che darebbe `read_file`; anche binari, archivi, HAR e log, senza eseguirli) e scrivono il blueprint (`write_blueprint`), che il QA rivede;
+  2. **Handover:** con il blueprint approvato la CEO pianifica la ricostruzione con Sviluppo, Design, Contenuti e AI Generativa, e Pia (Prompt Lab) scrive i brief clean-room;
+  3. **Clean-Room Build:** i costruttori lavorano dal "BLUEPRINT CONTRACT" del loro brief e da `blueprint.md`; `target/`, il codice tra i tuoi file e le note del team Reverse Engineering per loro non esistono, e i tool rifiutano di leggerli;
+  4. **Parity QA:** il QA controlla ogni criterio di parità del blueprint e scrive `PARITY.md`; un criterio mancato rimanda indietro il suo task una volta.
+- **Il blueprint è il confine.** `write_blueprint` rifiuta un blueprint senza sommario, senza componenti, con meno di 2 criteri di parità o con del codice copiato dal bersaglio; `write_file` non può scriverlo.
+- **Nell'ufficio** il team ha la sua stanza a nord-ovest, con lo scanner, e l'intestazione della missione mostra l'intento (🔍 reverse engineering, 🔁 decodifica e ricostruzione).
 
 ---
 
@@ -538,7 +574,7 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 |---|---|---|
 | [pytest](https://pytest.org/) + pytest-asyncio | 9.1 / 1.4 | 1013 test del backend |
 | Node.js | ≥ 20.10 (≥ 22 per il runner) | test del mondo 3D, smoke, flussi, cartelle temporanee |
-| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (261 verifiche) |
+| Edge o Chrome headless | di sistema | runner del browser via DevTools Protocol (275 verifiche) |
 
 ### Skill e plugin
 
@@ -611,7 +647,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 |---|---|---|
 | **Python** 3.13 | `backend/` (codice 4.400, test e benchmark 3.200) | 7.500 |
 | **JavaScript** (ES modules) | `public/js/` (front-end 4.200), `scripts/` (strumenti di test 3.700) | 7.900 |
-| **Rust** (edition 2021) | `crates/aw_core/` | 200 |
+| **Rust** (edition 2021) | `crates/aw_core/` | 3.400 |
 | **HTML / CSS** | `public/` | 500 |
 | **JSON** | `config/default.json` | — |
 | **Markdown** | `docs/specs/`, `skills/*/SKILL.md` | — |
@@ -646,8 +682,8 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `NVIDIA_API_KEY`, … | accendono i provider; senza chiavi si va in demo |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers AI: l'account entra nell'URL del provider |
 | `TYPESAFE_API_KEY` (e `TYPESAFE_BASE_URL`, facoltativo) | l'arbitro TypeSafe delle decisioni prese per il proprietario; da solo non accende la modalità live |
-| `AGENT_WORLD_API_KEY` | protegge il gateway `/v1` con un Bearer token |
-| `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli) |
+| `AGENT_WORLD_API_KEY` | la chiave d'accesso: protegge il gateway `/v1` con un Bearer token e, dalla rete, anche `/api` e `/api/events` (spec 11 T02, vedi "Usarlo in LAN"); senza, la LAN resta chiusa |
+| `AGENT_WORLD_ALLOW_SHELL=1` | consente `run_command` nella cartella del run (spento di default: i comandi li scrivono i modelli); i comandi partono senza le chiavi dell'ambiente (spec 11 T02) |
 | `AGENT_WORLD_HOME` | sposta altrove `data/`: run, Brain, log delle chiamate e cartelle dei run (lo usano i test) |
 | `AGENT_WORLD_ALLOWED_HOSTS` | altri nomi con cui raggiungere il server, separati da virgole (es. `studio.lan,192.168.1.20`): servono solo se lo esponi in LAN; di default sono ammessi `127.0.0.1`, `localhost` e `::1` |
 | `AGENT_WORLD_FAST=1` | niente pause teatrali, risposte demo quasi istantanee (lo usano i test) |
@@ -657,7 +693,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 | `AGENT_WORLD_DISCOVER=0` | non chiede ai provider e ai server locali quali modelli hanno (lo usano i test) |
 | `AGENT_WORLD_EXIT_WITH_PARENT=1` | il server si chiude quando si chiude il suo stdin, cioè quando muore chi l'ha avviato; senza uno stdin collegato a una pipe non parte. Lo imposta `spawnBackend()` per i server dei test |
 
-I limiti della spec 09 stanno in `limits` di `config/default.json`; il tempo di risposta e `autoAnswer` si cambiano anche dalle Impostazioni:
+I limiti delle spec 09 e 11 stanno in `limits` di `config/default.json`; il tempo di risposta, `autoAnswer` e il budget si cambiano anche dalle Impostazioni:
 
 | Limite | Predefinito | Effetto |
 |---|---|---|
@@ -665,6 +701,10 @@ I limiti della spec 09 stanno in `limits` di `config/default.json`; il tempo di 
 | `autoAnswer` | `true` | `false`: la decide il worker da solo, come prima |
 | `modelRetries` / `modelWaitMaxMs` | 4 / 60000 | tentativi e attesa massima quando nessun modello risponde, prima della richiesta "nessun modello disponibile" |
 | `maxUploadMB` / `maxAttachments` | 25 / 60 | dimensione di un file del proprietario e numero di file per run |
+| `maxCallsPerRun` | 250 | chiamate ai provider veri per run; al limite la run va in pausa e chiede se proseguire (0 = nessun limite) |
+| `maxCostUSD` | 5 | costo stimato per run, in dollari, con i prezzi di `router.pricing`; stesso comportamento (0 = nessun limite) |
+
+**Il budget della run** (spec 11, T01). Una run conta le chiamate a cui ha risposto un provider vero e ne stima il costo: `router.pricing.models` dà i dollari per milione di token `[input, output]` di un modello (la chiave esatta, poi il primo pattern glob che corrisponde), altrimenti vale il prezzo del suo livello di costo (`router.pricing.tiers`: locale e gratuito a 0). Le risposte del simulatore, in demo o d'emergenza, non costano e non contano. Quando la run raggiunge `maxCallsPerRun` o `maxCostUSD` non fallisce: va in pausa, manda l'evento `waiting` con una richiesta di tipo `budget` e ogni chiamata del lavoro aspetta. "Prosegui" (o il pulsante Riprendi) aggiunge un altro blocco uguale, contato da dove la run è arrivata; "Ferma la run" la ferma, e la ripresa dal punto di blocco porta con sé un blocco nuovo. Ogni chiamata in volo tiene il suo posto, quindi i worker in parallelo non superano insieme il limite delle chiamate; il costo di una chiamata si conosce solo quando risponde. Le chiamate chieste dal proprietario ("💡 Trova tu una soluzione", una modifica, la risposta di un task) si contano ma non si fermano mai. I prezzi di serie sono listini indicativi da verificare; i livelli gratuiti di Groq, Cerebras, NVIDIA, Cloudflare e Gemini Flash valgono 0: se li paghi, aggiungili a `router.pricing.models`. Il pannello della missione mostra le chiamate pagate e il costo stimato rispetto al budget.
 
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 
@@ -672,7 +712,7 @@ Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni te
 
 ## Sicurezza
 
-Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine web che apri nel browser (spec 07, [`docs/specs/07-security.md`](docs/specs/07-security.md)). Tutte le regole stanno in `backend/backend/security.py` e in `routes/static.py`, e valgono prima di ogni route.
+Su questa macchina il server non ha login: di default ascolta solo su `127.0.0.1`, e si difende dalle pagine web che apri nel browser (spec 07, [`docs/specs/07-security.md`](docs/specs/07-security.md)). Dalla rete chiede la chiave d'accesso (spec 11 T02, [`docs/specs/11-core-hardening-intent-engine.md`](docs/specs/11-core-hardening-intent-engine.md) §4). Le regole stanno in `backend/backend/security.py`, `routes/session.py` e `routes/static.py`, e valgono prima di ogni route.
 
 | Regola | Contro cosa |
 |---|---|
@@ -682,12 +722,14 @@ Il server non ha login: ascolta solo su `127.0.0.1`, e si difende dalle pagine w
 | Serve i siti generati dagli agenti in una sandbox con un'origine opaca (`Content-Security-Policy: sandbox`, senza `allow-same-origin`) | un sito generato, magari guidato da una pagina malevola, che usa le API dell'app |
 | `X-Frame-Options: DENY` e `frame-ancestors 'none'` su ogni pagina, più `nosniff` | clickjacking |
 | `web_fetch` legge solo indirizzi pubblici e si connette all'indirizzo che ha controllato | SSRF: un agente spinto a leggere `127.0.0.1`, la rete privata o i metadati cloud |
-| Il token di `AGENT_WORLD_API_KEY` si confronta a tempo costante | indovinare il token del gateway `/v1` |
+| Dalla rete `/api`, `/api/events` e `/v1` vogliono `AGENT_WORLD_API_KEY`: un header `Authorization: Bearer …` (script) o il cookie di sessione (browser). Locale vuol dire `Host` di loopback **e** connessione da questa macchina; senza chiave sul server la rete è chiusa | chiunque sulla rete che prende il controllo dell'app, anche scrivendo `Host: 127.0.0.1` |
+| La chiave si confronta a tempo costante; il cookie non è la chiave ma una scadenza firmata con lei | indovinare la chiave; un cookie rubato che la rivela |
+| `run_command` parte con un ambiente senza chiavi | un comando scritto da un modello che legge le chiavi del server e le manda fuori |
 
 **Da sapere:**
 - **Anteprima dei siti generati.** Nella sandbox i loro script girano, ma non hanno `localStorage` né cookie. Se un sito ne ha bisogno, aprilo dalla cartella del run.
-- **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve.
-- **I 403 di queste regole** hanno il messaggio "Request refused: …", nella lingua dell'app ("Richiesta rifiutata: …" in italiano).
+- **Comandi shell.** `AGENT_WORLD_ALLOW_SHELL=1` dà agli agenti una shell nella cartella del run. Un agente guidato da una pagina malevola può eseguire comandi: tienila spenta se non ti serve. Dalla spec 11 i comandi non vedono le chiavi: manca ogni variabile che ha tra le parole del nome (separate da `_`) `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIALS` o `AUTH` (anche `APIKEY`, `KEYS`, `TOKENS`, `SECRETS`, `PASSWD`), e ogni variabile che la configurazione nomina come `keyEnv`, qualunque nome abbia. Non è una sandbox: un comando legge ancora i file a cui arriva il tuo utente, `.env` compreso.
+- **I rifiuti di queste regole** sono nella lingua dell'app: i 403 "Request refused: …" ("Richiesta rifiutata: …" in italiano), il 401 "This agent-world is shared on the network: …" e il 403 "Access from the network is off: …".
 
 ### Usarlo in LAN
 
@@ -697,14 +739,17 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
    ```json
    { "server": { "host": "0.0.0.0" } }
    ```
-2. In `.env` elenca i nomi o gli indirizzi con cui gli altri lo raggiungeranno, separati da virgole:
+2. In `.env` elenca i nomi o gli indirizzi con cui gli altri lo raggiungeranno, separati da virgole, e scegli una chiave d'accesso lunga e casuale:
    ```sh
    AGENT_WORLD_ALLOWED_HOSTS=192.168.1.20,studio.lan
+   AGENT_WORLD_API_KEY=...
    ```
-   Senza questa riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed" (nella lingua dell'app).
-3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo.
+   Al posto di `...` va la chiave: una così la dà `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Senza la prima riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed"; senza la chiave la pagina si apre ma l'app risponde 403 "Access from the network is off: …" (nella lingua dell'app).
+3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo. La pagina chiede la chiave d'accesso: con quella giusta il browser riceve un cookie di sessione (`aw_session`: `HttpOnly`, `SameSite=Strict`, 7 giorni) e l'app si apre. Uno script usa invece `Authorization: Bearer <chiave>`, anche su `/v1`.
 
-> **Attenzione: `/api` non ha login.** Chi raggiunge il server dalla rete ne ha il controllo completo: avvia missioni, legge i file dei run e cambia la configurazione, compresi gli URL dei provider a cui il router manda le tue chiavi. Fallo solo su una rete di cui ti fidi. `AGENT_WORLD_API_KEY` protegge solo il gateway `/v1`.
+Su questa macchina (`http://127.0.0.1:4300`, `localhost`, `[::1]`) non cambia niente: la chiave non serve. Cambiare la chiave chiude tutte le sessioni aperte.
+
+> **Da sapere.** Senza la chiave, dalla rete restano aperte la pagina (è il codice dell'app) e le anteprime dei siti generati: chi conosce l'id di una run (8 cifre esadecimali) vede `/preview/<id>/` (ticket N18). Su `http` la chiave e il cookie passano in chiaro: in una rete che non controlli metti davanti un proxy `https`, che passi l'`Host` originale o `X-Forwarded-For` (un proxy sulla stessa macchina che riscrive l'`Host` in `127.0.0.1` fa sembrare locale tutta la rete). Non c'è un limite ai tentativi: per questo la chiave va lunga.
 
 ---
 
@@ -713,17 +758,17 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
 ```sh
 npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
-npm run test:browser   # runner headless: 261 verifiche sul front-end vero (~6 min)
+npm run test:browser   # runner headless: 275 verifiche sul front-end vero (~5-6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (1013 test, più 3 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`).
+- **`pytest` (1232 test, più 5 saltati: i test della parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`); il tokenizer per il codice e ogni scrittura, la sua probe, il consolidamento e il decadimento del Brain (`test_search.py`, `test_search_rust.py`, `test_brain.py`); gli snapshot del Tasker, il ritorno all'ultimo punto pulito all'escalation, le sessioni su disco a ogni passo valido e le scritture atomiche dello store (`test_tasker.py`, `test_store.py`, `test_checkpoint.py`); lo streaming vero di `/v1`: i chunk man mano che il provider scrive (provato su un server vero, con un provider finto che aspetta il test), OpenAI, Anthropic e simulatore, il failover prima delle prime parole, un'interruzione a metà, `<think>` spezzati tra i chunk, un client che se ne va, un modello sconosciuto (`test_gateway_stream.py`); la Fase 2: gli scheletri in ogni linguaggio (il Python anche contro il parser vero), artefatti e tracce, la probe del gemello Rust, i tool del bersaglio e del blueprint, il team Reverse Engineering, l'intento nelle 5 lingue, la clean room, il passaggio di consegne, la QA di parità e le missioni demo dei tre intenti (`test_deconstructor.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
-- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. I rossi attesi stanno in `scripts/browser/known-red.json`.
+- **Runner del browser:** apre l'app in Edge o Chrome headless e misura inquadratura, etichette, sovrapposizioni dei pannelli, input, le cinque lingue e una missione completa. Con un clock fisso controlla anche che i sub-agenti lavorino solo al loro posto (A10). La fase `recovery` (spec 09) carica file con trascinamento, incolla e 📎, parla con un task bloccato e riprende il workflow, chiede una modifica a fine missione e registra un provider dalle Impostazioni. La fase `hiring` (spec 10) controlla il badge del modello assunto su ogni sotto-task, un subentro con il suo motivo e il catalogo profilato della scheda Router. La fase `budget` (spec 11) controlla la richiesta di una run ferma al budget, i suoi due pulsanti, la spesa nel pannello della missione e i limiti nelle Impostazioni. La fase `brain` (spec 11) controlla che la scheda Brain aperta ricarichi l'elenco dopo un consolidamento. La fase `checkpoint` (spec 11) controlla che un task salito a `frontier` dica nella sua timeline che è ripartito dall'ultimo punto pulito (⏪ dopo ⬆️). La fase `lan` (spec 11) apre la stessa app come `lan.localhost`, che per il server è un nome della rete: il login nella lingua dell'app (l'italiano, per l'occasione), che Esc non chiude, una chiave sbagliata, quella giusta con il suo cookie e il flusso di eventi, il reload; e su `127.0.0.1` nessun login, con la chiave impostata. I rossi attesi stanno in `scripts/browser/known-red.json`.
 - **Su una macchina lenta:** le attese del runner contano i frame, non i millisecondi, quindi i controlli della camera valgono anche con il WebGL software di un container senza GPU (circa 2 frame al secondo). Il runner stampa quanti frame al secondo disegna il browser; per riprodurre un container: `BROWSER_FLAGS=--disable-gpu BROWSER_CPU_THROTTLE=20 npm run test:browser`.
-- **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione).
+- **Igiene:** i test non lasciano processi del browser né cartelle temporanee, nemmeno quando falliscono (`npm run sweep` ripulisce dopo un'interruzione). Non toccano nemmeno i tuoi file accanto al codice: ogni script che avvia un server lo fa con `demoEnv()` e una cartella temporanea (`scripts/launcher-test.js` lo controlla su tutti gli script), e `pytest` fallisce se una sessione scrive `config/local.json` o crea un file o una cartella, anche vuota, in `data/` o `skills/vendor/`.
 - **Su ogni sistema:** `npm test` gira uguale su Windows, Linux e macOS. Un server di test si chiude con lo script che l'ha avviato, anche quando lo script viene ucciso dall'esterno. Il runner del browser cerca Edge o Chrome nei percorsi standard; altrimenti indica il browser con `BROWSER`.
 
 Tutti i test girano in demo: le chiavi vengono svuotate anche se sono in `.env`.
@@ -745,7 +790,8 @@ Quello che trova lo stampa oscurato.
 ```
 agent-world/
 ├─ backend/                 backend FastAPI (progetto uv)
-│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py · crossbus.py · rag_budget.py
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py · crossbus.py · rag_budget.py · deconstructor.py · intent.py
+│  │  ├─ demo_target/       il campione todo-board delle missioni demo di reverse engineering (spec 11)
 │  │  ├─ routes/            api_state · runs · providers · skills_brain · events (SSE) · gateway (/v1) · static
 │  │  └─ router/            index (OmniRoute) · providers · profiler · hiring (spec 10) · mock (demo)
 │  ├─ tests/                pytest
@@ -760,4 +806,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md), il core hardening e l'intent engine la [spec 11](docs/specs/11-core-hardening-intent-engine.md).

@@ -63,7 +63,7 @@ async def test_v1_chat_completions_requires_messages(client):
 
 
 @pytest.mark.asyncio
-async def test_v1_chat_completions_stream_single_chunk(client):
+async def test_v1_chat_completions_stream_ends_with_done(client):  # spec 11 T05: the chunks in test_gateway_stream.py
     async with client as c:
         async with c.stream("POST", "/v1/chat/completions", json={"model": "combo:fast", "stream": True, "messages": [{"role": "user", "content": "ping"}]}) as resp:
             assert resp.status_code == 200

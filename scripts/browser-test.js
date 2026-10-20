@@ -21,13 +21,20 @@
 // killed, interrupted and closed, and the sweep of what they leave). Spec 06: language
 // (L1-L7: the IT/EN switch, its persistence, the run payload, the voice). Spec 10: hiring
 // (R5: the hired model on every card, a replacement, the profiled catalog of the Router tab).
+// Spec 11: budget (T01: the request of a run at its budget, its answers, the spend, the Settings),
+// lan (T02: the login of a page on the LAN, its cookie, the page on this machine that never asks),
+// brain (T03: a consolidation reloads the open Brain list and moves the office label),
+// checkpoint (T04: an escalated task says in its timeline that it went back to its last clean step).
 // Expected reds: a check that fails on today's code and is listed in
 // scripts/browser/known-red.json, with the ticket that fixes it, is counted apart and
 // does not fail the run; listed but passing, it does (its mark must go).
 // The server never sees an API key: every key the config names is set to "" (present,
 // so .env cannot fill it in), and a run that is not in demo mode is stopped at once.
+// It has an access key of its own (AGENT_WORLD_API_KEY, spec 11 T02), random for each
+// run: on 127.0.0.1 nothing asks for it, which every phase but lan checks by working.
 // At the end no browser process may be left with this run's profile, and no folder.
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -51,12 +58,16 @@ const arg = (name, fallback = null) => {
 };
 const flag = (name) => process.argv.includes(name);
 const ROOT = resolve(arg('--root', join(HERE, '..')));
-const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,recovery').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
+const PHASES = (arg('--only') ?? 'hygiene,views,checks,cubes,input,overlaps,labels,language,run,hiring,budget,brain,checkpoint,recovery,lan').split(',').filter((p) => !(flag('--skip-run') && p === 'run'));
 const SHOTS = arg('--shots') && resolve(arg('--shots'));
 const TAG = arg('--tag', 'dopo');
 const SPEC = arg('--spec', '02');
 const PORT = Number(arg('--port', 4397));
 const BASE = `http://127.0.0.1:${PORT}`;
+// spec 11 T02: the browser resolves *.localhost to this machine by itself; to the server
+// that Host is no loopback name, so a page there is a page on the LAN (D7)
+const LAN_BASE = `http://lan.localhost:${PORT}`;
+const LAN_KEY = randomBytes(24).toString('hex');
 const MISSION = 'Il sito completo per il lancio di una pizzeria napoletana a Milano, con brand, immagini e testi';
 const VIEWPORTS = [[1920, 1080], [2560, 1440], [1440, 900]];
 const LAYOUTS = { LR: [true, true], '-R': [false, true], '--': [false, false] };
@@ -95,7 +106,7 @@ const phaseOf = (key) => {
   if (/^(E\d|model|D8)$/.test(c)) return 'labels';
   if (/^H\d$/.test(c)) return 'hygiene';
   if (/^L\d$/.test(c)) return 'language';
-  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring' }[c] ?? c;
+  return { A6: 'checks', A7: 'checks', A8: 'checks', A9: 'cubes', A10: 'run', R5: 'hiring', T01: 'budget', T02: 'lan', T03: 'brain', T04: 'checkpoint' }[c] ?? c;
 };
 
 // ---------- demo server ----------
@@ -104,6 +115,8 @@ async function startServer(home) {
   // demo: every provider key blanked, also the ones of local.json and .env
   const env = demoEnv(ROOT, { PORT: String(PORT), AGENT_WORLD_HOME: home });
   delete env.AGENT_WORLD_FAST; // the mission at its normal pace, as in T0
+  // after demoEnv, which blanks every *_KEY: the access key is not a provider's
+  Object.assign(env, { AGENT_WORLD_API_KEY: LAN_KEY, AGENT_WORLD_ALLOWED_HOSTS: 'lan.localhost' });
   const server = spawnBackend(ROOT, env);
   server.exited = new Promise((ok) => server.once('exit', ok));
   await new Promise((ok, fail) => {
@@ -501,10 +514,14 @@ async function labels(cdp) {
   results.drawnVariant = drawnAs.join(', ');
   report('model', 'the drawn room labels match a variant of the model within 1 px', all['model check'].value <= 1, all['model check']);
   report('model', 'the app draws variant B (D8)', drawnAs.length === 1 && drawnAs[0] === 'B', { drawnAs });
+  // spec 11 T08: the counts follow the teams of the config (a ninth team added a worker and 2 bay seats)
+  const teams = Object.values(JSON.parse(readFileSync(join(ROOT, 'config', 'default.json'), 'utf8')).teams);
+  const workers = teams.reduce((n, t) => n + Math.min(2, (t.workers ?? []).length), 0);
+  const seats = teams.reduce((n, t) => n + Math.min(3, t.maxSubAgents ?? 0), 0);
   const s01 = runs['1920x1080 vuote'].spec01;
-  report('model', 'spec 01 numbers: 7/7 workers under their room label, full view LR', s01?.workers === 7 && s01.covered === 7, s01);
+  report('model', 'spec 01 numbers: every worker under its room label, full view LR', s01?.workers === workers && s01.covered === workers, { ...s01, expected: workers });
   const subs = runs[`${LABEL_SIZES[0]} piene`].subAgents;
-  report('model', 'every bay seat taken', subs === 14, { subAgents: subs });
+  report('model', 'every bay seat taken', subs === seats, { subAgents: subs, expected: seats });
   await viewport(cdp, size('1920x1080'));
   const byCss = await cdp.eval('__checks.labels.checkVariants()');
   report('model', 'every variant computed within 1 px of the same variant drawn by CSS', Object.values(byCss).every((d) => d.worstPx <= 1), byCss);
@@ -613,11 +630,11 @@ async function run(cdp) {
 
 const HIRING_MISSION = 'Una breve nota di benvenuto per il bar';
 
-// The English words of the UI, to read the badges as a user reads them
-const uiWords = async () => {
+// The words of the UI (English unless told), to read the page as a user reads it
+const uiWords = async (lang = 'en') => {
   globalThis.document ??= { documentElement: {} }; // i18n.js sets <html lang> when the language changes
   const { dictionaries } = await import(pathToFileURL(join(ROOT, 'public', 'js', 'i18n.js')).href);
-  return dictionaries().en;
+  return dictionaries()[lang];
 };
 
 // A demo hires nobody (D5): the live hires and a replacement come from the network
@@ -697,6 +714,214 @@ async function hiring(cdp) {
   report('R5', 'the Router tab lists every profiled model: size, tier, cost, specialties, health', Boolean(tab) && tab.models.length === catalog.length && catalog.length > 0 && !bad.length, { models: tab?.models.length, catalog: catalog.length, bad: bad.slice(0, 5) });
   await cdp.eval(`document.querySelector('#tab-router .catalog-hint')?.scrollIntoView(); true`);
   await shot(cdp, 'hiring-router');
+}
+
+// ---------- spec 11 T01: the budget of a run ----------
+
+// A demo never reaches its budget (D1: the simulator costs nothing). The live run that
+// did comes in through the page's own event stream: an EventSource wrapper installed
+// before the page loads keeps the stream main.js opens, and the run frame of a run paused
+// at its budget is handed to its onmessage, as the server would send it. The answer the
+// owner gives goes to the page's own fetch, which records it.
+const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+// keeps every EventSource the page opens in window.__es (installed before the page loads)
+const ES_WRAP = `(() => { const ES = window.EventSource; window.__es = []; window.EventSource = class extends ES { constructor(...a) { super(...a); window.__es.push(this); } }; })()`;
+
+async function budgetPhase(cdp) {
+  const en = await uiWords();
+  await cdp.send('Page.enable'); // the scripts for a new document need the Page domain on
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  const runs = await api('/api/runs');
+  const base = runs.find((r) => TERMINAL_RUN.includes(r.status)) && (await api(`/api/runs/${runs.find((r) => TERMINAL_RUN.includes(r.status)).id}`));
+  const fx = JSON.parse(JSON.stringify(base ?? { tasks: [], workstreams: [], messages: [], attachments: [] }));
+  Object.assign(fx, { id: 'spec11-budget', goal: 'A paid run at its budget', status: 'running', paused: true, mode: 'live', finishedAt: null, error: null, createdAt: new Date().toISOString() });
+  fx.usage = { ...(fx.usage ?? {}), calls: 250, providerCalls: 250, costUSD: 1.2345 };
+  fx.budget = { step: { calls: 250, costUSD: 5 }, limit: { calls: 250, costUSD: 5 }, approvals: 0 };
+  const item = { id: 'b11', kind: 'budget', status: 'open', from: 'ada', reason: 'calls', answer: null, createdAt: Date.now(), spent: { calls: 250, costUSD: 1.2345 }, limit: fx.budget.limit, step: fx.budget.step, text: 'Budget reached: 250 model calls (limit 250). Spent so far: 250 calls, $1.23 estimated. Approve to go on with one more block (250 calls · $5.00); reject to stop the run (you can resume it later from where it stopped).' };
+  fx.waiting = [item];
+  const feed = (run) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'run', payload: run }))} }); return true; })()`);
+  const fed = await until(() => feed(fx), 5000, 100); // main.js opens the stream at the end of its boot
+
+  // 1. the request: what it is, the numbers, the two answers; the panel shows the spend
+  const panel = await until(() => cdp.eval(`(() => {
+    const w = document.querySelector('#waiting'); const it = w?.querySelector('.wait-item'); if (!it || w.classList.contains('hidden')) return null;
+    const b = [...it.querySelectorAll('[data-answer="b11"]')];
+    return { who: it.querySelector('.who')?.textContent, q: it.querySelector('.q')?.textContent, placeholder: it.querySelector('textarea')?.placeholder,
+      buttons: b.map((x) => ({ text: x.textContent, decision: x.dataset.decision })),
+      calls: document.querySelector('#current [data-budget="calls"]')?.textContent, cost: document.querySelector('#current [data-budget="cost"]')?.textContent, paused: document.querySelector('#current .status')?.textContent }; })()`), 10000, 100);
+  report('T01', 'a run at its budget asks the owner: the request, its numbers and the two answers', fed && Boolean(panel) && panel.who.includes(en['wait.budget']) && panel.q === item.text && panel.placeholder === en['wait.notes'] && JSON.stringify(panel.buttons) === JSON.stringify([{ text: en['wait.budgetGo'], decision: 'approve' }, { text: en['wait.budgetStop'], decision: 'reject' }]), { fed, ...(panel ?? {}) });
+  report('T01', 'the mission panel shows the paid calls and the estimated cost against the budget', Boolean(panel) && panel.calls === fill(en['current.paidCalls'], { n: 250, limit: 250 }) && panel.cost === fill(en['current.cost'], { usd: '$1.23', limit: '$5.00' }) && panel.paused.includes(en['current.paused'].trim()), panel ?? {});
+  await shot(cdp, 'budget-waiting');
+
+  // 2. "Go on": the page posts the owner's go-ahead and notes for this request
+  await cdp.eval(`(() => { window.__posted = []; const real = window.fetch.bind(window);
+    window.fetch = (url, opts) => String(url).endsWith('/api/runs/spec11-budget/answer') ? (window.__posted.push(JSON.parse(opts.body)), Promise.resolve(new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }))) : real(url, opts);
+    document.querySelector('textarea[data-wait="b11"]').value = 'Ok, then wrap it up';
+    document.querySelector('[data-answer="b11"][data-decision="approve"]').click(); return true; })()`);
+  const posted = await until(() => cdp.eval('window.__posted?.length ? window.__posted : null'), 5000, 100);
+  const toastText = await until(() => cdp.eval(`[...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' | ') || null`), 5000, 100);
+  report('T01', 'going on posts the go-ahead with the notes for the team, and says so', Boolean(posted) && posted.length === 1 && posted[0].itemId === 'b11' && posted[0].decision === 'approve' && posted[0].text === 'Ok, then wrap it up' && toastText === en['answer.budgetGo'], { posted, toast: toastText });
+
+  // 3. the next run frame (answered, running again): the request is gone, the spend stays
+  item.status = 'answered';
+  item.answer = { text: 'Ok, then wrap it up', decision: 'approve', at: Date.now() };
+  fx.paused = false;
+  fx.budget = { ...fx.budget, limit: { calls: 500, costUSD: 6.23 }, approvals: 1 };
+  await feed(fx);
+  const after = await until(() => cdp.eval(`(() => { const w = document.querySelector('#waiting'); return w.classList.contains('hidden') && { calls: document.querySelector('#current [data-budget="calls"]')?.textContent, cost: document.querySelector('#current [data-budget="cost"]')?.textContent }; })()`), 5000, 100);
+  report('T01', 'after the go-ahead the request closes and the panel counts against the new block', Boolean(after) && after.calls === fill(en['current.paidCalls'], { n: 250, limit: 500 }) && after.cost === fill(en['current.cost'], { usd: '$1.23', limit: '$6.23' }), after || {});
+
+  // 4. the Settings: the two limits of the config, editable
+  const cfg = (await api('/api/config')).limits ?? (await api('/api/state')).config.limits;
+  await cdp.eval(`document.querySelector('#btn-settings').click(); true`);
+  const inputs = await until(() => cdp.eval(`(() => { const c = document.querySelector('#settings [data-limit="maxCallsPerRun"]'), u = document.querySelector('#settings [data-limit="maxCostUSD"]'); return c && u && { calls: Number(c.value), cost: Number(u.value), hint: document.querySelector('#settings')?.textContent.includes(${JSON.stringify(en['settings.budgetHint'])}) }; })()`), 5000, 100);
+  report('T01', 'the Settings show the two limits of the budget', Boolean(inputs) && inputs.calls === cfg.maxCallsPerRun && inputs.cost === cfg.maxCostUSD && inputs.hint, { ...(inputs ?? {}), config: { calls: cfg.maxCallsPerRun, cost: cfg.maxCostUSD } });
+  await shot(cdp, 'budget-settings');
+  await cdp.eval(`document.querySelector('#settings [data-act="close-modal"]')?.click(); true`);
+}
+
+// ---------- spec 11 T03: a consolidation in the Brain tab ----------
+
+// The end of a run merges near-duplicate notes and says so with a "brain" event
+// (op "consolidate"). The open Brain tab must reload its list, or it keeps showing
+// the notes that are gone; a recall does not reload it. The events enter through the
+// page's own stream, as in the budget phase.
+async function brainPhase(cdp) {
+  const en = await uiWords();
+  await cdp.send('Page.enable');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  await cdp.eval(`(() => { window.__brainCalls = 0; const real = window.fetch.bind(window);
+    window.fetch = (url, opts) => { if (String(url).startsWith('/api/brain')) window.__brainCalls++; return real(url, opts); };
+    document.querySelector('[data-tab="brain"]').click(); return true; })()`);
+  const opened = await until(() => cdp.eval('window.__brainCalls'), 5000, 100); // the tab loads its list once
+  const target = (await api('/api/brain')).count + 7; // a count the page has not shown
+  const feed = (payload) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'brain', payload }))} }); return true; })()`);
+  const fedRecall = await until(() => feed({ op: 'recall', agentId: null, count: target - 7, hits: 1 }), 5000, 100);
+  await cdp.eval('__t.frames(10)');
+  const afterRecall = await cdp.eval('window.__brainCalls');
+  const fed = await feed({ op: 'consolidate', agentId: null, count: target, removed: 2, runId: 'spec11-t03' });
+  const afterConsolidate = await until(() => cdp.eval(`window.__brainCalls > ${afterRecall} && window.__brainCalls`), 5000, 100);
+  report('T03', 'a consolidation reloads the open Brain list, a recall does not', Boolean(opened) && fedRecall && fed && afterRecall === opened && afterConsolidate === opened + 1, { opened, afterRecall, afterConsolidate });
+  const label = await cdp.eval(`document.querySelector('.brain-label span')?.textContent ?? null`);
+  report('T03', 'the office label follows the count of the consolidation', label === fill(en['world.brain'], { n: target }), { label, expected: fill(en['world.brain'], { n: target }) });
+  await shot(cdp, 'brain-consolidate');
+}
+
+// ---------- spec 11 T04: the time-travel of an escalated task ----------
+
+// A worker that moves to the stronger model goes back to its last clean step, and its
+// task says so in the timeline (⏪), right after the escalation (⬆️). The runner's mission
+// does not always escalate, so the run that did enters through the page's own stream, as
+// in the budget phase: one workstream, one task with the two notes the backend writes.
+async function checkpointPhase(cdp) {
+  await cdp.send('Page.enable');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await load(cdp, VIEWPORTS[0]);
+    await layout(cdp, LAYOUTS.LR);
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
+  const now = Date.now();
+  const ESC = 'Escalated to the "frontier" model';
+  const REWIND = 'Back to the last clean point, after 3 valid steps: 9 messages with the errors leave the context, the rejections go in one message';
+  const verdict = (attempt) => ({ verdict: 'revise', score: 5 + attempt, feedback: 'The booking form has no date validation.', judgeId: 'bruno', attempt, security: true, ts: now });
+  const task = {
+    id: 'w1.1', wsId: 'w1', team: 'dev', title: 'The booking page', description: 'Build the booking page with its form.', acceptance: ['The form checks the date'], outputs: ['index.html'], dependsOn: [],
+    skills: [], brief: '', pitfalls: [], status: 'working', agentId: 'nina', attempts: 3, revisions: 2, escalated: true, summary: '', files: [], error: null,
+    verdicts: [verdict(1), verdict(2)], startedAt: new Date(now).toISOString(), finishedAt: null, checkpoint: { step: 3, attempt: 3, clean: true },
+    history: [
+      { ts: now, agentId: 'nina', kind: 'step', text: 'I write the page', tool: 'write_file', target: 'index.html' },
+      { ts: now, agentId: 'nina', kind: 'escalate', text: ESC },
+      { ts: now, agentId: 'nina', kind: 'rewind', text: REWIND, step: 3, dropped: 9 },
+    ],
+  };
+  const fx = {
+    id: 'spec11-rewind', slug: 'an-escalated-task-spec11-rewind', goal: 'An escalated task', status: 'running', complexity: 'simple', paused: false, approvePlan: false, language: 'en', mode: 'demo',
+    createdAt: new Date(now).toISOString(), finishedAt: null, planSummary: '', report: '', error: null, messages: [], waiting: [], attachments: [], workspace: '',
+    workstreams: [{ id: 'w1', team: 'dev', title: 'The booking site', objective: 'A booking site', deliverables: ['index.html'], acceptance: [], dependsOn: [], status: 'running', leadId: 'leo', summary: '' }],
+    tasks: [task],
+    usage: { calls: 12, tokensIn: 0, tokensOut: 0, escalations: 1, subAgents: 0, providerCalls: 0, costUSD: 0 },
+  };
+  const feed = (run) => cdp.eval(`(() => { const es = window.__es?.[0]; if (!es) return false; es.onmessage({ data: ${JSON.stringify(JSON.stringify({ type: 'run', payload: run }))} }); return true; })()`);
+  const fed = await until(() => feed(fx), 5000, 100);
+  await cdp.eval(`document.querySelector('[data-tab="board"]').click(); true`);
+  const opened = await until(() => cdp.eval(`(() => { const top = document.querySelector('[data-task="w1.1"] .top'); if (!top) return false; top.click(); return true; })()`), 5000, 100);
+  const rows = await until(() => cdp.eval(`(() => { const ev = [...document.querySelectorAll('[data-task="w1.1"] .timeline .ev > div')]; return ev.length >= 3 && ev.map((e) => e.textContent); })()`), 5000, 100);
+  const at = (text) => (rows || []).indexOf(text);
+  report('T04', 'an escalated task says in its timeline that it went back to its last clean step (⏪, right after ⬆️)', fed && Boolean(opened) && at(`⏪ ${REWIND}`) >= 0 && at(`⏪ ${REWIND}`) === at(`⬆️ ${ESC}`) + 1, { rows });
+  await shot(cdp, 'checkpoint-rewind');
+}
+
+// ---------- spec 11 T02: the access key on the LAN ----------
+
+// The same page and server, reached as lan.localhost: the page asks GET /api/session
+// first, shows its login in the app's language, and only with the key loads the office.
+async function lanPhase(cdp) {
+  // the app in Italian, so that "in the app's language" is not also English, the page's own default
+  const before = (await api('/api/config')).ui?.language ?? 'en';
+  await api('/api/config', { ui: { language: 'it' } });
+  const { language, local } = await api('/api/session'); // from here (127.0.0.1): local, never asks
+  const words = await uiWords(language);
+  // the server's own words for a wrong key, asked from here, where the same check runs
+  const wrongText = (await fetch(`${BASE}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"key":"not the key"}' }).then((r) => r.json())).error;
+  const submit = (key) => cdp.eval(`(() => { const f = document.querySelector('#login form'); if (!f) return false; f.querySelector('input').value = ${JSON.stringify(key)}; f.requestSubmit(); return true; })()`);
+  const state = () => cdp.eval(`(() => { const m = document.querySelector('#login'); return { login: Boolean(m) && !m.classList.contains('hidden'), actors: window.agentWorld?.actors.size ?? 0, stream: window.__es?.[0]?.readyState ?? null }; })()`);
+  await cdp.send('Page.enable');
+  await cdp.send('Network.enable');
+  await cdp.send('Network.clearBrowserCookies');
+  const { identifier } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: ES_WRAP });
+  try {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: VIEWPORTS[0][0], height: VIEWPORTS[0][1], deviceScaleFactor: 1, mobile: false });
+    await cdp.send('Page.navigate', { url: LAN_BASE });
+    // 1. the login, in the app's language, and nothing of the office behind it
+    const login = await until(() => cdp.eval(`(() => { const m = document.querySelector('#login'); if (!m || m.classList.contains('hidden')) return null;
+      return { title: m.querySelector('h2')?.textContent, text: m.querySelector('p')?.textContent, input: m.querySelector('input')?.type, placeholder: m.querySelector('input')?.placeholder, button: m.querySelector('button[type=submit]')?.textContent,
+        lang: document.documentElement.lang, actors: window.agentWorld?.actors.size ?? 0, stream: window.__es?.length ?? 0, toasts: [...document.querySelectorAll('.toast')].map((x) => x.textContent) }; })()`), 20000, 200);
+    // no toast: the page did not try the state first (a "could not load" behind the dialog)
+    report('T02', 'on the LAN the page asks for the access key in the app language, and loads nothing before', local === true && language === 'it' && Boolean(login) && login.title === words['login.title'] && login.text === words['login.text'] && login.input === 'password' && login.placeholder === words['login.key'] && login.button === words['login.go'] && login.lang === language && login.actors === 0 && login.stream === 0 && !login.toasts.length, { local, language, ...(login ?? {}) });
+    await shot(cdp, 'lan-login');
+    // the login cannot be put aside: Esc and a click beside a dialog close the others
+    await cdp.eval(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); document.querySelector('#login')?.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`);
+    const kept = await cdp.eval(`Boolean(document.querySelector('#login')) && !document.querySelector('#login').classList.contains('hidden')`);
+    report('T02', 'Esc and a click beside the login do not close it', kept, { kept });
+    // 2. a wrong key: the server's refusal in the dialog, which stays
+    const sentWrong = await submit('not the key');
+    const wrong = await until(() => cdp.eval(`(() => { const e = document.querySelector('#login .login-error')?.textContent; return e ? { error: e, open: !document.querySelector('#login').classList.contains('hidden'), actors: window.agentWorld?.actors.size ?? 0 } : null; })()`), 5000, 100);
+    report('T02', 'a wrong key is refused in the dialog with the server words, and the page stays closed', sentWrong && Boolean(wrong) && wrong.error === wrongText && wrong.open && wrong.actors === 0, { expected: wrongText, ...(wrong ?? {}) });
+    // 3. the key: the office and its event stream, with a session cookie that is not the key
+    await submit(LAN_KEY);
+    const inside = await until(async () => { const s = await state(); return !s.login && s.actors > 0 && s.stream === 1 ? s : null; }, 20000, 200);
+    const { cookies } = await cdp.send('Network.getCookies', { urls: [LAN_BASE] });
+    const c = cookies.find((x) => x.name === 'aw_session');
+    const cookie = c && { httpOnly: c.httpOnly, sameSite: c.sameSite, path: c.path, days: Math.round((c.expires - Date.now() / 1000) / 86400), holdsKey: c.value.includes(LAN_KEY) };
+    report('T02', 'the key opens the office and its event stream, with an HttpOnly SameSite=Strict session cookie that is not the key', Boolean(inside) && Boolean(cookie) && cookie.httpOnly && cookie.sameSite === 'Strict' && cookie.path === '/' && cookie.days === 7 && !cookie.holdsKey, { inside, cookie });
+    await shot(cdp, 'lan-inside');
+    // 4. a reload keeps the session: straight to the office
+    await cdp.send('Page.reload');
+    const again = await until(async () => { const s = await state(); return !s.login && s.actors > 0 && s.stream === 1 ? s : null; }, 20000, 200);
+    report('T02', 'a reload keeps the session: no login again', Boolean(again), again ?? (await state().catch(() => ({}))));
+  } finally {
+    await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    await cdp.send('Network.clearBrowserCookies');
+    await api('/api/config', { ui: { language: before } });
+  }
+  // 5. on this machine the same server, with its key, never asks
+  await load(cdp, VIEWPORTS[0]);
+  const home = await state();
+  report('T02', 'on this machine the page never asks for the key', !home.login && home.actors > 0, home);
 }
 
 // ---------- spec 09: the owner's files, the box of a task, resume, changes ----------
@@ -1089,7 +1314,11 @@ try {
   if (PHASES.includes('language')) await language(cdp);
   if (PHASES.includes('run')) await run(cdp);
   if (PHASES.includes('hiring')) await hiring(cdp);
+  if (PHASES.includes('budget')) await budgetPhase(cdp);
+  if (PHASES.includes('brain')) await brainPhase(cdp);
+  if (PHASES.includes('checkpoint')) await checkpointPhase(cdp);
   if (PHASES.includes('recovery')) await recovery(cdp);
+  if (PHASES.includes('lan')) await lanPhase(cdp);
   // a mark whose check is no longer reported would hide nothing and stay forever
   for (const key of Object.keys(KNOWN_RED)) if (PHASES.includes(phaseOf(key)) && !reported.has(key)) report('runner', `the mark "${key}" matches a check of this run`, false, { ticket: KNOWN_RED[key] });
 } catch (e) {

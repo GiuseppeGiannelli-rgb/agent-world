@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todo board</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="board">
+    <h1>Todo board</h1>
+    <form id="add" action="/api/todos" method="post">
+      <input name="title" type="text" maxlength="120" placeholder="What needs doing?" required>
+      <button type="submit">Add</button>
+    </form>
+    <label><input id="only-open" name="onlyOpen" type="checkbox"> Only open items</label>
+    <ul id="list"></ul>
+    <p id="empty">Nothing to do.</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

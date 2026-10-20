@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from backend import attachments
 from backend.i18n import LANGUAGES, http_error, ui_language
+from backend.intent import INTENTS
 from backend.prompts import chat_prompt
 from backend.run import Run
 from backend.tools import Workspace
@@ -240,9 +241,20 @@ def mount(app, *, config, store, bus, router, team, media, live: dict, chats: di
         files = [staged(i) for i in ids]
         if any(f is None for f in files):
             return _err(400, "upload_gone")
+        # spec 11 T09: the owner may set the kind of mission and give a local folder to deconstruct
+        intent = body.get("intent")
+        if intent is not None and intent not in INTENTS:
+            return _err(400, "intent_unsupported", value=repr(intent), choices=", ".join(INTENTS))
+        target = body.get("target")
+        if target is not None and (not isinstance(target, str) or not target.strip() or not Path(target.strip()).expanduser().is_dir()):
+            return _err(400, "target_not_found", value=repr(target))
         team.load(config.get()["staff"])
         options = {"approvePlan": body["approvePlan"]} if "approvePlan" in body else {}
         options["language"] = language  # D1: frozen for the whole run
+        if intent is not None:
+            options["intent"] = intent
+        if target is not None:
+            options["target"] = str(Path(target.strip()).expanduser().resolve())
         run = Run(goal=goal[:4000], ctx=ctx, options=options)
         live[run.data["id"]] = run
         # spec 09: the composer's files are in the run before the CEO plans it

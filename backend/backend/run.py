@@ -24,7 +24,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend import attachments, crossbus
+from backend import attachments, budget, crossbus
+from backend import intent as intents
 from backend.i18n import MESSAGES
 from backend.i18n import check as check_language
 from backend.i18n import team_label, tr
@@ -38,12 +39,17 @@ from backend.router.providers import ProviderError
 from backend.prompts import (
     advisor_prompt,
     ceo_plan_prompt,
+    handover_prompt,
+    intent_prompt,
     judge_prompt,
     lead_plan_prompt,
     librarian_prompt,
+    parity_prompt,
     prompt_eng_prompt,
     BRAIN_ABOVE,
+    rebuild_plan_prompt,
     rescue_prompt,
+    reverse_plan_prompt,
     shape_lead,
     synth_prompt,
     tools_for,
@@ -51,7 +57,21 @@ from backend.prompts import (
     work_teams,
 )
 from backend.tasker import Tasker
-from backend.tools import Workspace, run_command
+from backend.tools import (
+    BLUEPRINT,
+    BLUEPRINT_MD,
+    TARGET_DIR,
+    Workspace,
+    blueprint_markdown,
+    blueprint_problems,
+    config_key_names,
+    copy_target,
+    extract_code_skeleton,
+    read_blueprint,
+    run_command,
+    scan_target_tree,
+    write_blueprint,
+)
 from backend.web import web_fetch, web_search
 
 TERMINAL = {"done", "failed", "skipped"}
@@ -62,6 +82,10 @@ MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".ogg", "
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
 VISION_MAX_BYTES = 4 * 1024 * 1024
 MAX_NOTE_ROUNDS = 3  # spec 09: extra rounds for the owner's last-moment words, then the task goes on as it is  # the providers take 5-20 MB; a bigger photo is described from its header
+# spec 11 T09: the teams of a clean-room rebuild, the rounds of the parity QA, the sample target of the demo
+BUILD_TEAMS = ("dev", "design", "content", "genai")
+PARITY_ROUNDS = 2
+DEMO_TARGET = Path(__file__).resolve().parent / "demo_target"
 TEXT_EXT = {".md", ".txt", ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".json", ".svg", ".py", ".csv", ".yml", ".yaml", ".xml", ".sh", ".php", ".sql"}
 
 
@@ -110,9 +134,18 @@ class Run:
             "attachments": [],  # spec 09: the owner's own files, in attachments/ of the workspace
             "report": "",
             "error": None,
-            "usage": {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0},
+            # spec 11 T01: providerCalls and costUSD (an estimate) feed the budget's circuit breaker
+            "usage": {"calls": 0, "tokensIn": 0, "tokensOut": 0, "escalations": 0, "subAgents": 0, "providerCalls": 0, "costUSD": 0.0},
+            "budget": budget.initial(ctx.config.get()["limits"]),
             "workspace": str(Path(ctx.workspace_root) / slug),
+            # spec 11 T09: the kind of mission (None until the CEO decides, unless the owner set it),
+            # its phase (deconstruct, handover, build, parity, done, failed) and the target copied into target/
+            "intent": options.get("intent") if options.get("intent") in intents.INTENTS else None,
+            "intentWhy": "",
+            "phase": None,
+            "target": None,
         }
+        self.target_source = options.get("target")  # a local folder, copied into target/ when the run starts
         self.ws = Workspace(self.data["workspace"])
         # spec 08: what happened in this run, searchable by every agent
         self.memory = RunMemory((ctx.config.get() if getattr(ctx, "config", None) is not None else {}).get("rag"))
@@ -126,7 +159,10 @@ class Run:
         run._init_state(ctx)
         run.detached = True
         data.setdefault("attachments", [])
+        for key, value in (("intent", "direct_build"), ("intentWhy", ""), ("phase", None), ("target", None)):
+            data.setdefault(key, value)  # spec 11 T09: a run stored before the intent was a build
         run.data = data
+        run.target_source = None
         run.ws = Workspace(data["workspace"])
         run.memory = RunMemory((ctx.config.get() if getattr(ctx, "config", None) is not None else {}).get("rag"))
         return run
@@ -148,9 +184,13 @@ class Run:
         self._model_items: dict[str, dict] = {}  # spec 09: the open "model" request of each blocked call
         self._model_events: dict[str, asyncio.Event] = {}
         self._switches: set[tuple] = set()  # (agent, from, to) already reported
+        self._budget_item: dict | None = None  # spec 11 T01: the open "budget" request, while the run waits on it
+        self._budget_ceo: dict | None = None  # what the CEO was doing when the budget tripped
+        self._in_flight = 0  # the run's model calls sent and not yet counted, each holding a slot of the budget
         self._last_run_emit = 0.0
         self._run_emit_timer: asyncio.TimerHandle | None = None
         self._finish_schedule: asyncio.Event | None = None
+        self._blueprint: dict | None = None  # spec 11 T09: the approved blueprint of a clean-room rebuild
 
     @property
     def lang(self) -> str | None:
@@ -222,7 +262,7 @@ class Run:
 
     def step(self, task: dict, agent: dict, action: dict) -> None:
         a = action["args"]
-        target = a.get("path") or a.get("url") or a.get("query") or a.get("cmd") or a.get("question") or a.get("name") or a.get("title") or a.get("prompt") or ""
+        target = a.get("path") or a.get("url") or a.get("query") or a.get("cmd") or a.get("question") or a.get("name") or a.get("title") or a.get("prompt") or (BLUEPRINT if action["tool"] == "write_blueprint" else "")
         self.note(task, agent, "step", action["thought"], tool=action["tool"], target=str(target)[:200])
         self.team.set(agent["id"], {"state": "thinking" if action["tool"] == "finish" else "tool", "tool": action["tool"], "text": action["thought"], "toolTarget": str(target)[:120]})
         self.emit_run()
@@ -261,6 +301,11 @@ class Run:
 
     def resume(self) -> None:
         if not self.data["paused"]:
+            return
+        item = self._budget_item
+        if item is not None and item["status"] == "open":
+            # spec 11 T01: "Resume" while the budget asks is the owner's go-ahead
+            self.answer(item["id"], {"text": "", "decision": "approve"})
             return
         self.data["paused"] = False
         self._resume.set()
@@ -338,6 +383,9 @@ class Run:
                 event.set()
             self.emit_run(True)
             return True
+        if item and item.get("kind") == "budget" and item["status"] == "open":
+            self.answer_budget(item, str(text), decision)
+            return True
         done = self.answer_waiters.get(id)
         if not item or not done or item["status"] != "open":
             return False
@@ -350,36 +398,42 @@ class Run:
 
     # ---------- model calls ----------
 
-    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None, chain=None) -> dict:
+    async def chat(self, *, role, use=None, messages, json=False, max_tokens=None, agent=None, task=None, chain=None, owner=False) -> dict:
         # spec 09: zero-stop. When every model of the cascade fails, the call
         # waits for the soonest one to come back instead of failing the task
         # (or the run, for the CEO); the conversation is never lost.
+        # spec 11 T01: the run's own work waits at the budget and holds its slot
+        # while it runs; a call the owner asked for (owner=True: "find a
+        # solution", a change) is counted, never held
+        held = False if owner else await self.budget_gate(agent)
         tries = 0
-        while True:
-            try:
-                # spec 10: a subtask's hired chain goes first (only when there is one: demo has none)
-                extra = {"chain": chain} if chain else {}
-                res = await self.ctx.router.chat(
-                    role=role,
-                    use=use,
-                    messages=messages,
-                    json=json,
-                    max_tokens=max_tokens,
-                    meta={"runId": self.data["id"], "taskId": task["id"] if task else None, "agentId": agent["id"] if agent else None},
-                    **extra,
-                )
-                break
-            except ProviderError as err:
-                tries += 1
-                await self.wait_for_model(err, tries, role=role, use=use, agent=agent, task=task)
+        try:
+            while True:
+                try:
+                    # spec 10: a subtask's hired chain goes first (only when there is one: demo has none)
+                    extra = {"chain": chain} if chain else {}
+                    res = await self.ctx.router.chat(
+                        role=role,
+                        use=use,
+                        messages=messages,
+                        json=json,
+                        max_tokens=max_tokens,
+                        meta={"runId": self.data["id"], "taskId": task["id"] if task else None, "agentId": agent["id"] if agent else None},
+                        **extra,
+                    )
+                    break
+                except ProviderError as err:
+                    tries += 1
+                    await self.wait_for_model(err, tries, role=role, use=use, agent=agent, task=task)
+        finally:
+            if held:
+                self._in_flight -= 1  # no await until spend() below: nobody sees the slot free and the call uncounted
         if tries:
             self.model_back(res, self._model_key(agent, task, role), agent)
         if res.get("failed"):
             self.report_switch(res, agent, task)
         usage = self.data["usage"]
-        usage["calls"] += 1
-        usage["tokensIn"] += (res.get("usage") or {}).get("in", 0)
-        usage["tokensOut"] += (res.get("usage") or {}).get("out", 0)
+        budget.spend(usage, res, self.cfg)
         if res.get("emergency"):
             # spec 08: no provider answered, the simulator did: say it once, count every one
             usage["emergencies"] = usage.get("emergencies", 0) + 1
@@ -388,6 +442,108 @@ class Run:
         if agent and self.team.get(agent["id"]):
             self.team.get(agent["id"])["model"] = res["target"]
         return res
+
+    # ---------- spec 11 T01: the budget and its circuit breaker ----------
+
+    def money(self, usd: float) -> str:
+        """An estimated amount in the run's language ("$1.25", "1,25 $")."""
+        s = f"{usd:.2f}"
+        return self.t("budget_usd", usd=s if (self.lang or "en") == "en" else s.replace(".", ","))
+
+    def budget_what(self, reason: str) -> str:
+        """Which limit the run reached, with the count and the limit."""
+        u, limit = self.usage_now(), self.data["budget"]["limit"]
+        if reason == "calls":
+            return self.t("budget_calls", n=u.get("providerCalls", 0), limit=limit["calls"])
+        return self.t("budget_cost", cost=self.money(u.get("costUSD", 0.0)), limit=self.money(limit["costUSD"]))
+
+    def budget_text(self, limits: dict) -> str:
+        """A block or a limit as the owner reads it: "250 calls · $5.00"."""
+        parts = []
+        if limits.get("calls"):
+            parts.append(self.t("budget_block_calls", n=limits["calls"]))
+        if limits.get("costUSD"):
+            parts.append(self.money(limits["costUSD"]))
+        return " · ".join(parts)
+
+    def usage_now(self) -> dict:
+        """The usage with the calls already sent: each one holds its slot, so
+        parallel workers never pass limits.maxCallsPerRun together (D4)."""
+        u = self.data["usage"]
+        return {**u, "providerCalls": u.get("providerCalls", 0) + self._in_flight}
+
+    async def budget_gate(self, agent: dict | None = None) -> bool:
+        """Before a model call of the run's work. Under the budget the call takes
+        its slot and goes (True: the caller frees it when the answer is counted).
+        At the limit the run pauses (once: one "budget" request) and every call
+        of the run waits here for the owner. The cost of the calls already sent
+        when the cost limit trips is not known before they answer (D4)."""
+        if self.detached or self.data["status"] in TERMINAL_RUN:
+            return False
+        while (reason := budget.over(self.usage_now(), self.data.get("budget"))) is not None:
+            if self._abort.is_set():
+                raise RunStopped("Stopped by the user")
+            item = self._budget_item
+            if item is None or item["status"] != "open":
+                self.trip_budget(reason)
+            elif not self.data["paused"]:
+                # unpaused while the request is still open: hold again, or this
+                # loop would spin without ever yielding to the event loop
+                self.data["paused"] = True
+                self._resume.clear()
+            await self.gate(agent)
+        self._in_flight += 1
+        return True
+
+    def trip_budget(self, reason: str) -> dict:
+        """The run reached its budget: it does not fail, it pauses and asks the
+        owner (the `waiting` event of a "budget" request)."""
+        u, b = self.usage_now(), self.data["budget"]
+        what = self.budget_what(reason)
+        self.data["paused"] = True
+        self._resume.clear()
+        ceo = self.ceo
+        self._budget_ceo = {"state": ceo.get("state"), "text": ceo.get("text")}
+        self.message(ceo["id"], "*", "system", self.t("budget_paused", what=what))
+        item = self.add_waiting(
+            {
+                "kind": "budget",
+                "from": ceo["id"],
+                "reason": reason,
+                "spent": {"calls": u.get("providerCalls", 0), "costUSD": u.get("costUSD", 0.0)},
+                "limit": dict(b["limit"]),
+                "step": dict(b["step"]),
+                "text": self.t("budget_question", what=what, calls=u.get("providerCalls", 0), cost=self.money(u.get("costUSD", 0.0)), block=self.budget_text(b["step"])),
+            }
+        )
+        self._budget_item = item
+        self.team.set(ceo["id"], {"state": "asking", "text": self.t("budget_asking")})
+        return item
+
+    def answer_budget(self, item: dict, text: str, decision: str | None) -> None:
+        """The owner's answer to the budget. "reject" stops the run (it can be
+        resumed from where it stopped); anything else goes on with one more
+        block of each limit, and the owner's words reach the whole team."""
+        item["answer"] = {"text": text[:4000], "decision": decision, "at": _now_ms()}
+        item["status"] = "answered"
+        self._budget_item = None
+        label = f"{self.t('answer_approved') if decision == 'approve' else self.t('answer_rejected')}{': ' + text if text else ''}" if decision else text
+        if label:
+            self.message("user", item["from"], "reply", label)
+        self.ctx.bus.emit("waiting", {"runId": self.data["id"], "item": item})
+        if decision == "reject":
+            self.data["error"] = self.t("budget_stopped", what=self.budget_what(item.get("reason") or "calls"))
+            self.emit_run(True)
+            self.stop()
+            return
+        limit = budget.extend(self.usage_now(), self.data["budget"])
+        if text:
+            self.steer("all", text)
+        self.message(self.ceo["id"], "*", "system", self.t("budget_extended", limits=self.budget_text(limit)))
+        if self._budget_ceo is not None:
+            self.team.set(self.ceo["id"], self._budget_ceo)
+            self._budget_ceo = None
+        self.resume()
 
     # ---------- spec 09: zero-stop failover ----------
 
@@ -534,12 +690,18 @@ class Run:
             if not self.data["workstreams"]:
                 self.data["status"] = "planning"
                 self.emit_run(True)
+                await self.prepare_target()  # spec 11 T09: the target is in target/ before the CEO looks at the mission
+                await self.classify()
                 await self.plan()
                 if self.data["approvePlan"]:
                     await self.approval()
             self.data["status"] = "running"
             self.emit_run(True)
             await self.schedule()
+            if self.data.get("intent") == "deconstruct_and_build":
+                await self.clean_room()  # spec 11 T09: Handover, Clean-Room Build, Parity QA
+            elif self.data.get("intent") == "reverse_only":
+                self.data["phase"] = "done"
             self.data["status"] = "synthesizing"
             self.emit_run(True)
             await self.synthesize()
@@ -569,7 +731,7 @@ class Run:
                     # spec 09: a question waits for the owner across sessions (answer it,
                     # then resume); a plan approval or a model request has no meaning any more
                     w["status"] = "pending" if w.get("kind") == "question" else "expired"
-            self.save_sessions()
+            self.save_sessions(immediate=True)
             for a in self.team.list():
                 if a["runId"] == self.data["id"] or a["kind"] == "ceo":
                     patch = {"state": "celebrating", "text": self.t("mission_done")} if a["kind"] == "ceo" and self.data["status"] == "completed" else {}
@@ -582,13 +744,23 @@ class Run:
         self.team.set(ceo["id"], {"state": "thinking", "runId": self.data["id"], "text": self.t("ceo_studying")})
         self.message("user", ceo["id"], "goal", self.data["goal"])
         memory = "\n".join(f"- {n['title']}: {n['text'][:240]}" for n in await self.ctx.brain.search(self.data["goal"], 4, agent_id=ceo["id"]))
+        reverse = self.data.get("intent") in ("reverse_only", "deconstruct_and_build")
+        if reverse:
+            # spec 11 T09, Phase A (Deconstruct): the first workstreams go to the reverse team only
+            messages = reverse_plan_prompt(cfg=self.cfg, ceo=ceo, goal=self.data["goal"], intent=self.data["intent"], target=self.target_text(), memory=memory, language=self.lang, owner_files=self.owner_files_text())
+        else:
+            messages = ceo_plan_prompt(cfg=self.cfg, ceo=ceo, goal=self.data["goal"], memory=memory, language=self.lang, owner_files=self.owner_files_text())
         obj = await self.chat_json(
-            {"role": "ceo", "messages": ceo_plan_prompt(cfg=self.cfg, ceo=ceo, goal=self.data["goal"], memory=memory, language=self.lang, owner_files=self.owner_files_text()), "max_tokens": 6000, "agent": ceo},
+            {"role": "ceo", "messages": messages, "max_tokens": 6000, "agent": ceo},
             lambda o: isinstance(o.get("workstreams"), list) and len(o["workstreams"]) > 0,
         )
         if not obj:
             raise Exception("The CEO could not produce a valid plan")
-        plan = normalize_plan(obj, self.cfg)
+        plan = normalize_plan(obj, self.cfg, teams=["reverse"] if reverse else None)
+        if reverse and not any(BLUEPRINT in w["deliverables"] for w in plan["workstreams"]):
+            # the blueprint is what the deconstruction exists for: the last workstream writes it
+            last = plan["workstreams"][-1]
+            last["deliverables"] = list(dict.fromkeys([BLUEPRINT, BLUEPRINT_MD, *last["deliverables"]]))[:8]
         self.data["complexity"] = plan["complexity"]
         self.data["planSummary"] = plan["summary"]
         self.data["workstreams"] = plan["workstreams"]
@@ -742,6 +914,285 @@ class Run:
         if not self.active and not self.preparing and all(w["status"] in TERMINAL for w in ws_all):
             self._finish_schedule.set()
 
+    # ---------- spec 11 T09: the intent of the mission and the clean-room handover ----------
+
+    def size_text(self, b: int) -> str:
+        kb = b / 1024
+        s = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.1f} MB"
+        return s if (self.lang or "en") == "en" else s.replace(".", ",")
+
+    def code_attachments(self) -> list[str]:
+        return [a["path"] for a in self.data.get("attachments") or [] if Path(a["path"]).suffix.lower() in intents.CODE_EXT]
+
+    def has_target(self) -> bool:
+        """Something to deconstruct: a folder copied into target/, or code among the owner's files."""
+        return bool(self.data.get("target")) or bool(self.code_attachments())
+
+    def target_text(self) -> str:
+        t = self.data.get("target")
+        lines = [f'- {TARGET_DIR}/: a copy of "{t["name"]}", {t["files"]} files' + (" (the demo sample)" if t.get("source") == "demo" else "")] if t else []
+        code = self.code_attachments()
+        if code:
+            lines.append("- the owner's files with code or builds: " + ", ".join(code[:20]))
+        return "\n".join(lines)
+
+    async def prepare_target(self) -> None:
+        """The owner's target folder (POST /api/runs "target"), copied into target/
+        before the CEO looks at the mission: the agents read the copy with the
+        run's path rules and never leave the run's folder (D31)."""
+        if not self.target_source or self.data.get("target"):
+            return
+        info = await asyncio.to_thread(copy_target, self.target_source, self.ws.resolve(TARGET_DIR))
+        self.data["target"] = {"name": info["name"], "files": info["files"], "bytes": info["bytes"], "skipped": info["skipped"], "source": "folder"}
+        skipped = self.t("target_skipped", n=info["skipped"]) if info["skipped"] else ""
+        self.message(self.ceo["id"], "*", "system", self.t("target_copied", name=info["name"], files=info["files"], size=self.size_text(info["bytes"]), skipped=skipped))
+
+    async def classify(self) -> None:
+        """The CEO decides the kind of mission (D30). Only a goal with a reason to
+        ask (a reverse or rebuild word, a target, code among the owner's files)
+        costs a call; any other goal is direct_build, the flow of before."""
+        d, ceo = self.data, self.ceo
+        if d.get("intent") in intents.INTENTS:
+            if d["intent"] != "direct_build":
+                self.message(ceo["id"], "*", "intent", self.t("intent_forced", kind=self.t(f"intent_{d['intent']}")))
+        elif not intents.cue(d["goal"], self.has_target()):
+            d["intent"] = "direct_build"
+        else:
+            self.team.set(ceo["id"], {"state": "thinking", "runId": d["id"], "text": self.t("ceo_studying")})
+            obj = await self.chat_json(
+                {"role": "ceo", "messages": intent_prompt(ceo=ceo, goal=d["goal"], target=self.target_text(), owner_files=self.owner_files_text(), language=self.lang), "max_tokens": 400, "agent": ceo},
+                lambda o: o.get("intent") in intents.INTENTS,
+            )
+            d["intent"] = obj["intent"] if obj else intents.guess(d["goal"], self.has_target())
+            d["intentWhy"] = str((obj or {}).get("why") or "")[:400]
+            self.message(ceo["id"], "*", "intent", self.t("intent_chosen", kind=self.t(f"intent_{d['intent']}"), why=d["intentWhy"]).strip())
+        if d["intent"] != "direct_build":
+            d["phase"] = "deconstruct"
+            if not self.has_target():
+                if d.get("mode") == "demo" and DEMO_TARGET.is_dir():
+                    # the simulator needs something to deconstruct: the sample app
+                    info = await asyncio.to_thread(copy_target, DEMO_TARGET, self.ws.resolve(TARGET_DIR))
+                    d["target"] = {"name": "todo-board", "files": info["files"], "bytes": info["bytes"], "skipped": 0, "source": "demo"}
+                    self.message(ceo["id"], "*", "system", self.t("target_demo"))
+                else:
+                    self.message(ceo["id"], "*", "system", self.t("target_missing"))
+        self.emit_run(True)
+
+    async def blueprint_excerpt(self) -> str:
+        """The approved blueprint as the rebuild's tasks read it (Markdown, at most 6000 chars)."""
+        if self._blueprint is None:
+            self._blueprint = await asyncio.to_thread(read_blueprint, self.ws)
+        return clip(blueprint_markdown(self._blueprint, self.lang), 6000) if self._blueprint else ""
+
+    def hidden_for(self, task: dict):
+        """Spec 11 T09 (D32): in the rebuild of a deconstruct_and_build mission the
+        builders never see the original: target/, the owner's code files and the
+        reverse team's working notes. Only blueprint.json and blueprint.md cross
+        the boundary. None when nothing is hidden for this task."""
+        if self.data.get("intent") != "deconstruct_and_build" or task.get("team") == "reverse" or self.data.get("phase") not in ("build", "parity", "done"):
+            return None
+        notes = {f for t in self.data["tasks"] if t["team"] == "reverse" for f in (t.get("files") or t["outputs"])} - {BLUEPRINT, BLUEPRINT_MD}
+
+        def hidden(rel: str) -> bool:
+            rel = rel.rstrip("/")
+            if rel == TARGET_DIR or rel.startswith(TARGET_DIR + "/") or rel in notes:
+                return True
+            return rel.startswith("attachments/") and Path(rel).suffix.lower() in intents.CODE_EXT
+
+        return hidden
+
+    def clean_room_refusal(self, task: dict, args: dict) -> str | None:
+        hidden = self.hidden_for(task)
+        if hidden is None:
+            return None
+        for key in ("path", "from", "source", "file"):
+            p = safe_rel_path(args.get(key)) if isinstance(args.get(key), str) else None
+            # a bare name is the owner's file only when that file exists ("foto.jpg" alone, _workspace_file)
+            owner = p and "/" not in p and (self.ws.root / "attachments" / p).is_file()
+            if p and (hidden(p) or (owner and hidden(f"attachments/{p}"))):
+                return f"ERROR: {p} belongs to the original application. This is a clean-room rebuild: work only from the BLUEPRINT CONTRACT in your brief and {BLUEPRINT_MD}, never from the original."
+        return None
+
+    async def project_files(self, task: dict) -> str:
+        """The PROJECT FILES of a worker's brief, without what the clean room hides."""
+        hidden = self.hidden_for(task)
+        files = await self.ws.list(".")
+        return "\n".join(f"{f['path']} ({f['size']} B)" for f in files if not (hidden and hidden(f["path"])))
+
+    async def clean_room(self) -> None:
+        """Phase B (Handover) after the deconstruction, Phase C (the rebuild) and
+        Phase D (Parity QA). A resumed run goes on from its phase."""
+        if self.data.get("phase") in ("deconstruct", "handover"):
+            if not await self.handover():
+                return
+            self.data["status"] = "running"
+            self.emit_run(True)
+            await self.schedule()
+        if self.data.get("phase") in ("build", "parity"):
+            await self.parity_review()
+
+    async def handover(self) -> bool:
+        """Phase B: the blueprint passed QA (its task is done, and done means the
+        review passed it): the CEO plans the rebuild from the blueprint alone and
+        the Prompt Lab (Pia) writes each workstream's clean-room brief."""
+        d, ceo = self.data, self.ceo
+        d["phase"] = "handover"
+        self.emit_run(True)
+        bp = await asyncio.to_thread(read_blueprint, self.ws)
+        approved = any(t["team"] == "reverse" and t["status"] == "done" and BLUEPRINT in (t.get("files") or t["outputs"]) for t in d["tasks"])
+        if bp is None or not approved:
+            d["phase"] = "failed"
+            self.message(ceo["id"], "*", "error", self.t("handover_failed"))
+            self.emit_run(True)
+            return False
+        self._blueprint = bp
+        d["blueprint"] = {"name": bp["name"], "endpoints": len(bp["endpoints"]), "models": len(bp["dataModels"]), "rules": len(bp["businessRules"]), "criteria": len(bp["parityCriteria"])}
+        self.message(ceo["id"], "*", "handover", self.t("handover_start", endpoints=len(bp["endpoints"]), models=len(bp["dataModels"]), criteria=len(bp["parityCriteria"])))
+        self.team.set(ceo["id"], {"state": "thinking", "runId": d["id"], "text": self.t("ceo_studying")})
+        md = clip(blueprint_markdown(bp, self.lang), 12000)
+        teams = [t for t in BUILD_TEAMS if t in self.cfg["teams"]]
+        obj = await self.chat_json(
+            {"role": "ceo", "messages": rebuild_plan_prompt(cfg=self.cfg, ceo=ceo, goal=d["goal"], blueprint=md, teams=teams, language=self.lang), "max_tokens": 6000, "agent": ceo},
+            lambda o: isinstance(o.get("workstreams"), list) and len(o["workstreams"]) > 0,
+        )
+        if not obj:
+            raise Exception("The CEO could not plan the clean-room rebuild")
+        plan = normalize_plan(obj, self.cfg, teams=teams)
+        offset = len(d["workstreams"])
+        ids = {w["id"]: f"w{offset + i + 1}" for i, w in enumerate(plan["workstreams"])}
+        new = []
+        for w in plan["workstreams"]:
+            w.update(id=ids[w["id"]], dependsOn=[ids[x] for x in w["dependsOn"]], cleanRoom=True, brief="")
+            new.append(w)
+        pe = next((a for a in self.team.of_team("prompt") if not a["busy"]), None)
+        if pe:
+            pe["busy"] = True
+            try:
+                self.team.set(pe["id"], {"state": "thinking", "runId": d["id"], "text": self.t("briefs_rewriting", n=len(new))})
+                got = await self.chat_json(
+                    {"role": "prompt", "messages": handover_prompt(pe=pe, goal=d["goal"], workstreams=new, blueprint=md, language=self.lang), "max_tokens": 4000, "agent": pe},
+                    lambda o: isinstance(o.get("briefs"), list),
+                )
+                by_id = {str(b.get("id")): b for b in (got or {}).get("briefs") or [] if isinstance(b, dict)}
+                for w in new:
+                    b = by_id.get(w["id"]) or {}
+                    if isinstance(b.get("brief"), str) and b["brief"].strip():
+                        w["brief"] = b["brief"].strip()[:3000]
+                    w["acceptance"] = list(dict.fromkeys([*w["acceptance"], *strings(b.get("acceptance"), 2)]))[:6]
+                self.message(pe["id"], ceo["id"], "handover", self.t("handover_briefs", ids=", ".join(w["id"] for w in new)))
+            finally:
+                pe["busy"] = False
+                self.team.set(pe["id"], {"state": "idle", "runId": None, "text": ""})
+        d["workstreams"].extend(new)
+        if plan["complexity"] == "complex":
+            d["complexity"] = "complex"
+        d["planSummary"] = f"{d['planSummary']} {plan['summary']}".strip()[:1200]
+        d["phase"] = "build"
+        self.ctx.bus.emit("plan", {"runId": d["id"], "workstreams": d["workstreams"], "complexity": d["complexity"], "summary": d["planSummary"]})
+        listing = "\n".join(f"{w['id']} · {w['title']} → {team_label(self.cfg, w['team'], self.lang)}{self.t('after', deps=', '.join(w['dependsOn'])) if w['dependsOn'] else ''}" for w in new)
+        self.message(ceo["id"], "*", "plan", self.t("handover_plan", n=len(new), listing=listing))
+        self.team.set(ceo["id"], {"state": "idle", "text": self.t("plan_bubble", n=len(new))})
+        self.emit_run(True)
+        await self.sleep(800 + len(new) * 200)
+        return True
+
+    async def acquire_judge(self) -> tuple[dict, bool]:
+        """A free reviewer of the QA team (or the CEO when there is none), as review() takes one."""
+        if not self.team.of_team("qa"):
+            return self.ceo, False
+        acquire = asyncio.ensure_future(self.team.acquire("qa", self.data["id"], abort=self._abort))
+        abort_watch = asyncio.ensure_future(self._abort.wait())
+        await asyncio.wait({acquire, abort_watch}, return_when=asyncio.FIRST_COMPLETED)
+        abort_watch.cancel()
+        if self._abort.is_set():
+            acquire.cancel()
+            try:
+                judge = await acquire
+            except asyncio.CancelledError:
+                judge = None
+            if judge is not None:
+                self.team.release(judge["id"])
+            raise RunStopped("Stopped by the user")
+        return acquire.result(), True
+
+    async def paths_dump(self, paths: list[str], budget: int = 26000) -> str:
+        parts = []
+        for p in dict.fromkeys(p for p in (safe_rel_path(x) for x in paths) if p):
+            if budget <= 0:
+                break
+            if Path(p).suffix.lower() not in TEXT_EXT or await self.ws.size(p) < 0:
+                parts.append(f"=== {p} ===\n({'binary file' if await self.ws.size(p) >= 0 else 'missing'})")
+                continue
+            text = await self.ws.read(p, min(8000, budget))
+            budget -= len(text)
+            parts.append(f"=== {p} ===\n{text}")
+        return "\n\n".join(parts)
+
+    async def parity_review(self, round_: int = 1) -> None:
+        """Phase D: the QA checks the rebuild against every parity criterion of the
+        blueprint and writes PARITY.md. A criterion that fails sends its task back
+        once, with the QA's instruction as a revision; then the check is final."""
+        d = self.data
+        d["phase"] = "parity"
+        self.emit_run(True)
+        if self._blueprint is None:
+            self._blueprint = await asyncio.to_thread(read_blueprint, self.ws)
+        bp = self._blueprint
+        build = [t for t in d["tasks"] if (self.ws_by_id(t["wsId"]) or {}).get("cleanRoom")]
+        if bp is None or not build:
+            d["phase"] = "done"
+            self.emit_run(True)
+            return
+        criteria = bp["parityCriteria"]
+        judge, has_qa = await self.acquire_judge()
+        try:
+            self.team.set(judge["id"], {"state": "reviewing", "runId": d["id"], "text": self.t("parity_start", name=judge["name"], n=len(criteria)), "verdict": None})
+            self.message(judge["id"], "*", "parity", self.t("parity_start", name=judge["name"], n=len(criteria)))
+            dump = await self.paths_dump([f for t in build for f in (t.get("files") or t["outputs"])])
+            obj = await self.chat_json(
+                {"role": "qa", "messages": parity_prompt(judge=judge, goal=d["goal"], criteria=criteria, blueprint=clip(blueprint_markdown(bp, self.lang), 8000), tasks=build, file_dump=dump, language=self.lang), "max_tokens": 3000, "agent": judge},
+                lambda o: o.get("verdict") in ("pass", "revise") and isinstance(o.get("criteria"), list),
+            )
+        finally:
+            if has_qa:
+                self.team.release(judge["id"])
+            else:
+                self.team.set(judge["id"], {"state": "idle", "target": None})
+        obj = obj or {"verdict": "pass", "criteria": [], "fix": []}
+        answers = [c for c in obj["criteria"] if isinstance(c, dict)]
+        rows = []
+        for i, c in enumerate(criteria):
+            a = answers[i] if i < len(answers) else {}
+            rows.append({"criterion": c, "ok": a.get("ok") is True or (not answers and obj["verdict"] == "pass"), "note": str(a.get("note") or "")[:400]})
+        met = sum(1 for r in rows if r["ok"])
+        ids = {t["id"] for t in build}
+        fixes = []
+        for f in obj.get("fix") or []:
+            if isinstance(f, dict) and str(f.get("taskId")) in ids and str(f.get("taskId")) not in [x["taskId"] for x in fixes]:
+                fixes.append({"taskId": str(f["taskId"]), "instruction": str(f.get("instruction") or "").strip()[:2000]})
+        verdict = "pass" if obj["verdict"] == "pass" else "revise"
+        d["parity"] = {"verdict": verdict, "met": met, "total": len(rows), "criteria": rows, "round": round_, "judgeId": judge["id"]}
+        lines = [f"# {self.t('parity_title')}", "", f"**{bp['name']}** — {met}/{len(rows)}", ""]
+        lines += [f"{i}. [{'x' if r['ok'] else ' '}] {r['criterion']} — {self.t('parity_met') if r['ok'] else self.t('parity_unmet')}{': ' + r['note'] if r['note'] else ''}" for i, r in enumerate(rows, 1)]
+        await self.ws.write("PARITY.md", "\n".join(lines) + "\n")
+        self.ctx.bus.emit("file", {"runId": d["id"], "agentId": judge["id"], "taskId": None, "path": "PARITY.md", "bytes": len("\n".join(lines).encode("utf-8"))})
+        if verdict == "revise" and fixes and round_ < PARITY_ROUNDS:
+            self.message(judge["id"], "*", "parity", self.t("parity_revise", ok=met, n=len(rows), ids=", ".join(f["taskId"] for f in fixes)))
+            for f in fixes:
+                task = self.task_by_id(f["taskId"])
+                task["parityFix"] = f["instruction"] or self.t("default_feedback")
+                self.note(task, judge, "verdict", task["parityFix"])
+                self.reopen_done(task)
+            d["status"] = "running"
+            self.emit_run(True)
+            await self.schedule()
+            await self.parity_review(round_ + 1)
+            return
+        key = "parity_final" if round_ > 1 else "parity_pass" if verdict == "pass" else "parity_open"
+        self.message(judge["id"], "*", "parity", self.t(key, ok=met, n=len(rows)))
+        d["phase"] = "done"
+        self.emit_run(True)
+
     # ---------- a lead organises one workstream ----------
 
     async def prepare(self, ws: dict, lead: dict) -> None:
@@ -761,6 +1212,12 @@ class Run:
             )
             if raw:
                 tasks = normalize_subtasks(raw, ws, self.cfg)
+        if ws.get("cleanRoom"):
+            # spec 11 T09, Phase C: every task of the rebuild carries the blueprint and Pia's brief
+            excerpt = await self.blueprint_excerpt()
+            for t in tasks:
+                t["blueprint"] = excerpt
+                t["brief"] = t["brief"] or (ws.get("brief") or "")[:3000]
 
         await self.assign_skills(tasks, lead, complex_)
         if complex_:
@@ -844,41 +1301,40 @@ class Run:
 
     # ---------- spec 09: resume from the block point ----------
 
-    def sessions_file(self) -> Path | None:
-        root = getattr(self.ctx.store, "dir", None)
-        return Path(root) / "sessions" / f"{self.data['id']}.json" if root is not None else None
-
-    def save_sessions(self) -> None:
+    def save_sessions(self, immediate: bool = False) -> None:
         """The conversation of every worker that has not finished, so a resume
         starts it from its own steps (compacted: the brief, a log of the old
-        steps, the last ones in full)."""
-        from backend.tasker import compact
-
-        f = self.sessions_file()
-        if f is None:
+        steps, the last ones in full). Spec 11 T04 (D18): after every valid step
+        (debounced, built when the write happens) and when the run ends (now),
+        with the clean point of a worker whose context is dirty."""
+        save = getattr(self.ctx.store, "save_sessions", None)
+        if save is None:
             return
-        keep = {}
-        for task_id, tasker in self.taskers.items():
-            task = self.task_by_id(task_id)
-            # only an interrupted worker goes on from its steps; a failed one starts afresh
-            # (with the owner's words and files), its history stays in the task
-            if task and (task.get("stopped") or task["status"] not in TERMINAL) and tasker.messages:
-                keep[task_id] = {"messages": compact(tasker.messages), "model": tasker.model_key}
+
+        def build() -> dict:
+            keep = {}
+            for task_id, tasker in self.taskers.items():
+                task = self.task_by_id(task_id)
+                # only an interrupted worker goes on from its steps; a failed one starts afresh
+                # (with the owner's words and files), its history stays in the task
+                if task and (task.get("stopped") or task["status"] not in TERMINAL) and tasker.messages:
+                    keep[task_id] = tasker.session()
+            return keep
+
         try:
-            if keep:
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
-            elif f.exists():
-                f.unlink()
+            save(self.data["id"], build, immediate)
         except OSError:
             pass  # a resume without sessions starts those tasks afresh, nothing is lost on disk
 
     def load_sessions(self) -> dict:
-        f = self.sessions_file()
-        try:
-            return json.loads(f.read_text(encoding="utf-8")) if f is not None and f.exists() else {}
-        except (OSError, ValueError):
-            return {}
+        load = getattr(self.ctx.store, "load_sessions", None)
+        return load(self.data["id"]) if load is not None else {}
+
+    def checkpoint(self, task: dict, tasker: Tasker, cp: dict) -> None:
+        """Spec 11 T04: a worker took a snapshot (its brief, a valid step): the task
+        says where it is, and its conversation reaches the disk within 0.4 s."""
+        task["checkpoint"] = {"step": cp["step"], "attempt": cp["attempt"], "clean": cp["clean"]}
+        self.save_sessions()
 
     async def _prepare_resume(self) -> None:
         d = self.data
@@ -895,6 +1351,11 @@ class Run:
         await self.restore_memory()
         todo = self.reopen_for_resume()
         self.message(self.ceo["id"], "*", "system", self.t("resumed_from_block", tasks=todo["tasks"], workstreams=todo["workstreams"], done=len([t for t in d["tasks"] if t["status"] == "done"])))
+        # spec 11 T01: a run stored before the budget gets one; resuming a run that
+        # stopped at its budget is the owner's go-ahead for one more block
+        b = budget.ensure(d, self.cfg["limits"])
+        if budget.over(d["usage"], b) is not None:
+            self.message(self.ceo["id"], "*", "system", self.t("budget_resumed", limits=self.budget_text(budget.extend(d["usage"], b))))
 
     def reopen_for_resume(self) -> dict:
         """Every task that is not done goes back in the queue; a workstream that
@@ -1009,7 +1470,7 @@ class Run:
                 max_tokens=500,
                 meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]},
             )
-            self.data["usage"]["calls"] += 1
+            budget.spend(self.data["usage"], res, self.cfg)  # the owner asked: counted, never held at the budget
             return res["text"].strip()[:1500]
         except ProviderError:
             return self.t("direct_ack", name=agent["name"])
@@ -1328,7 +1789,7 @@ class Run:
         if session and tasker.messages is None:
             # spec 09: the worker of a resumed run starts again from its own steps
             tasker.restore(session)
-        feedback = None
+        feedback = task.pop("parityFix", None)  # spec 11 T09: the parity QA sent it back with an instruction
         rescued = False
         note_rounds = 0
         while True:
@@ -1377,6 +1838,10 @@ class Run:
                 self.data["usage"]["escalations"] += 1
                 self.note(task, agent, "escalate", self.t("escalation_note", combo=router_cfg["escalationCombo"]))
                 self.message((lead or self.ceo)["id"], agent["id"], "escalate", self.t("escalation_msg", n=task["revisions"], id=task["id"], combo=router_cfg["escalationCombo"]))
+                # spec 11 T04 (D17): the stronger model starts from the last clean snapshot
+                back = tasker.rewind()
+                if back:
+                    self.note(task, agent, "rewind", self.t("rewind_note", step=back["step"], dropped=back["dropped"]), step=back["step"], dropped=back["dropped"])
             if task["revisions"] > limits["maxRevisions"]:
                 if rescued:
                     raise Exception(self.t("still_failing", feedback=feedback[:300]))
@@ -1427,7 +1892,11 @@ class Run:
 
     async def machine_check(self, task: dict) -> list[str]:
         missing = await self.missing_outputs(task)
-        return [self.t("missing_files", files=", ".join(missing))] if missing else []
+        problems = [self.t("missing_files", files=", ".join(missing))] if missing else []
+        if BLUEPRINT in task["outputs"] and BLUEPRINT not in missing:
+            # spec 11 T07: the blueprint the rebuild starts from is checked like code, before the QA
+            problems += [f"{BLUEPRINT}: {p}" for p in await asyncio.to_thread(blueprint_problems, self.ws)]
+        return problems
 
     async def file_dump(self, task: dict) -> str:
         paths = list(dict.fromkeys(p for p in (safe_rel_path(x) for x in [*task["outputs"], *(task.get("files") or [])]) if p))
@@ -1485,8 +1954,11 @@ class Run:
             self.team.set(judge["id"], {"state": "reviewing", "target": agent["id"], "taskId": task["id"], "runId": self.data["id"], "text": self.t("review_security" if security else "review_check", title=task["title"]), "verdict": None})
             self.message(agent["id"], judge["id"], "review", self.t("ready_for_review", title=task["title"]))
             await self.sleep(pacing["reviewWalkMs"])
+            # spec 11 T09: a clean-room task is also judged against the blueprint's parity criteria
+            criteria = (self._blueprint or {}).get("parityCriteria") if task.get("blueprint") else None
+            checks = "all expected files exist. Clean-room rebuild from the blueprint: the delivery must respect these parity criteria where they apply to this task:\n" + "\n".join(f"- {c}" for c in criteria) if criteria else ""
             raw = await self.chat_json(
-                {"role": "qa", "messages": judge_prompt(judge=judge, goal=self.data["goal"], task=task, attempt=task["attempts"], summary=out["summary"], file_dump=await self.file_dump(task), checks="", security=security, language=self.lang), "max_tokens": 2000, "agent": judge, "task": task},
+                {"role": "qa", "messages": judge_prompt(judge=judge, goal=self.data["goal"], task=task, attempt=task["attempts"], summary=out["summary"], file_dump=await self.file_dump(task), checks=checks, security=security, language=self.lang), "max_tokens": 2000, "agent": judge, "task": task},
                 lambda o: o.get("verdict") in ("pass", "revise"),
             )
             raw = raw or {"verdict": "pass", "score": None, "feedback": ""}
@@ -1551,10 +2023,11 @@ class Run:
 
     # ---------- spec 09: deciding for the owner ----------
 
-    async def auto_answer(self, task: dict, asker: dict, question: str) -> dict:
+    async def auto_answer(self, task: dict, asker: dict, question: str, *, owner: bool = False) -> dict:
         """The lead of the task's team (the CEO when the lead is the one asking)
         writes 2-4 options and picks one; TypeSafe's Jev, when configured, picks
-        among them, and its pick wins at router.arbiter.minConfidence or above."""
+        among them, and its pick wins at router.arbiter.minConfidence or above.
+        owner: the owner asked for it ("find a solution"), so the budget never holds it."""
         from backend.arbiter import typesafe_choose
         from backend.prompts import arbiter_prompt
 
@@ -1562,7 +2035,7 @@ class Run:
         responder = self.ceo if not lead or lead["id"] == asker.get("id") or asker.get("kind") == "ceo" else lead
         ceo = responder["kind"] == "ceo"
         obj = await self.chat_json(
-            {"role": "ceo" if ceo else task["team"], "use": None if ceo else self.role_combo("lead"), "messages": arbiter_prompt(responder=responder, goal=self.data["goal"], task=task, asker=asker.get("name") or asker.get("id") or "?", question=question, progress=self.progress_text(task["team"]), owner_files=self.owner_files_text(task), language=self.lang), "max_tokens": 900, "agent": responder, "task": task},
+            {"role": "ceo" if ceo else task["team"], "use": None if ceo else self.role_combo("lead"), "messages": arbiter_prompt(responder=responder, goal=self.data["goal"], task=task, asker=asker.get("name") or asker.get("id") or "?", question=question, progress=self.progress_text(task["team"]), owner_files=self.owner_files_text(task), language=self.lang), "max_tokens": 900, "agent": responder, "task": task, "owner": owner},
             lambda o: isinstance(o.get("options"), list) and len(o["options"]) > 0,
         )
         options = []
@@ -1610,7 +2083,7 @@ class Run:
         item, task, asker = self._question_parts(id, ("open",))
         if item is None or task is None:
             return None
-        decision = await self.auto_answer(task, asker, item["text"])
+        decision = await self.auto_answer(task, asker, item["text"], owner=True)
         if item["status"] != "open":
             return decision  # the owner answered while the team was deciding: their words win
         answer = self._auto_close(item, decision)
@@ -1624,7 +2097,7 @@ class Run:
         item, task, asker = self._question_parts(id, ("pending", "open"))
         if item is None or task is None:
             return None
-        decision = await self.auto_answer(task, asker, item["text"])
+        decision = await self.auto_answer(task, asker, item["text"], owner=True)
         self._auto_close(item, decision)
         self.add_interaction(task, "user", f"{decision['solution']} ({decision['byName']} decided for you; why: {decision['why'] or '-'})", answers=item["id"], question=item["text"][:300], by=decision["by"])
         self.emit_run(True)
@@ -1643,7 +2116,7 @@ class Run:
             return []
         files = "\n".join(line for line in self.owner_files_text().split("\n") if any(a["path"] in line for a in self.data.get("attachments") or [] if a["id"] in attachment_ids))
         obj = await self.chat_json(
-            {"role": "ceo", "messages": refiner_prompt(ceo=self.ceo, goal=self.data["goal"], directive=text, files=files, tasks=done, language=self.lang), "max_tokens": 1200, "agent": self.ceo},
+            {"role": "ceo", "messages": refiner_prompt(ceo=self.ceo, goal=self.data["goal"], directive=text, files=files, tasks=done, language=self.lang), "max_tokens": 1200, "agent": self.ceo, "owner": True},
             lambda o: isinstance(o.get("targets"), list),
         )
         ids = {t["id"] for t in done}
@@ -1812,12 +2285,14 @@ class Run:
             try:
                 # one vision combo, no cascade (a model without vision fails on the image),
                 # no invented answer in a live run
-                res = await self.ctx.router.chat(use="vision", messages=messages, max_tokens=600, meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]}, cascade=False, emergency=None if self.data.get("mode") == "demo" else False)
+                held = await self.budget_gate(agent)  # spec 11 T01
+                try:
+                    res = await self.ctx.router.chat(use="vision", messages=messages, max_tokens=600, meta={"runId": self.data["id"], "taskId": task["id"], "agentId": agent["id"]}, cascade=False, emergency=None if self.data.get("mode") == "demo" else False)
+                finally:
+                    if held:
+                        self._in_flight -= 1
                 seen, by = res["text"].strip()[:1500], res.get("target")
-                usage = self.data["usage"]
-                usage["calls"] += 1
-                usage["tokensIn"] += (res.get("usage") or {}).get("in", 0)
-                usage["tokensOut"] += (res.get("usage") or {}).get("out", 0)
+                budget.spend(self.data["usage"], res, self.cfg)
             except ProviderError:
                 seen = None
         origin = self.owner_of(p)
@@ -1835,15 +2310,35 @@ class Run:
         tool, args = action["tool"], action["args"]
         skills, brain = self.ctx.skills, self.ctx.brain
         try:
+            refused = self.clean_room_refusal(task, args)
+            if refused:
+                return refused
+            hidden = self.hidden_for(task)
             if tool == "list_files":
-                return await self.ws.list_text(args.get("path") or ".") or "(empty folder)"
+                files = [f for f in await self.ws.list(args.get("path") or ".") if not (hidden and hidden(f["path"]))]
+                return "\n".join(f"{f['path']} ({f['size']} B)" for f in files) or "(empty folder)"
             if tool == "read_file":
                 return await self.ws.read(args.get("path"))
+            if tool == "scan_target_tree":
+                return await scan_target_tree(self.ws, str(args.get("path") or "."), hidden=hidden)
+            if tool == "extract_code_skeleton":
+                return await extract_code_skeleton(self.ws, str(args.get("path") or ""))
+            if tool == "write_blueprint":
+                r = await write_blueprint(self.ws, args["data"] if "data" in args else args, self.lang)
+                if not r["ok"]:
+                    return "ERROR: blueprint.json not saved. Fix these points and call write_blueprint again:\n" + "\n".join(f"- {p}" for p in r["problems"])
+                for f in r["files"]:
+                    self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": f["path"], "bytes": f["bytes"]})
+                bp = r["blueprint"]
+                self.remember_event("file", f"{BLUEPRINT}: the blueprint of {bp['name']}, {len(bp['endpoints'])} endpoints, {len(bp['dataModels'])} data models, {len(bp['parityCriteria'])} parity criteria", task, agent, path=BLUEPRINT)
+                return f"Saved {BLUEPRINT} and {BLUEPRINT_MD}: {len(bp['architecture']['components'])} components, {len(bp['dataModels'])} data models, {len(bp['endpoints'])} endpoints, {len(bp['businessRules'])} business rules, {len(bp['edgeCases'])} edge cases, {len(bp['parityCriteria'])} parity criteria."
             if tool == "write_file":
                 if not isinstance(args.get("content"), str):
                     return 'ERROR: "content" must be a string with the whole file.'
                 if Path(str(args.get("path") or "")).suffix.lower() in MEDIA_EXT:
                     return f"ERROR: {args.get('path')} is a media file: create it with generate_image (images) or generate_speech (audio), never with write_file."
+                if safe_rel_path(args.get("path")) in (BLUEPRINT, BLUEPRINT_MD):
+                    return f"ERROR: {BLUEPRINT} and {BLUEPRINT_MD} are written with write_blueprint, which validates the blueprint."
                 r = await self.ws.write(args.get("path"), args["content"])
                 self.ctx.bus.emit("file", {"runId": self.data["id"], "agentId": agent["id"], "taskId": task["id"], "path": r["path"], "bytes": r["bytes"]})
                 self.publish_file(task, agent, r["path"], args["content"])
@@ -1855,7 +2350,8 @@ class Run:
             if tool == "run_command":
                 if not self.cfg["limits"].get("allowShell"):
                     return "ERROR: shell commands are disabled on this machine. Verify by reading files instead."
-                r = await run_command(str(args.get("cmd") or ""), self.ws.root, self.cfg["limits"]["commandTimeoutMs"], self._abort)
+                # spec 11 T02: without the keys of the environment, nor those the config names
+                r = await run_command(str(args.get("cmd") or ""), self.ws.root, self.cfg["limits"]["commandTimeoutMs"], self._abort, secrets=config_key_names(self.cfg))
                 return f"exit code {r['code']}\n{r['output']}"
             if tool == "generate_image":
                 return await self.write_media(task, agent, "image", args)
@@ -1913,4 +2409,9 @@ class Run:
             agent_id=ceo["id"],
             run_id=self.data["id"],
         )
+        # spec 11 T03: the run's lessons and notes merge with their near-duplicates
+        try:
+            await self.ctx.brain.consolidate(run_id=self.data["id"])
+        except Exception as err:  # noqa: BLE001 -- a memory clean-up never fails the run
+            print(f"Brain        →  consolidation skipped: {err}", flush=True)
         self.message(ceo["id"], "*", "report", self.t("report_ready"))

@@ -54,6 +54,8 @@ const ago = (iso) => {
   if (s < 86400) return t('ago.h', { n: Math.round(s / 3600) });
   return new Date(iso).toLocaleDateString(locale());
 };
+// spec 11 T01: an estimated amount in USD, written the way the UI language writes money
+const usd = (n) => new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: n > 0 && n < 0.01 ? 4 : 2 }).format(n ?? 0);
 const dur = (a, b) => {
   const s = Math.max(0, Math.round(((b ? new Date(b) : new Date()) - new Date(a)) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
@@ -62,8 +64,57 @@ const dur = (a, b) => {
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) } });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== SESSION) relogin();
   if (!res.ok) throw new Error(body.error ?? t('error.status', { n: res.status }));
   return body;
+}
+
+// ---------- spec 11 T02: the access key on the LAN ----------
+
+// The page asks GET /api/session first: it needs no key and tells the app's language.
+// On this machine the page is always in. From the LAN, without a session, the login
+// takes the key; POST /api/session sets the cookie (HttpOnly: no script here sees it)
+// and the boot goes on with it. With no key on the server the dialog only says why.
+const SESSION = '/api/session';
+
+function login(session) {
+  setLang(session.language ?? getLang());
+  applyStatic();
+  const box = $('#login');
+  box.innerHTML = `<form class="sheet login-sheet">
+    <h2>${esc(t('login.title'))}</h2>
+    <p class="hint">${esc(t(session.keySet ? 'login.text' : 'login.off'))}</p>
+    ${session.keySet ? `<input type="password" autocomplete="current-password" placeholder="${esc(t('login.key'))}"><div class="login-error"></div><button class="primary" type="submit">${esc(t('login.go'))}</button>` : ''}
+  </form>`;
+  box.classList.remove('hidden');
+  const form = box.querySelector('form');
+  const input = form.querySelector('input');
+  input?.focus();
+  return new Promise((resolve) => {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const error = form.querySelector('.login-error');
+      error.textContent = '';
+      try {
+        await api(SESSION, { method: 'POST', body: JSON.stringify({ key: input.value }) });
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        resolve();
+      } catch (err) {
+        error.textContent = err.message;
+        input.select();
+      }
+    };
+  });
+}
+
+// The session ended with the page open (after its days, or a new key on the server):
+// the login again, then a fresh page, whose event stream opens with the new cookie.
+let relogging = false;
+function relogin() {
+  if (relogging) return;
+  relogging = true;
+  login({ keySet: true }).then(() => location.reload());
 }
 
 function toast(text, bad = false) {
@@ -299,16 +350,18 @@ function renderWaiting() {
     el.innerHTML = `<h3>${live ? t('wait.title', { n: open.length }) : t('wait.pendingTitle', { n: open.length })}</h3>${open
       .map((w) => {
         const a = S.agents.get(w.from);
-        const what = w.kind === 'plan' ? t('wait.plan') : w.kind === 'model' ? t('wait.model') : t('wait.question', { task: esc(w.taskId ?? '') });
+        const what = w.kind === 'plan' ? t('wait.plan') : w.kind === 'model' ? t('wait.model') : w.kind === 'budget' ? t('wait.budget') : t('wait.question', { task: esc(w.taskId ?? '') });
         const buttons = w.kind === 'plan'
           ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.approve')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.reject')}</button>`
+          : w.kind === 'budget'
+            ? `<button class="btn go" data-answer="${w.id}" data-decision="approve">${t('wait.budgetGo')}</button><button class="btn danger" data-answer="${w.id}" data-decision="reject">${t('wait.budgetStop')}</button>`
           : w.kind === 'model'
             ? `<button class="btn go" data-answer="${w.id}">${t('wait.retry')}</button>`
             : `<button class="btn go" data-answer="${w.id}">${t('wait.reply')}</button><button class="btn" data-solve="${w.id}">${t('wait.solve')}</button>`;
         return `<div class="wait-item">
           <div class="who"><b style="color:${agentColor(w.from)}">${esc(a?.name ?? w.from)}</b> · ${what}</div>
           <div class="q">${esc(w.text)}</div>
-          <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
+          <textarea data-wait="${w.id}" placeholder="${w.kind === 'plan' || w.kind === 'budget' ? t('wait.notes') : t('wait.answer')}">${esc(drafts[w.id] ?? '')}</textarea>
           <div class="row">${buttons}</div>
         </div>`;
       })
@@ -331,6 +384,12 @@ function renderCurrent() {
   // spec 09: a stopped run (or one with failures) starts again from where it stopped
   const resumable = !isLive(run) && ['stopped', 'completed_with_failures', 'failed'].includes(run.status) && !isLive(S.run);
   const pendingQ = (run.waiting ?? []).filter((w) => w.status === 'pending').length;
+  // spec 11 T01: what the real providers cost, against the run budget (a demo answer costs nothing: not shown)
+  const u = run.usage ?? {};
+  const lim = run.budget?.limit ?? {};
+  const spend = u.providerCalls
+    ? `${lim.calls ? `<span data-budget="calls">${t('current.paidCalls', { n: u.providerCalls, limit: lim.calls })}</span>` : ''}<span data-budget="cost" title="${esc(t('current.costTitle'))}">${lim.costUSD ? t('current.cost', { usd: usd(u.costUSD), limit: usd(lim.costUSD) }) : t('current.costOnly', { usd: usd(u.costUSD) })}</span>`
+    : '';
   const controls = isLive(run) && run.id === S.run?.id
     ? `<div class="row" style="margin-top:10px">${run.paused ? `<button class="btn" data-act="resume">${t('current.resume')}</button>` : `<button class="btn" data-act="pause">${t('current.pause')}</button>`}<button class="btn danger" data-act="stop">${t('current.stop')}</button></div>`
     : resumable
@@ -344,10 +403,10 @@ function renderCurrent() {
   el.innerHTML = `
     <h3>${S.view ? `${t('current.selected')} · <a href="#" data-act="back">${t('current.back')}</a>` : t('current.title')}</h3>
     <div class="goal">${esc(run.goal)}</div>
-    <div class="row" style="flex-wrap:wrap"><span class="status ${run.status}">${label('status', run.status)}${run.paused ? t('current.paused') : ''}</span>${run.complexity ? `<span class="badge cx">${run.complexity === 'complex' ? t('current.complex') : t('current.simple')}</span>` : ''}${run.mode === 'demo' ? '<span class="badge">demo</span>' : ''}</div>
+    <div class="row" style="flex-wrap:wrap"><span class="status ${run.status}">${label('status', run.status)}${run.paused ? t('current.paused') : ''}</span>${run.complexity ? `<span class="badge cx">${run.complexity === 'complex' ? t('current.complex') : t('current.simple')}</span>` : ''}${run.intent && run.intent !== 'direct_build' ? `<span class="badge intent" title="${esc(run.intentWhy ?? '')}">${label('intent', run.intent)}${run.phase ? ` · ${label('phase', run.phase)}` : ''}</span>` : ''}${run.mode === 'demo' ? '<span class="badge">demo</span>' : ''}</div>
     ${run.planSummary ? `<div class="plan-summary">${esc(run.planSummary)}</div>` : ''}
     <div class="progress"><div style="width:${(done / total) * 100}%"></div></div>
-    <div class="meta"><span>${done}/${run.tasks.length} task</span><span>⏱ ${dur(run.createdAt, run.finishedAt)}</span><span>${t('current.calls', { n: run.usage?.calls ?? 0 })}</span>${run.usage?.escalations ? `<span>⬆️ ${run.usage.escalations}</span>` : ''}</div>
+    <div class="meta"><span>${done}/${run.tasks.length} task</span><span>⏱ ${dur(run.createdAt, run.finishedAt)}</span><span>${t('current.calls', { n: run.usage?.calls ?? 0 })}</span>${spend}${run.usage?.escalations ? `<span>⬆️ ${run.usage.escalations}</span>` : ''}</div>
     ${ws.length ? `<div class="ws-mini">${ws.join('')}</div>` : ''}
     ${run.error ? `<div class="verdict revise" style="margin-top:8px">${esc(run.error)}</div>` : ''}
     ${controls}`;
@@ -490,7 +549,7 @@ function taskCard(t) {
   let detail = '';
   if (open) {
     const hist = t.history.slice(-14).map((h) => {
-      const icon = { verdict: '⚖️', escalate: '⬆️', check: '🧪', switch: '🔀', decision: '💡', model_wait: '⏳' }[h.kind] ?? '⚠️';
+      const icon = { verdict: '⚖️', escalate: '⬆️', rewind: '⏪', check: '🧪', switch: '🔀', decision: '💡', model_wait: '⏳' }[h.kind] ?? '⚠️';
       const what = h.kind === 'step' ? `${label('tool', h.tool)}${h.target ? ` <code>${esc(h.target.slice(0, 60))}</code>` : ''}<br><span class="muted">${esc(h.text)}</span>` : `${icon} ${esc(h.text)}`;
       return `<div class="ev"><span class="t">${esc(agentName(h.agentId).slice(0, 2))}</span><div>${what}</div></div>`;
     });
@@ -1005,6 +1064,12 @@ function openSettings() {
       <label class="check" style="margin:0"><input type="checkbox" data-bool="autoAnswer" ${L.autoAnswer !== false ? 'checked' : ''}> ${t('settings.autoAnswer')}</label>
     </div>
     <div class="hint" style="margin-top:6px">${t('settings.shell', { state: L.allowShell ? t('settings.shellOn') : t('settings.shellOff') })}</div>
+    <h3>${t('settings.budget')}</h3>
+    <div class="row" style="flex-wrap:wrap;gap:14px">
+      <label>${t('settings.maxCalls')} <input type="number" min="0" max="100000" step="10" data-limit="maxCallsPerRun" value="${L.maxCallsPerRun ?? 0}"></label>
+      <label>${t('settings.maxCost')} <input type="number" min="0" step="0.5" data-limit="maxCostUSD" value="${L.maxCostUSD ?? 0}"></label>
+    </div>
+    <div class="hint" style="margin-top:6px">${t('settings.budgetHint')}</div>
     <h3>${t('settings.pacing')}</h3>
     <div class="row" style="flex-wrap:wrap;gap:14px">${Object.entries(P).map(([k, v]) => `<label>${esc(k)} <input type="number" min="0" step="100" data-pace="${k}" value="${v}"></label>`).join('')}</div>
     <h3>${t('settings.textProviders')}</h3><table>${provRows}</table>
@@ -1127,8 +1192,9 @@ async function answerWaiting(id, decision) {
   const text = document.querySelector(`textarea[data-wait="${id}"]`)?.value ?? '';
   const run = shown(); // spec 09: a stopped run's question too
   try {
+    const budget = (run.waiting ?? []).find((w) => w.id === id)?.kind === 'budget'; // spec 11 T01
     const r = await api(`/api/runs/${run.id}/answer`, { method: 'POST', body: JSON.stringify({ itemId: id, text, decision }) });
-    toast(r.resumable ? t('wait.saved') : decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
+    toast(r.resumable ? t('wait.saved') : budget ? t(decision === 'reject' ? 'answer.budgetStop' : 'answer.budgetGo') : decision === 'approve' ? t('answer.approved') : decision === 'reject' ? t('answer.rejected') : t('answer.sent'));
     if (r.resumable) await refreshView(run);
   } catch (err) {
     toast(err.message, true);
@@ -1152,7 +1218,7 @@ function switchTab(tab) {
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-act],[data-task],[data-run],[data-agent],[data-file],[data-test],[data-tab],[data-filter],[data-team],[data-focusroom],[data-skill],[data-answer],[data-solve],[data-attach],[data-unstage],[data-isend],[data-isolve],[data-openbox],[data-prov-remove],.chip');
   if (!t) {
-    if (e.target.classList.contains('modal')) e.target.classList.add('hidden');
+    if (e.target.classList.contains('modal') && e.target.id !== 'login') e.target.classList.add('hidden'); // spec 11 T02: the login stays
     return;
   }
   // spec 09: files, the box of a task, the questions of a stopped run
@@ -1253,7 +1319,7 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') document.querySelectorAll('.modal').forEach((m) => m.classList.add('hidden'));
+  if (e.key === 'Escape') document.querySelectorAll('.modal:not(#login)').forEach((m) => m.classList.add('hidden'));
   if (e.key === 'Enter' && e.target.id === 'chat-input') sendChat();
   // spec 09: Ctrl/Cmd+Enter sends from the box of a task or from the change box
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.dataset?.iboxText) sendBox(e.target.dataset.iboxText);
@@ -1415,7 +1481,8 @@ function handle({ type, payload }) {
       S.brain.count = payload.count;
       world.onBrain(payload);
       invalidate('top');
-      if (S.tab === 'brain' && payload.op === 'remember') loadBrain();
+      // spec 11 T03: a consolidation removes notes, so the open list reloads too
+      if (S.tab === 'brain' && (payload.op === 'remember' || payload.op === 'consolidate')) loadBrain();
       break;
     case 'skills':
       S.skills.count = payload.count;
@@ -1450,6 +1517,10 @@ async function boot() {
   document.body.classList.toggle('night', night);
   $('#btn-theme').textContent = night ? '☾' : '☀';
   world.setTheme(night);
+
+  // spec 11 T02: from the LAN, the key before anything else (nothing to do on this machine)
+  const session = await api(SESSION).catch(() => null);
+  if (session && !session.authenticated) await login(session);
 
   const st = await api('/api/state');
   S.config = st.config;

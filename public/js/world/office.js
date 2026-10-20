@@ -38,6 +38,8 @@ const ZONES = [
   { x: -6, z: 9.6 },
   { x: 6, z: 9.6 },
   { x: 17.8, z: 9.6 },
+  // spec 11 T08: the Reverse Engineering team, in the north-west corner between the window and the stage
+  { x: -17.2, z: -11.6 },
 ];
 
 // where free agents like to wander
@@ -318,6 +320,28 @@ function prop(kind, color) {
         g.add(box(0.14, 0.14, 0.02, glow(i < 3 ? '#3fbf6f' : '#f28a3a', 0.5), -0.4, 1.85 - i * 0.3, 0.04, { cast: false }));
         g.add(box(0.6, 0.05, 0.02, mat('#b9bfc9'), 0.1, 1.85 - i * 0.3, 0.04, { cast: false }));
       }
+      break;
+    }
+    case 'scanner': {
+      // spec 11 T08: a terminal and a magnifying lens, for the team that reads applications without running them
+      g.add(box(0.9, 1.1, 0.6, mat('#2d333c'), 0, 0.55, 0));
+      g.add(box(0.74, 0.52, 0.04, new THREE.MeshStandardMaterial({ color: '#0f1c17', emissive: color, emissiveIntensity: 0.9 }), 0, 1.42, 0.2, { cast: false }));
+      g.add(box(0.08, 0.32, 0.08, dark, 0, 1.12, 0.12));
+      const leds = [];
+      for (let i = 0; i < 4; i++) {
+        const led = new THREE.MeshStandardMaterial({ color: '#111', emissive: i % 2 ? color : '#3fbf6f', emissiveIntensity: 1 });
+        leds.push(led);
+        g.add(box(0.1, 0.04, 0.02, led, -0.27 + i * 0.18, 0.95, 0.31, { cast: false }));
+      }
+      const lens = new THREE.Group();
+      lens.add(new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.05, 8, 24), mat('#b08a4a')));
+      const handle = box(0.06, 0.42, 0.06, mat('#6e5b4b'), 0.22, -0.32, 0);
+      handle.rotation.z = 0.7;
+      lens.add(handle);
+      lens.position.set(0.15, 2.05, 0.1);
+      g.add(lens);
+      g.userData.spin = lens;
+      g.userData.leds = leds;
       break;
     }
     default:

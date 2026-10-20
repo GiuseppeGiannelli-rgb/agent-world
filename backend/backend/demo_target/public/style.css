@@ -1,0 +1,12 @@
+:root {
+  --bg: #f6f3ee;
+  --ink: #23201c;
+  --accent: #3f7be0;
+  --done: #9a948b;
+}
+body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+#board { max-width: 560px; margin: 8vh auto; padding: 0 16px; }
+#add { display: flex; gap: 8px; }
+#add input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid #d6d0c6; }
+#list li { padding: 10px 0; border-bottom: 1px solid #e4ded4; cursor: pointer; }
+#list li.done { color: var(--done); text-decoration: line-through; }

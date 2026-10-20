@@ -33,6 +33,7 @@ TEAM_SYNONYMS = {
     "design": ["design", "designer", "ui", "ux"],
     "genai": ["genai", "generative", "media", "image", "images", "art", "artist", "audio", "voice", "video", "immagini", "creative"],
     "prompt": ["prompt", "prompts", "prompting", "prompt-engineering", "promptlab"],
+    "reverse": ["reverse", "reverse-engineering", "reverse_engineering", "deconstruction", "re"],
 }
 
 
@@ -92,8 +93,11 @@ def _to_dag(items: list[dict], make_id) -> list[dict]:
     return order
 
 
-def normalize_plan(raw: dict, cfg: dict) -> dict:
-    teams = [id for id, t in cfg["teams"].items() if t.get("kind") == "work" and t.get("lead") is not None]
+def normalize_plan(raw: dict, cfg: dict, teams: list[str] | None = None) -> dict:
+    """Spec 11 T09: `teams` are the ones this plan may use (the build teams by
+    default, never the reverse team unless named)."""
+    if teams is None:
+        teams = [id for id, t in cfg["teams"].items() if t.get("kind") == "work" and t.get("lead") is not None and not t.get("reverse")]
     items = (raw or {}).get("workstreams")
     items = items[: cfg["limits"]["maxWorkstreams"]] if isinstance(items, list) else []
     if not items:

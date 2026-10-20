@@ -1,0 +1,12 @@
+{
+  "name": "todo-board",
+  "version": "1.2.0",
+  "description": "A small to-do board: a JSON API and a one-page front-end (the sample target of the demo, spec 11 T09).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

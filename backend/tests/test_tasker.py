@@ -247,6 +247,230 @@ class TestTaskerWork:
         assert mock.csv(mock.field(user, "OUTPUTS")) == ["out.md"]
 
 
+# ---------- spec 11 T04: checkpoints and time-travel ----------
+
+
+def act(tool, **args):
+    return json.dumps({"thought": tool, "tool": tool, "args": args})
+
+
+FINISH = act("finish", summary="s", files=["out.md"])
+
+
+class CheckpointRun(FakeRun):
+    """A FakeRun that records the checkpoints it is given, fails the tools aimed at
+    the paths it is told to, hands the owner's words before a chosen model call and
+    has a run memory whose cursor moves with every call."""
+
+    def __init__(self, replies, errors=(), notes=None, **kw):
+        super().__init__(replies, **kw)
+        self.cfg["limits"]["maxSteps"] = 10
+        self.errors = set(errors)
+        self.notes_at = dict(notes or {})  # model calls made so far -> the owner's words before the next one
+        self.calls = 0
+        self.cursor = 0
+        self.saved = []
+        self.seen_attachments = {}
+
+    def take_steering(self, task, agent):
+        note = self.notes_at.pop(self.calls, None)
+        return [note] if note else []
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        self.cursor += 1
+        return await super().chat(**kwargs)
+
+    def memory_cursor(self):
+        return self.cursor
+
+    def cross_update(self, task, since, profile, switched=False):
+        return None, self.cursor  # nothing linked to deliver, the cursor moves on
+
+    async def exec_tool(self, task, agent, action):
+        self.tool_calls.append(action["tool"])
+        if action["tool"] == "ask_user":
+            return "The owner answers: blue, like the logo"
+        target = action["args"].get("path") or ""
+        return f"ERROR: {target} is not a file of this project." if target in self.errors else "fatto"
+
+    def checkpoint(self, task, tasker, cp):
+        self.saved.append(dict(cp))
+
+
+def marks(tasker):
+    return [(c["step"], c["at"], c["clean"]) for c in tasker.checkpoints]
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_after_the_brief_and_after_every_valid_step():
+    """Spec 11 T04 (D16): a snapshot does not copy the conversation (it only grows at
+    its end): it marks its length, with the step, the attempt, the cross-agent cursor
+    and whether the context is still clean. One after the brief, one after every
+    valid step (a tool that ran, a finish accepted); the first error makes the context
+    dirty, and the snapshots after it are not clean."""
+    from backend.tasker import Tasker
+
+    run = CheckpointRun([act("list_files", path="."), "not json", act("write_file", path="out.md", content="x"), FINISH])
+    tasker = Tasker(run, dict(TASK, history=[], attempts=1), AGENT)
+    await tasker.work()
+    # brief = 2 messages; list_files +2; the format error +2 (no snapshot); write_file +2; finish +1
+    assert marks(tasker) == [(0, 2, True), (1, 4, True), (2, 8, False), (3, 9, False)]
+    assert all(c["attempt"] == 1 for c in tasker.checkpoints)
+    assert [c["cursor"] for c in tasker.checkpoints] == [0, 0, 2, 3]  # the cursor of the context at that point
+    assert run.saved == tasker.checkpoints  # every snapshot reaches the run (and from there the disk)
+
+
+@pytest.mark.asyncio
+async def test_a_tool_error_or_a_refused_finish_is_no_valid_step():
+    from backend.tasker import Tasker
+
+    run = CheckpointRun([act("read_file", path="missing.md"), FINISH], errors={"missing.md"})
+    tasker = Tasker(run, dict(TASK, history=[], attempts=1), AGENT)
+    await tasker.work()
+    assert marks(tasker) == [(0, 2, True), (1, 5, False)]  # the failed read is no step, and it dirties
+
+    run = CheckpointRun([FINISH, FINISH], missing_first=True)
+    tasker = Tasker(run, dict(TASK, history=[], attempts=1), AGENT)
+    await tasker.work()
+    assert marks(tasker) == [(0, 2, True), (1, 5, False)]  # "CANNOT FINISH YET" is an error too
+
+    run = CheckpointRun([act("write_file", path="out.md", content=""), FINISH])
+    tasker = Tasker(run, dict(TASK, history=[], attempts=1), AGENT)
+    await tasker.init()
+    tasker.shape = "small"  # spec 10 §R4: a small model's action without its arguments
+    await tasker.work()
+    assert marks(tasker) == [(0, 2, True), (1, 5, False)]
+
+
+def run_with_two_rejections(**kw):
+    """Attempt 1: a valid step, a format error, a write, a finish (rejected); attempt 2,
+    after the owner's words: another write and a finish (rejected); attempt 3: a finish."""
+    return CheckpointRun(
+        [
+            act("list_files", path="."),
+            "not json",
+            act("write_file", path="out.md", content="v1"),
+            FINISH,
+            act("write_file", path="assets/extra.md", content="v2"),
+            FINISH,
+            FINISH,
+        ],
+        notes={4: "Use a warmer tone"},
+        **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_escalation_goes_back_to_the_last_clean_snapshot():
+    """D17: at the escalation the conversation goes back to the last clean snapshot.
+    On top come back the owner's words said since, then one revision with every
+    rejection since (attempt by attempt) and the files the rejected attempts left in
+    the folder. The format error, the old revision and the rejected steps are gone;
+    the cross-agent cursor is the snapshot's; the context is clean again."""
+    from backend.tasker import Tasker
+
+    run = run_with_two_rejections()
+    task = dict(TASK, history=[], attempts=1)
+    tasker = Tasker(run, task, AGENT)
+    await tasker.work()
+    task["attempts"] = 2
+    await tasker.work("Missing the final section")
+    before = list(tasker.messages)
+    assert len(before) == 14 and before[9]["content"].startswith("REVISION REQUESTED (attempt 2)")
+    owner = before[10]
+    assert owner["content"].startswith("MESSAGE FROM THE USER (the owner): Use a warmer tone")
+    assert tasker.cross_cursor == 5
+
+    assert tasker.rewind() == {"step": 1, "dropped": 9}
+    assert tasker.messages == [*before[:4], owner]
+    assert tasker.cross_cursor == 0  # the cursor of the clean snapshot: linked work since then comes again
+    assert marks(tasker) == [(0, 2, True), (1, 4, True)]
+
+    task["attempts"] = 3
+    out = await tasker.work("Still no sources")
+    assert out["summary"] == "s"
+    text = json.dumps(tasker.messages, ensure_ascii=False)
+    assert "FORMAT ERROR" not in text and "not json" not in text
+    revisions = [m["content"] for m in tasker.messages if m["role"] == "user" and m["content"].startswith("REVISION REQUESTED")]
+    assert len(revisions) == 1 and revisions[0].startswith("REVISION REQUESTED (attempt 3)")
+    assert "- attempt 1: Missing the final section" in revisions[0] and "- attempt 2: Still no sources" in revisions[0]
+    assert "out.md" in revisions[0] and "assets/extra.md" in revisions[0]  # the files of the rejected attempts
+    assert tasker.messages[:5] == [*before[:4], owner]
+    # the revision is the new clean point, then the step of the stronger model
+    assert marks(tasker) == [(0, 2, True), (1, 4, True), (1, 6, True), (2, 7, True)]
+
+
+@pytest.mark.asyncio
+async def test_the_owners_answer_survives_the_rewind():
+    """The owner's answer to the worker's question (ask_user) is the owner's word
+    too: it comes back after the clean point, with the question it answers."""
+    from backend.tasker import Tasker
+
+    run = CheckpointRun([act("list_files", path="."), "not json", act("ask_user", question="Which colour?"), FINISH, FINISH])
+    task = dict(TASK, history=[], attempts=1)
+    tasker = Tasker(run, task, AGENT)
+    await tasker.work()
+    task["attempts"] = 2
+    await tasker.work("Missing the final section")
+    before = list(tasker.messages)
+    assert before[7]["content"].startswith("RESULT of ask_user:\nThe owner answers: blue")
+    assert tasker.rewind() == {"step": 1, "dropped": 5}
+    assert tasker.messages == [*before[:4], before[6], before[7]]
+
+
+@pytest.mark.asyncio
+async def test_no_rewind_on_a_clean_context():
+    from backend.tasker import Tasker
+
+    run = CheckpointRun([act("list_files", path="."), FINISH])
+    tasker = Tasker(run, dict(TASK, history=[], attempts=1), AGENT)
+    await tasker.work()
+    before = list(tasker.messages)
+    assert tasker.rewind() is None
+    assert tasker.messages == before
+    assert "clean" not in tasker.session()  # a clean worker saves no second copy
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_worker_keeps_its_clean_point():
+    """D18: the session of a dirty worker carries its clean point (the conversation
+    compacted, the owner's words and the files since, the rejections): after a
+    resume the rewind still lands there."""
+    from backend.tasker import Tasker
+
+    run = run_with_two_rejections()
+    task = dict(TASK, history=[], attempts=1)
+    tasker = Tasker(run, task, AGENT)
+    await tasker.work()
+    task["attempts"] = 2
+    await tasker.work("Missing the final section")
+    saved = json.loads(json.dumps(tasker.session()))
+    clean = saved["clean"]
+    assert clean["messages"] == tasker.messages[:4]
+    assert [m["content"] for m in clean["owner"]] == [tasker.messages[10]["content"]]
+    assert clean["files"] == ["out.md", "assets/extra.md"]
+    assert clean["rejections"] == [{"attempt": 1, "feedback": "Missing the final section"}]
+    assert (clean["step"], saved["step"]) == (1, 5)  # list, write, finish, write, finish
+    assert "cursor" not in clean  # the run memory is rebuilt at a resume: an old cursor means nothing there
+
+    again = Tasker(CheckpointRun([FINISH]), task, AGENT)
+    again.restore(saved)
+    assert again.messages[-1]["content"].startswith("RUN RESUMED")
+    assert again.rewind() == {"step": 1, "dropped": len(saved["messages"]) + 1 - 5}
+    assert again.messages == [*clean["messages"], *clean["owner"]]
+    # stopped right after the rewind, before its revision: the rejections are not lost
+    pending = json.loads(json.dumps(again.session()))
+    assert pending["rewound"] == {"files": ["out.md", "assets/extra.md"], "rejections": [{"attempt": 1, "feedback": "Missing the final section"}]}
+    later = Tasker(CheckpointRun([FINISH]), task, AGENT)
+    later.restore(pending)
+    task["attempts"] = 3
+    await later.work("Still no sources")
+    revision = next(m["content"] for m in later.messages if m["content"].startswith("REVISION REQUESTED"))
+    assert "- attempt 1: Missing the final section" in revision and "- attempt 2: Still no sources" in revision and "out.md" in revision
+    assert sum(1 for m in later.messages if m["content"].startswith("REVISION REQUESTED")) == 1
+
+
 def test_compaction_never_drops_what_the_owner_said_or_gave():
     """Spec 09: the owner's words to a task and the files they added stay valid
     after compaction, like a revision request."""

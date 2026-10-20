@@ -1,10 +1,12 @@
 # HANDOFF — Agent World
 
-*Aggiornato il 2026-10-18, notte. In breve:*
+*Aggiornato il 2026-10-20. In breve:*
+- ***Fase 2 della spec 11 fatta (T06–T10, l'Intent Engine)** sul branch `claude/laughing-gates-c8d3a0`, in un'unica passata chiesta dall'utente: ripreso il lavoro parcheggiato su `claude/spec11-phase2-wip` (cherry-pick di `4581acc` per T06, commit `50ddcb5`, e di `9fc9f02` per T07–T10), completato (simulatore demo, 85 test, 8 difetti corretti) e verificato una volta alla fine. Decisioni D26–D35 (spec 11 §8.4) confermate dall'utente il 20/10 ("così come sono"). Prima, sullo stesso branch: T05 (streaming vero su `/v1`), con D20–D25 confermate dall'utente il 20/10 ("così come sono"). Il branch porta T01–T10 e N19; niente unito, niente spinto.*
+- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout), e poi **T03 fatto** (tokenizer per il codice e ogni scrittura, consolidamento e decadimento del Brain). **T04 fatto** (checkpoint del Tasker e ritorno all'ultimo punto pulito all'escalation) sul branch `claude/t04-tasker-checkpointing-90fa3a`, che parte da `0db28e2` (la punta di `claude/youthful-bun-b80533`) e quindi porta T01–T04 e N19. Niente unito né spinto; decisioni D1–D5 (T01), D6–D11 (T02), D12–D15 (T03) e D16–D19 (T04) confermate dall'utente. **Prossimo:** sezione 3.*
 - *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
-- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 18/10/2026, notte".*
+- *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 20/10/2026".*
 
 ## 1. Stato
 
@@ -26,7 +28,8 @@
   - 08 router, RAG e media;
   - 09 file del proprietario, dialogo, ripresa e failover;
   - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt.
-- **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 3 test saltati di pytest, 2 sono la parità Rust e 1 vuole ffmpeg, che qui non c'è.
+- **Spec aperta:** 11, Core Hardening e Intent Engine a doppia modalità (`docs/specs/11-core-hardening-intent-engine.md`, ticket T01–T10). Si fa **un ticket per sessione**, e si passa al successivo solo con `npm test` verde al 100% (regole di sessione dell'utente, §1 della spec). T01 è fatto sul branch `claude/core-hardening-intent-engine-cdd150`, T02 e T03 sul branch `claude/youthful-bun-b80533`, che parte da T01, T04 sul branch `claude/t04-tasker-checkpointing-90fa3a`, che parte dalla punta del precedente, e T05 più la Fase 2 (T06–T10) sul branch `claude/laughing-gates-c8d3a0`, che parte da T04 (worktree omonimi in `.claude/worktrees/`): non ancora uniti né spinti. Unire l'ultimo porta tutto.
+- **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 5 test saltati di pytest, 4 sono la parità Rust (dalla Fase 2 della spec 11 anche quella del deconstructor) e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
   - il backup della riscrittura della history (`agent-world-before-scrub.bundle`, accanto alla cartella del repo, con i dati personali) è **nel Cestino** dal 18/10: per toglierlo davvero va svuotato il Cestino;
@@ -34,7 +37,7 @@
 - **Questo file è tracciato su `main`** (dal 16/10, decisione dell'utente). `scripts/secret-scan.js` ne scansiona il contenuto come per ogni altro file: chiavi, percorsi assoluti, parole personali.
 - **Push su Windows:** `git push` apre la finestra "Select an account" di Git Credential Manager. Va scelto l'account proprietario del repo (quello nell'indirizzo di `origin`); con l'altro GitHub risponde 403. Il push si lancia in background e si avvisa l'utente.
 
-## 2. Storia in breve (13–18 ottobre)
+## 2. Storia in breve (13–20 ottobre)
 
 La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 
@@ -50,6 +53,8 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **16/10:** chiusi N14 (la demo parla la lingua della run), N15 (i test non toccano i file dell'utente) e N16 (test uguali su ogni sistema). Spec 08 (router, cascata, profiler, RAG su misura del modello, media sempre reali in LIVE). Da qui questo file è tracciato.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
+- **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente). T02, shell a fiducia zero e chiave d'accesso dalla rete, più la chiusura di N13 (decisioni D6–D11 confermate dall'utente). N19 chiuso subito dopo. T03, tokenizer per il codice e consolidamento del Brain (decisioni D12–D15 confermate dall'utente). T04, checkpoint del Tasker e time-travel all'escalation (decisioni D16–D19 confermate dall'utente).
+- **20/10:** T05, streaming vero su `/v1` (decisioni D20–D25 confermate dall'utente). La sessione aveva ricevuto prima una richiesta di fare T05–T10 in un colpo solo, poi quella di fare solo T05: il lavoro già scritto per la fase 2 è stato parcheggiato su un branch a parte. Poi, su richiesta dell'utente, la Fase 2 intera (T06–T10, l'Intent Engine) in un'unica passata, ripartendo da quel lavoro (decisioni D26–D35 confermate dall'utente).
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -58,10 +63,13 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-1. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
-2. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
-3. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
-4. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
+0. **T05 approvato** con D20–D25 (spec 11 §7.3, confermate dall'utente il 20/10, "così come sono").
+1. **Fase 2 (T06–T10) approvata** con D26–D35 (spec 11 §8.4, confermate dall'utente il 20/10, "così come sono"). Tutti i ticket della spec 11 sono fatti e approvati: resta da unire in locale il branch `claude/laughing-gates-c8d3a0`, che porta T01–T10 e N19, quando l'utente lo chiede (passo 3).
+2. **Il branch `claude/spec11-phase2-wip`** (non unito, non spinto) è superato: il suo lavoro è nel branch qui sopra (`50ddcb5` e il commit della Fase 2). Si cancella quando l'utente lo dice.
+3. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
+4. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
+5. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
+6. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
 
 ## 4. Ticket futuri
 
@@ -73,6 +81,10 @@ Lezioni del porting ancora valide:
   Ticket e decisioni D7–D11 restano validi in `docs/specs/03-memory-stability.*`. Sono quasi tutti di front-end; il bus SSE eredita i casi del client lento e della riconnessione.
 - **N10 — Client lento senza pause** (D10 della spec 03): con frame oltre i 50 ms il mondo resta indietro, e recupera solo con la spinta delle code. Proposta: riallineare anche quando l'arretrato supera una soglia di tempo del mondo. È lo stesso `dt` limitato a 0,05 s che rallentava le animazioni della camera nel runner (sezione 6).
 - **N8 — Pinch su touch screen sopra le etichette** (dalla review della spec 02): le etichette prendono i puntatori, quindi un pinch che inizia sopra un'etichetta non arriva al canvas. È un'ipotesi per costruzione, non misurata.
+- **N18 — Le anteprime dalla rete** (spec 11 §4.6, D9): con la chiave d'accesso, `/preview/<id>/` risponde ancora senza chiave a chi conosce l'id di una run (8 cifre esadecimali). Un cookie non arriva alle richieste di una pagina in sandbox; proposta: un segmento firmato nel percorso, dato dalla UI solo a chi ha la sessione.
+- **N20 — Le note `hire` con ⚠️ nella timeline** (trovato chiudendo T04, spec 10): le note di assunzione e di subentro di un task (`kind: "hire"`) non hanno un'icona in `taskCard()` di `public/js/main.js`, quindi prendono ⚠️ come un errore. Proposta: un'icona sua (🤝, come il badge).
+- **N21 — Il roster a 1920×1080 con 18 agenti** (trovato nel QA visivo della Fase 2 della spec 11): con il team `reverse` gli agenti sono 18 e la barra del roster non entra più in larghezza. Proposta: `overflow-x: auto` sulla barra, o due righe sotto una certa larghezza; da misurare con il runner.
+- **N22 — Bersagli da un URL git o da un archivio** (spec 11 §8.8): oggi il bersaglio del reverse engineering è una cartella locale o del codice allegato. Proposta: `target` anche come URL git (clone superficiale in una cartella temporanea, con le stesse regole di `copy_target`) e gli archivi zip/tar allegati estratti con limiti di dimensione e di percorso.
 - **Skill Hub:**
   - la fonte "claudia" la ri-aggiunge l'utente dalla UI;
   - la raccolta vera di skill di Vercel è `vercel-labs/agent-skills`: da proporre, senza aggiungerla da soli.
@@ -136,27 +148,29 @@ Lezioni del porting ancora valide:
   - `providers` (registrazione a runtime);
   - `skills_brain`;
   - `events` (SSE su `/api/events`);
-  - `gateway` (`/v1`, formato OpenAI);
+  - `session` (spec 11 T02: `/api/session`, il login di una pagina dalla rete);
+  - `gateway` (`/v1`, formato OpenAI; spec 11 T05: con `"stream": true` i chunk man mano che il modello scrive, attraverso `Router.stream()`);
   - `static` (`public/`, `/vendor/three*` da `node_modules`, `/preview/<run>/` in sandbox);
 - motore:
-  - `run.py` (missione, scheduler a tick, review, report, ripresa);
-  - `tasker.py` (il loop di un worker);
-  - `team.py`, `bus.py`, `tools.py` + `paths.py` (una regola dei percorsi per ogni sistema);
+  - `run.py` (missione, scheduler a tick, review, report, ripresa; spec 11: il cancello del budget in `chat()`);
+  - `budget.py` (spec 11 T01: limiti della run, prezzi di `router.pricing`, costo stimato, il circuit breaker);
+  - `tasker.py` (il loop di un worker; spec 11 T04: lo snapshot dopo ogni passo valido, `rewind()` all'ultimo punto pulito, `session()` / `restore()` con il punto pulito);
+  - `team.py`, `bus.py`, `tools.py` (spec 11 T02: `shell_env()`, l'ambiente senza chiavi di `run_command`) + `paths.py` (una regola dei percorsi per ogni sistema);
   - `run_memory.py`, `rag_budget.py` (misura del contesto e, spec 10, forma del prompt), `json_repair.py`;
   - `crossbus.py` (spec 10: i fatti dei file e i legami tra lavori, per `[LIVE CROSS-AGENT UPDATE]`);
   - `arbiter.py` (TypeSafe), `attachments.py`;
-- `router/`: `index.py` (combo, cascata, cooldown, blacklist; spec 10: `catalog()`, `health()`, `chat(chain=…)`), `providers.py`, `profiler.py` (spec 10: taglia, specialità, costo), `hiring.py` (spec 10: analisi del sotto-task, catena, subentro), `mock.py` + `mock_texts.py` (la demo, nella lingua della run);
-- memoria: `brain.py`, `skills.py`, `skiller.py` + `downloads.py`, `embed.py`, `search.py` (BM25 e coseno, Rust se compilato);
-- `media.py` (voce: cloud, poi edge-tts, poi la voce del sistema; immagini: cloud, poi il generatore locale), `store.py`;
+- `router/`: `index.py` (combo, cascata, cooldown, blacklist; spec 10: `catalog()`, `health()`, `chat(chain=…)`; spec 11 T05: `stream()`, il failover fino alle prime parole visibili), `providers.py` (spec 11 T05: `call_provider_stream()`, OpenAI e Anthropic in streaming, `ThinkFilter`), `profiler.py` (spec 10: taglia, specialità, costo), `hiring.py` (spec 10: analisi del sotto-task, catena, subentro), `mock.py` + `mock_texts.py` (la demo, nella lingua della run; spec 11 T05: `mock_stream()`, la risposta a pezzi di tre parole);
+- memoria: `brain.py` (spec 11 T03: `consolidate()` alla fine di ogni run, il decadimento nel tempo in `search()`), `skills.py`, `skiller.py` + `downloads.py`, `embed.py`, `search.py` (BM25 e coseno, Rust se compilato; spec 11 T03: il tokenizer dei token del codice e di ogni scrittura, verificato anche dalla probe d'avvio);
+- `media.py` (voce: cloud, poi edge-tts, poi la voce del sistema; immagini: cloud, poi il generatore locale), `store.py` (spec 11 T04: scritture atomiche, al più una ogni 0,4 s per file con lo stato più nuovo, le sessioni dei worker in `runs/sessions/`);
 - lingue: `i18n.py`.
   - `MESSAGES`: i testi della run, nella lingua della run.
   - `HTTP_ERRORS`: gli errori delle API, nella lingua dell'app (`ui.language`, letta a ogni richiesta; senza, l'inglese).
   - Una route scrive solo chiavi; sotto le route si alza `i18n.Refusal(chiave, **valori)`;
-- `security.py`: Host ammessi, `Origin` e `Sec-Fetch-Site` prima di ogni route; i 403 nella lingua dell'app.
+- `security.py`: Host ammessi, `Origin` e `Sec-Fetch-Site` prima di ogni route; poi (spec 11 T02) dalla rete la chiave d'accesso su `/api`, `/api/events` e `/v1`, come Bearer o cookie `aw_session`, con "locale" = `Host` **e** indirizzo di loopback; i rifiuti nella lingua dell'app.
 
 **Persistenza:**
 - tutto in `data/`, spostabile con `AGENT_WORLD_HOME`:
-  - `runs/` (più `runs/sessions/` per la ripresa);
+  - `runs/` (più `runs/sessions/` per la ripresa, scritto a ogni passo valido da T04);
   - `brain.json`, `calls/`, `embeddings/`, `uploads/`, `skiller.json`;
   - `workspace/`, una cartella per run;
 - configurazione in `config/default.json` più `config/local.json` (`AGENT_WORLD_LOCAL_CONFIG` la sposta: lo fanno i test);
@@ -182,14 +196,14 @@ Lezioni del porting ancora valide:
 **Ambiente** (visto il 18/10):
 - Windows 11, Node v24.16.0: minimo 20.10 per l'app, 22 per il runner;
 - uv 0.11.29, Python 3.13.15 nel venv di `backend/`; niente rustc, cargo e Build Tools MSVC;
-- un worktree nuovo non ha `node_modules`: `npm install`, oppure una copia di `node_modules/three` dal checkout principale;
+- un worktree nuovo non ha `node_modules` né `backend/.venv`: `npm install` (oppure una copia di `node_modules/three` dal checkout principale) e `uv sync` in `backend/`;
 - la **porta 4300** è del server dell'utente: **non toccarla**. Il runner usa la 4397 (`--port` per un'altra).
 
 ```sh
 npm start                                    # il server (cd backend && uv run python -m backend)
-npm test                                     # mondo 3D, dizionari, launcher, avvio, pytest, smoke, flussi, secret-scan, temp (~7 min)
+npm test                                     # mondo 3D, dizionari, launcher, avvio, pytest, smoke, flussi, secret-scan, temp (~6-8 min)
 npm run test:backend                         # avvio del backend e pytest
-npm run test:browser                         # runner headless completo, missione inclusa (261 verifiche, ~6 min)
+npm run test:browser                         # runner headless completo, missione inclusa (275 verifiche, ~5-6 min)
 node scripts/browser-test.js --only views,input
 node scripts/browser-test.js --skip-run      # senza la missione
 node scripts/browser-test.js --shots DIR --json FILE --port N
@@ -201,7 +215,7 @@ npm run screenshots                          # gli screenshot del README
 
 **Runner del browser** (`scripts/browser-test.js`):
 - avvia un server demo proprio sulla porta 4397 e Edge o Chrome headless via DevTools. Il browser viene da `scripts/browser/headless.js`, le cartelle (home `agent-world-browser-<pid>-*`, profilo `agent-world-profile-<pid>-*`) da `scripts/lib/temp.js`;
-- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `hiring` (spec 10: le assunzioni live e il subentro vengono dalla risposta di rete di una run salvata, perché la demo non assume nessuno), `recovery`;
+- fasi: `hygiene`, `views`, `checks`, `cubes`, `input`, `overlaps`, `labels`, `language`, `run`, `hiring` (spec 10: le assunzioni live e il subentro vengono dalla risposta di rete di una run salvata, perché la demo non assume nessuno), `budget` (spec 11 T01: una demo non arriva mai al budget, quindi la run live ferma al budget entra dal flusso di eventi della pagina, con un `EventSource` avvolto prima del caricamento; serve `Page.enable`), `recovery`, `lan` (spec 11 T02: il server del runner ha una chiave d'accesso casuale e ammette `lan.localhost`, che il browser risolve da solo su questa macchina e che per il server è un nome della rete);
 - script lato pagina in `scripts/browser/`, con `lib.js` per primo; i rossi attesi in `known-red.json` (oggi vuoto);
 - a fine suite fallisce se restano processi del browser con il suo profilo, o le sue cartelle;
 - **stampa quanti frame al secondo disegna il browser.** Le attese della camera contano i frame (`__t.still()`: nessun movimento in corso e l'immagine ferma su 8 frame). Un controllo di `views` è verde solo a camera ferma;
@@ -216,6 +230,9 @@ npm run screenshots                          # gli screenshot del README
 - **Il pannello browser dell'app** è largo circa 476 px e spesso nascosto, quindi niente rAF né `ResizeObserver`. Le misure 3D si fanno con il runner o con gli helper di `scripts/browser/lib.js`.
 - **I worktree** (`.claude/worktrees/…`) hanno una git dir propria, `.git/worktrees/<nome>`: ciò che sta in `.git/info/` (come `personal-words`) si legge da `git rev-parse --git-common-dir`. Fino al 18/10 `secret-scan.js` non lo faceva e bloccava ogni commit da un worktree che nominava gli agenti.
 - **Heredoc della shell:** con testi lunghi pieni di apici o di lettere accentate a volte si rompe; meglio un file e un piccolo script Python, oppure l'editor.
+- **Il checkout è in CRLF** (`core.autocrlf true`, 19/10, T04): uno script che riscrive un file con `read_text` / `write_text` lo porta in LF, e git avvisa. Uno script di mutazioni rimette i byte esatti del file, non il testo.
+- **Le cartelle temporanee delle sonde** (20/10, T05): `scripts/temp-test.js` (C1, l'ultimo controllo di `npm test`) fallisce se nella cartella temporanea di sistema resta una cartella `aw-*` o `agent-world-*`. Una sonda scritta a mano usa un altro prefisso, o toglie le sue cartelle prima della suite.
+- **`timeout` di Git Bash non chiude pytest su Windows** (19/10): uccide `uv`, ma il python figlio resta e la pipe aspetta per sempre. Per le mutazioni serve uno script Python con `subprocess` e `taskkill /T /F` alla scadenza, e test con `asyncio.wait_for`, così una mutazione è rossa in secondi e non per timeout.
 
 **Debug:**
 - `window.agentWorld` espone `camera`, `controls`, `view`, `insets`, `autoFrame`, `resetView()`, `moveCamera()`, `screenScale()`, `centreLens()`, `footprint()`, `regrab()`, `fx`, `cubes`, `actors`, `labels`, `roomLabels` e `layout`;
@@ -223,13 +240,15 @@ npm run screenshots                          # gli screenshot del README
 
 ## 7. Bug noti e limiti
 
-- **Ticket aperti:** N10, N8, più il backlog della spec 03 (sezione 4).
+- **Ticket aperti:** N22, N21, N20, N18, N10, N8, più il backlog della spec 03 (sezione 4).
 - **Limiti accettati:**
   - un solo run attivo alla volta (409 "the team is already working");
   - la chat con gli agenti sta solo in memoria;
   - durante un resize ogni frame disegna fino a 3 volte;
   - i vettori locali `local/ngram` trovano le varianti di una parola, non il significato: per i sinonimi serve un modello di embedding vero (spec 05);
-  - restano in inglese, come dettagli tecnici, i messaggi dei livelli sotto le route (`paths.py`, `downloads.py`), il gateway `/v1` e i `Forbidden` / `Not found` dei file statici (N13, spec 06 §5).
+  - N13 è chiuso del tutto (spec 11 T02): restano in inglese solo i dettagli tecnici dentro una frase tradotta (i messaggi di `downloads.py` e `paths.py`, l'ultima riga di git) e il testo che arriva da un provider (il 502 del gateway, il test di una combo). I 422 di FastAPI e il 500 di un corpo JSON rotto su `/api/*` non sono passati dal dizionario;
+  - la shell di `run_command` non vede le chiavi, ma non è una sandbox: legge i file a cui arriva l'utente del server, `.env` compreso (spec 11 §4.6);
+  - la clean room vale per i tool della run, non per quello che un modello sa già di un'applicazione pubblica; la QA di parità legge i file, non esegue la ricostruzione (spec 11 §8.8).
 - **Ancora aperti, da prima della spec 01:**
   - scelta delle skill in demo rumorosa;
   - microfono non funzionante nel pannello dell'app;
@@ -238,40 +257,152 @@ npm run screenshots                          # gli screenshot del README
 - **claude-mem** può non avere le sessioni più recenti: fa fede questo file.
 
 
-## Stato al 18/10/2026, notte
+## Stato al 20/10/2026
 
-- `main` = il merge `--no-ff` in locale (identità `agent-world-dev`) di `claude/spec10-parametric-hiring`, sopra `937673a`. I commit del branch:
-  - `71c46c6` fix(secret-scan): la scansione della history lascia passare i merge che GitHub ha fatto per le PR;
-  - `354f9a7` spec 10, parte 1: matrice di competenza, assunzione per sotto-task, subentro, bus a incrocio (R1–R3);
-  - `be1c96e` spec 10, parte 2: il prompt nella forma del modello assunto (R4);
-  - `bee15ca` spec 10, parte 2: il badge nella scheda Task, il catalogo nella scheda Router, la fase `hiring` del runner (R5);
-  - il commit dei documenti: README, spec 10 e questo file.
-  
-  La parte 2 è nata nel worktree `claude/spec10-parametric-hiring-p2-…` ed è arrivata su `claude/spec10-parametric-hiring` con un fast-forward. Poi `git push origin main`.
-- Il debito tecnico del branch precedente (N13, N17, le attese del runner in frame) è descritto in `docs/specs/06-language.md` §5 e `docs/specs/09-multimodal-interactive-recovery.md`, "Limiti noti".
+- **Branch `claude/core-hardening-intent-engine-cdd150`** (worktree in `.claude/worktrees/core-hardening-intent-engine-cdd150`), partito da `main` = `33c6135`: un commit per T01 (`f66d1d7`), con codice, test e documenti, più `349f903` (i documenti: D1–D5 confermate dall'utente).
+- **Branch `claude/youthful-bun-b80533`** (worktree omonimo), portato in avanti senza merge su `349f903`: sopra c'è un commit per T02. Unire questo branch porta T01 e T02 insieme. Niente unito, niente spinto: si unisce in locale come la spec 10 (sezione 3), quando l'utente approva.
+- **Branch `claude/t04-tasker-checkpointing-90fa3a`** (worktree omonimo), portato in avanti senza merge su `0db28e2` (la punta di `claude/youthful-bun-b80533`): sopra c'è un commit per T04. Unire questo branch porta T01, T02, N19, T03 e T04.
+- **Branch `claude/laughing-gates-c8d3a0`** (worktree omonimo), portato in avanti senza merge su `848dcde` (la punta di `claude/t04-tasker-checkpointing-90fa3a`): sopra ci sono il commit di T05, quello della conferma di D20–D25 (`5a8cd96`), T06 (`50ddcb5`) e il commit della Fase 2 (T07–T10). Unire questo branch porta T01–T10 e N19.
+- **Branch `claude/spec11-phase2-wip`** (nessun worktree), da `1b40c97` (la prima versione del commit di T05): la bozza di T06 e un WIP non verificato di T07–T10. Il suo lavoro è stato ripreso, completato e verificato su `claude/laughing-gates-c8d3a0`: non va unito, e si può cancellare quando l'utente lo dice.
+- `main` resta il merge della spec 10 (`33c6135`), già su `origin`.
 
-### Completate (spec 10, parte 2)
-- **R4, la forma del prompt** (dettagli: spec 10 §6):
-  - `rag_budget.shape()`: piccolo (locale, gratuito, 14B e meno), reasoning, coder, generale, in quest'ordine (D6);
-  - piccolo: passi atomici numerati, un esempio dalla skill, il contratto in fondo e dopo ogni risultato, il validatore che ferma un'azione a cui manca un argomento;
-  - reasoning: checklist del QA, vincoli, lezioni del Brain, tutto prima della descrizione;
-  - coder: albero esatto del progetto, interfacce dei file collegati, snippet delle skill;
-  - generale e demo: il prompt di prima.
-- **R5, l'interfaccia:** il badge 🤝 (modello, tier, specialità) e 🔀 nella scheda Task; le assunzioni e il catalogo profilato nella scheda Router; 52 chiavi nelle cinque lingue.
-- **Due difetti trovati dai test, corretti** (D10, D11):
-  - alla revisione che assume un altro modello, il primo passo del modello nuovo partiva con la forma vecchia: ora il `MODEL SWITCH` arriva prima del passo. Una mutazione (senza il cambio anticipato) fa rosso il test live;
-  - un titolo come "Bad examples" veniva preso come l'esempio da imitare.
+### Completato: spec 11, Fase 2 — T06–T10, l'Intent Engine (dettagli: spec 11 §8)
+- **Come:** su richiesta dell'utente in un'unica passata, non un ticket per sessione. Il punto di partenza è il lavoro parcheggiato su `claude/spec11-phase2-wip`: `4581acc` (T06, completo) è diventato `50ddcb5`; `9fc9f02` (T07–T09, mai verificato) è nel commit della Fase 2, con il simulatore, i test e le correzioni.
+- **File toccati:**
+  - T06: `backend/backend/deconstructor.py` (`extract_skeleton`, `inspect_artifact_metadata`, `summarize_runtime_trace`, `DECONSTRUCT_PROBES`, `_load_native()`, `render_*`); `crates/aw_core/src/deconstruct.rs`, `lib.rs` (tre `pyfunction`), `Cargo.toml` (`serde_json`): il gemello Rust, **scritto ma non compilato qui**;
+  - T07: `backend/backend/tools.py` (`scan_target_tree`, `extract_code_skeleton`, `validate_blueprint`, `write_blueprint`, `read_blueprint`, `blueprint_problems`, `blueprint_markdown`, `copy_target`);
+  - T08: `config/default.json` (il team `reverse`: Kira, Zero, combo `code`, `"reverse": true`), `public/js/world/office.js` (la nona zona e il prop `scanner`), `public/js/i18n.js`, `public/js/main.js` (il badge dell'intento), `backend/backend/i18n.py`, `skills/architecture-deconstruction/SKILL.md`;
+  - T09: `backend/backend/intent.py` (nuovo), `run.py` (`prepare_target`, `classify`, `clean_room`, `handover`, `parity_review`, `hidden_for`, `clean_room_refusal`…), `prompts.py` (intento, piano di decodifica, ricostruzione, passaggio, parità; il "BLUEPRINT CONTRACT" nel brief), `plan.py`, `tasker.py`, `routes/runs.py` (`intent`, `target`), `i18n.py` (i messaggi delle fasi, `intent_unsupported`, `target_not_found`, `BLUEPRINT_MD`) × 5 lingue;
+  - T10: `backend/backend/router/mock.py`, `mock_texts.py` × 5 lingue, il campione `backend/backend/demo_target/`;
+  - test: `backend/tests/test_deconstructor.py` (nuovo, 85 test, 1 saltato senza `aw_core`), `test_i18n.py`, `test_prompts.py`, `test_run.py`; `scripts/browser-test.js` (i numeri di worker e posti dal config);
+  - documenti: README (Rust, agenti, utility, endpoint, la sezione nuova "Reverse Engineering e ricostruzione clean-room", Test, struttura), spec 11 (§2, §8), questo file.
+- **Decisioni confermate dall'utente il 20/10 (spec 11 §8.4):** D26 scanner a caratteri con regole ASCII, non `ast` né regex, e la probe a tolleranza zero; D27 lo scheletro piccolo (circa il 10% di `read_file`) che dice quando taglia; D28 artefatti e tracce senza eseguirli, delle tracce mai i valori; D29 il blueprint come confine della clean room, validato e scritto solo da `write_blueprint`; D30 la CEO classifica solo con un motivo, altrimenti `direct_build` senza chiamate; D31 il bersaglio copiato in `target/` senza segreti, link, cartelle nascoste e build (3000 file, 50 MB); D32 cosa nasconde la clean room ai costruttori; D33 il passaggio vuole un blueprint passato dal QA; D34 la QA di parità rimanda indietro una volta, e i criteri aperti non fanno fallire la run; D35 il team `reverse` non costruisce.
+- **Scostamenti dal testo dei ticket (spec 11 §8.3):** `run.intent` invece di `run.mode` (che c'era già); la cartella della run è `<slug>-<id>`, non `<run_id>`; scanner invece di AST; T06 fa anche artefatti e tracce.
+- **Difetti trovati verificando e corretti (spec 11 §8.6):** il conflitto in `i18n.py`; la HAR del campione in `logs/`, ignorata da git; "Decodifica questa applicazione esistente…" classificata `direct_build`; la clean room che rifiutava `index.html` ai costruttori; `blueprint.md` in inglese in ogni lingua; la route Express con l'handler inline (Python e Rust); la stanza nuova sopra un'etichetta a 1440×900 e due verifiche del runner con 7 worker e 14 posti scritti a mano; i numeri delle decisioni nei commenti che si scontravano con T05.
+- **Nuovi ticket fuori perimetro:** N21 e N22 (sezione 4).
 
-### Verifiche (Windows 11)
-- `npm test` verde in 7 min 45 s: mondo 3D, dizionari, launcher, avvio, **pytest 1013 passati e 3 saltati** (la parità Rust ×2, ffmpeg assente), smoke, flussi, secret-scan, cartelle temporanee. Prima della spec 10 erano 934 passati.
-- **`npm run test:browser`: 261 verifiche su 261, ALL OK** in 6 min 2 s, a 55,7 fps, con `known-red.json` vuoto. I 6 controlli nuovi sono la fase `hiring` (R5).
-- **`npm run scan:secrets`: pulito.**
-- QA visivo a 1920×1080 dagli screenshot del runner (`--shots`): scheda Task in demo e con un subentro, scheda Router con il catalogo.
+### Completato: spec 11, T05 — streaming vero su `/v1` (dettagli: spec 11 §7)
+- **Il punto di partenza, misurato su `848dcde`:** con `"stream": true` il gateway aspettava la risposta intera (`router.chat()`, il provider chiamato senza `stream`) e mandava un chunk solo. Con un provider finto che scrive 10 pezzi in 2 s: prima 1 chunk a 2,05–2,08 s, dopo 10 chunk e il primo a 0,25 s, la fine sempre a ~2,08 s.
+- **File toccati:**
+  - `backend/backend/router/providers.py`: `call_provider_stream()`, `openai_stream()` (`stream_options.include_usage`, la seconda richiesta senza `stream_options` / `response_format` su un 400), `anthropic_stream()`, `ThinkFilter`, `FINISH`; `_openai_request()` e `_anthropic_request()` condivisi con le chiamate normali;
+  - `backend/backend/router/index.py`: `Router.stream()`, `_first_text()`, `_relay()`;
+  - `backend/backend/router/mock.py`: `mock_stream()`, `stream_pieces()`, `_mock_answer()` condivisa con `mock_chat()`; `backend/backend/config.py`: `streamMs` con `AGENT_WORLD_FAST`;
+  - `backend/backend/routes/gateway.py`: lo `StreamingResponse` vero, il 502 prima del primo chunk, il frame `error`, il 404 di un modello sconosciuto; `backend/backend/i18n.py`: `model_unknown` × 5 lingue;
+  - test: `backend/tests/test_gateway_stream.py` (nuovo, 21 test), `test_gateway.py` (il test del blocco unico rinominato);
+  - documenti: README (Streaming, il router, Test), spec 11 (§2, §7), questo file. `bus.py` non cambia (D20).
+- **Decisioni confermate dall'utente il 20/10 (spec 11 §7.3):** D20 il flusso di `/v1` non passa dal bus (resta l'evento `router.call` alla fine); D21 il failover vale fino alle prime parole visibili, poi il modello è scelto; D22 un'interruzione a metà è un frame `error` e poi `[DONE]`; D23 i token dal provider, stimati come il simulatore quando mancano; D24 `<think>` mai al client, anche spezzato, e gli spazi finali restano; D25 un modello sconosciuto è un 404 `invalid_request_error`.
+- **Difetto trovato e corretto nel perimetro:** un modello che non è né una combo né `provider/modello` dava un 500 nudo su `/v1`, con e senza `stream` (un `ValueError` dal router); ora 404, nella lingua dell'app. Il 500 di un corpo JSON rotto resta, come su `/api` (sezione 7).
+
+### Completato: spec 11, T04 — checkpoint e time-travel del Tasker (dettagli: spec 11 §6)
+- **File toccati:**
+  - `backend/backend/tasker.py`: `snapshot()`, `_clean_point()`, `rewind()`, `_rewound_revision()`, `session()`, `owner_messages()`, `WRITE_TOOLS`, `OWNER_PREFIXES`; `init()` (il cursore del bus e lo snapshot del brief), `restore()` (il punto pulito, un rewind in attesa), `work()` (gli errori che sporcano, lo snapshot dopo ogni passo valido, la revisione unica dopo il rewind);
+  - `backend/backend/run.py`: `checkpoint()`, `save_sessions(immediate=)` attraverso lo `Store`, `load_sessions()`; in `run_task` il rewind all'escalation e la nota `rewind`; via `sessions_file()`;
+  - `backend/backend/store.py`: `write_atomic()`, `_later()`, `sessions_path()`, `save_sessions()`, `load_sessions()`, i `.tmp` tolti all'avvio;
+  - `backend/backend/i18n.py`: `rewind_note` × 5 lingue; `public/js/main.js`: l'icona ⏪; `scripts/browser-test.js`: la fase `checkpoint`;
+  - test: `backend/tests/test_tasker.py` (6 nuovi), `test_store.py` (4 nuovi), `test_checkpoint.py` (nuovo, 3 test);
+  - documenti: README (Revisioni ed escalation, Tasker, Store, Ripresa, Test), spec 11 (§2, §6), questo file.
+- **Decisioni confermate dall'utente il 19/10 (spec 11 §6.3):** D16 lo snapshot è un segno nella conversazione (lunghezza, passi, tentativo, cursore, pulito) dopo il brief e dopo ogni passo valido, e il primo errore sporca il contesto; D17 all'escalation si torna all'ultimo snapshot pulito, con le parole del proprietario e le sue risposte, una sola revisione con tutte le bocciature e i file lasciati, i file su disco che non tornano indietro, il cursore del bus dello snapshot; D18 le sessioni su disco entro 0,4 s da ogni snapshot, con il punto pulito, e ogni scrittura dello `Store` atomica e non più rimandata all'infinito; D19 la nota ⏪ nella timeline e `task.checkpoint`.
+- **Difetti trovati e corretti nel perimetro:** il salvataggio raggruppato dello `Store` ripartiva da capo a ogni chiamata e con chiamate fitte non scriveva mai (anche il file della run, da prima di T04); il file della run si riscriveva sul posto, e uno interrotto faceva sparire la run all'avvio. Il primo rewind toglieva anche la risposta del proprietario a un `ask_user`: corretto prima del commit, con il suo test.
+- **Misure:** la prima chiamata su `frontier` del task `w2.1` della demo "A simple document about coffee" passa da 18 messaggi, 6293 caratteri, 2 revisioni e 8 passi a 10 messaggi, 4602 caratteri, 1 revisione e 4 passi; il file delle sessioni ora c'è mentre la run lavora, e sparisce a fine run.
+- **Nuovo ticket fuori perimetro:** N20, le note `hire` con ⚠️ nella timeline (sezione 4).
+
+### Completato: spec 11, T03 — tokenizer per il codice e consolidamento del Brain (dettagli: spec 11 §5)
+- **File toccati:**
+  - `backend/backend/search.py`: `tokenize()` nuovo (`_scan()`, `_ASCII_TOKEN` per i pezzi ASCII, le parti dei token composti), `TOKENIZE_PROBES`, `_native_tokenizer_matches()` nella probe d'avvio, `HybridIndex.search(boost=)`;
+  - `backend/backend/embed.py`: grammi per caratteri, hash dei byte UTF-8, la probe dei vettori nativi con il tokenizer;
+  - `crates/aw_core/src/lib.rs` e `Cargo.toml` (`unicode-general-category`): il gemello Rust del tokenizer e dei grammi, **scritto ma non compilato qui**;
+  - `backend/backend/brain.py`: `settings()`, `decay()`, `consolidate()`, `_merge()`, `reindex(keep_vectors=)`; `backend/backend/run.py`: `consolidate(run_id=…)` alla fine della run; `config/default.json`: `rag.brain`;
+  - `public/js/main.js`: la scheda Brain ricarica l'elenco dopo `consolidate`; `scripts/browser-test.js`: la fase `brain`;
+  - test: `backend/tests/test_search.py` (8 nuovi), `test_search_rust.py` (3 nuovi, 1 saltato senza `aw_core`), `test_brain.py` (10 nuovi);
+  - documenti: README (RAG, Rust, Test), spec 11 (§2, §5), questo file.
+- **Decisioni confermate dall'utente il 19/10 (spec 11 §5.3):** D12 un token è una parola di lettere, cifre o segni Unicode (categorie L, N, M), unita da `_`, `::`, `@`, più le sue parti; `ς` → `σ`; D13 la probe d'avvio prova anche il tokenizer, e un `aw_core` che divide diversamente non si usa; D14 a fine run le note della run si uniscono ai doppioni (coseno > 0,88, stesso tipo, solo note degli agenti), resta la più recente con tag e `repeats`; D15 decadimento moltiplicativo sul punteggio fuso, emivita 30 giorni, pavimento 0,5, solo note degli agenti.
+- **Misure:** prima di T03 greco, cirillico, devanagari e CJK non davano nessun token; il tokenizer nuovo costa 1,45 volte quello vecchio (lo scanner su tutto sarebbe costato 3,6 volte); due missioni demo uguali lasciano 6 note invece di 12.
+
+### Completato: N19 — il test di avvio senza scritture nel checkout (19/10, commit a parte su questo branch, chiesto dall'utente)
+- **Il difetto** (trovato chiudendo T02): `scripts/backend-boot-test.js` avviava il backend con l'ambiente intero, senza `demoEnv()` né una home temporanea. Ogni `npm test` lasciava una cartella `data/runs/` vuota accanto al codice, e quel server leggeva `.env` (con le chiavi vere sarebbe partito in LIVE, anche se faceva solo `GET /`) e `config/local.json` dell'utente. La guardia N15 di `conftest.py` contava solo i file, e non vedeva né questa cartella né la `skills/vendor/` vuota che un test di T02 creava prima del commit (corretto lì: il test dà alla libreria una cartella temporanea).
+- **File toccati:**
+  - `scripts/backend-boot-test.js`: `demoEnv(ROOT, { PORT, AGENT_WORLD_HOME })` con una cartella di `ownedDir('boot')`, tolta alla fine; in più tre controlli: il server è in demo, tiene i dati nella sua home, e il checkout non cambia (`data/`, `skills/vendor/`, `config/local.json`);
+  - `scripts/launcher-test.js`: ogni script che chiama `spawnBackend()` costruisce l'ambiente con `demoEnv()` (letto dai sorgenti di `scripts/`);
+  - `backend/tests/conftest.py`: la guardia N15 conta anche le cartelle (una cartella nuova, anche vuota, è una fuga; una cartella non è mai "cambiata", perché il suo tempo segue i file dentro, controllati uno per uno); `backend/tests/test_isolation.py`: il test della guardia su un checkout finto in una cartella temporanea;
+  - README (Test, "Igiene"), questo file.
+- **Decisione (confermata dall'utente il 19/10):** la guardia di `pytest` vede anche le cartelle nuove, non solo i file. Nessun test della suite di oggi ne crea: la suite intera è verde con la guardia nuova.
+- **Verifiche:** i tre controlli nuovi visti rossi prima della correzione (il boot test: "did not keep its data in its temp home" e "the checkout changed: folders [] -> ["data"]"; il launcher: `backend-boot-test.js` senza `demoEnv()`; `pytest`: la guardia che non vedeva le cartelle), poi verdi. `npm test` verde in 6 min 41 s (**pytest 1094 passati e 3 saltati**), e alla fine nel worktree non c'è né `data/` né `skills/vendor/`. Mutazioni: la guardia senza le cartelle e il boot test senza `demoEnv()` tornano rossi.
+
+### Completato: spec 11, T02 — shell a fiducia zero e autenticazione in LAN (dettagli: spec 11 §4)
+- **File toccati:**
+  - `backend/backend/tools.py`: `SECRET_WORDS`, `shell_env()`, `config_key_names()`; `run_command` passa sempre l'ambiente senza chiavi (`secrets=` per i nomi in più);
+  - `backend/backend/run.py`: il tool `run_command` passa i `keyEnv` della configurazione;
+  - `backend/backend/security.py`: `is_local()` (Host e indirizzo di loopback), `access_key()`, `session_token()` / `valid_session()`, `authorized()`; il guard chiede la chiave dalla rete su `/api`, `/api/events` e `/v1` (401 `auth_required`, 403 `lan_needs_key`);
+  - `backend/backend/routes/session.py` (nuovo): `GET` e `POST /api/session`; `backend/backend/app.py` la monta;
+  - N13: `backend/backend/i18n.py` (10 chiavi × 5 lingue), `routes/static.py`, `routes/skills_brain.py`, `routes/gateway.py`, `skills.py` (`Refusal("skill_not_found")`, il messaggio di git in inglese);
+  - `public/js/main.js` (il login prima del boot, il login di nuovo su un 401, Esc e il clic fuori non lo chiudono), `public/js/i18n.js` (5 chiavi × 5 lingue), `public/index.html`, `public/css/app.css`;
+  - `scripts/browser-test.js`: la fase `lan`, la chiave casuale e `lan.localhost` per il server del runner;
+  - test: `backend/tests/test_zero_trust.py` (nuovo, 27 test), `backend/tests/test_i18n.py`, `backend/tests/test_security.py`;
+  - documenti: README (Configurazione, Sicurezza, Usarlo in LAN, Test), spec 11 (§2, §4), questo file.
+- **Decisioni confermate dall'utente il 19/10 (spec 11 §4.3):** D6 dalla shell esce ogni variabile con una parola segreta nel nome (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIALS`, `AUTH`…) più ogni `keyEnv` della configurazione: la regola letterale ne lasciava passare 4 su 23; D7 locale = `Host` **e** indirizzo di loopback, perché l'`Host` lo scrive il client; D8 senza chiave sul server la rete è chiusa (prima `AGENT_WORLD_ALLOWED_HOSTS` bastava ad aprirla); D9 dalla rete anche `/v1` vuole la chiave, la pagina e le anteprime no (N18); D10 login con la chiave e cookie `aw_session` = scadenza firmata, `HttpOnly`, `SameSite=Strict`, 7 giorni fissi; D11 N13: frase tradotta, dettaglio tecnico com'è, git che fallisce = 502.
+- **Difetti trovati e corretti nel perimetro:** `POST /api/skills/repo` con git che fallisce dava un 500 nudo con un messaggio italiano nel log (ora 502 tradotto); il login si poteva chiudere con Esc o un clic fuori, lasciando la pagina ferma a metà avvio.
+- **Nuovi ticket fuori perimetro:** N18, le anteprime dalla rete (sezione 4); N19, `backend-boot-test.js` che lasciava `data/runs/` nel checkout, chiuso subito dopo (qui sotto).
+
+### Completato: spec 11, T01 — budget e circuit breaker (dettagli: spec 11 §3)
+- **File toccati:**
+  - `backend/backend/budget.py` (nuovo): limiti congelati nella run, prezzi di `router.pricing`, costo stimato, `over()` / `extend()` / `ensure()`;
+  - `backend/backend/run.py`: il cancello `budget_gate()` in `chat()` e nella vista delle foto, un posto per ogni chiamata in volo (`_in_flight`), `trip_budget()`, `answer_budget()`, il pulsante Riprendi come "Prosegui", la ripresa dal punto di blocco con un blocco nuovo, le chiamate del proprietario contate ma mai fermate (`owner=True`);
+  - `backend/backend/i18n.py`: 10 testi × 5 lingue; `config/default.json`: `limits.maxCallsPerRun` 250, `limits.maxCostUSD` 5, `router.pricing`;
+  - `public/js/main.js`, `public/js/i18n.js` (13 chiavi × 5 lingue): la richiesta di budget, la spesa nel pannello della missione, i limiti nelle Impostazioni, l'avviso dopo la risposta;
+  - `scripts/browser-test.js`: la fase `budget`;
+  - `backend/tests/test_budget.py` (nuovo, 33 test), `backend/tests/test_run.py` (la forma di `run.data` e `usage`);
+  - documenti: README (Configurazione, SSE, Test), spec 11, questo file.
+- **Decisioni confermate dall'utente il 19/10 (spec 11 §3.3):** D1 il simulatore non conta (misurato: la missione demo più grande fa 228 chiamate su 250); D2 costo stimato da `router.pricing`, budget di serie 5 $, prezzi di listino indicativi da verificare; D3 un blocco alla volta, "Ferma la run" la ferma e si può riprendere; D4 limite delle chiamate esatto, quello del costo superabile del costo delle chiamate in volo; D5 le chiamate chieste dal proprietario si contano ma non si fermano.
+- **Un difetto trovato da una mutazione, corretto:** con la richiesta di budget aperta e la run tolta dalla pausa, `budget_gate()` girava senza mai cedere il loop; ora rimette la pausa.
+
+### Verifiche della Fase 2 (Windows 11)
+- **Missioni demo**, senza chiavi: `reverse_only` in inglese con 23 chiamate; `deconstruct_and_build` in italiano (64) e in inglese (55), fasi A–D, `PARITY.md` 6/6.
+- **`npm test` verde** in 7 min 24 s: **pytest 1232 passati e 5 saltati (prima 1148 e 4)**: gli 85 di `test_deconstructor.py`, uno saltato (il gemello compilato). Dopo, sono cambiati solo la zona della stanza, i conteggi del runner e i numeri delle decisioni nei commenti: rifatti `world-test`, `i18n-test` e pytest intero, verdi.
+- **`npm run test:browser`: 275 verifiche su 275**, ALL OK in 5 min 13 s a 98,7 fps, `known-red.json` vuoto. Il primo giro intero aveva 3 rossi (E2 a 1440×900 e i due conteggi scritti a mano): corretti, rifatta la fase delle etichette da sola e poi il giro intero.
+- **Mutazioni:** 14 (4 per T06, 3 per T07, 1 per T08, 4 per T09, 2 per T10), tutte prese; lo script confronta l'hash di ogni file mutato prima e dopo (spec 11 §8.5).
+- QA visivo a 1920×1080: la stanza *Reverse Engineering* a nord-ovest, con Kira, Zero, lo scanner e l'etichetta leggibile.
+
+### Verifiche di T05 (Windows 11)
+- **`npm test` verde** in 7 min 10 s: **pytest 1148 passati e 4 saltati (prima 1127 e 4)**: 21 nuovi in `test_gateway_stream.py`. Alla fine nel worktree non c'è né `data/` né `skills/vendor/`. Il primo giro era rosso solo a `temp-test` C1, per le cartelle `aw-measure-*` della sonda di misura (sezione 6, "Le cartelle temporanee delle sonde"); tolte quelle, il giro intero rifatto è verde.
+- **`npm run test:browser`: 275 verifiche su 275**, ALL OK in 5 min 33 s a 80 fps, `known-red.json` vuoto; nessuna verifica nuova.
+- **Mutazioni:** 14, tutte prese; l'impronta di `git diff` uguale prima e dopo (spec 11 §7.4). Prima del codice, con il gateway di `848dcde`, 9 dei 19 test di allora erano rossi; i 2 del modello sconosciuto sono nati rossi.
+- Nessun QA visivo: T05 non cambia la UI.
+
+### Verifiche di T04 (Windows 11)
+- **`npm test` verde** in 7 min 3 s: **pytest 1127 passati e 4 saltati (prima 1114 e 4)**: 6 nuovi in `test_tasker.py`, 4 in `test_store.py`, 3 in `test_checkpoint.py`. Alla fine nel worktree non c'è né `data/` né `skills/vendor/`.
+- **`npm run test:browser`: 275 verifiche su 275**, ALL OK in 5 min 18 s a 104,9 fps, `known-red.json` vuoto. La nuova è la fase `checkpoint` (criterio `T04`).
+- **Mutazioni:** 20 (19 sul backend, 1 sulla UI), tutte prese; l'impronta di `git diff` uguale prima e dopo (spec 11 §6.4). Lo script è un `subprocess` con `taskkill /T /F` alla scadenza (sezione 6) che rimette i byte esatti di ogni file: il checkout è in CRLF.
+- QA visivo a 1920×1080 dallo screenshot della fase `checkpoint`: la scheda del task con "⬆️ Escalated to the "frontier" model" e subito sotto "⏪ Back to the last clean point, after 3 valid steps: …".
+
+### Verifiche di T03 (Windows 11)
+- **`npm test` verde** in 6 min 45 s: **pytest 1114 passati e 4 saltati (prima 1094 e 3)** (il quarto saltato è la parità Rust del tokenizer, senza il modulo compilato).
+- **`npm run test:browser`: 274 verifiche su 274**, ALL OK in 5 min 13 s a 109,6 fps, `known-red.json` vuoto. Le 2 nuove sono la fase `brain` (criterio `T03`).
+- **Mutazioni:** 14 (13 sul backend, 1 sulla UI), tutte prese; due prime prove sbagliate corrette (spec 11 §5.4).
+- **Rust:** il codice è scritto riga per riga sul Python ma non compilato: la sua parità la proverà la prima macchina con `rustc` (`test_search_rust.py`), e fino ad allora, se non coincide, la probe lo scarta.
+
+### Verifiche di T02 (Windows 11)
+- **`npm test` verde** in 6 min 34 s (rifatto sull'albero finale: 6 min 35 s): **pytest 1093 passati e 3 saltati (prima 1046: 27 in `test_zero_trust.py`, 20 in `test_i18n.py`)**; il resto come per T01.
+- **`npm run test:browser`: 272 verifiche su 272**, ALL OK in 5 min 8 s a 113,3 fps sull'albero finale, `known-red.json` vuoto. Le 6 nuove sono la fase `lan` (criterio `T02`); tutte le altre fasi girano con la chiave d'accesso impostata.
+- **Mutazioni:** 15 (12 sul backend, 3 sulla UI), tutte prese; quella del boot senza la sessione all'inizio passava verde, e la fase `lan` ora gira con l'app in italiano e senza avvisi (spec 11 §4.4).
+- QA visivo a 1920×1080 dagli screenshot della fase `lan` (`--shots`): il dialogo "Chiave d'accesso" (la fase mette l'app in italiano) al centro, sopra l'ufficio vuoto; dopo la chiave, l'ufficio con i suoi agenti. Dietro il dialogo gli esempi e "Start the company" restano in inglese fino al login (spec 11 §4.6).
+
+### Verifiche di T01 (Windows 11)
+- **`npm test` verde** in 6 min 20 s: mondo 3D, dizionari, launcher, avvio, **pytest 1046 passati e 3 saltati** (la parità Rust ×2 senza il modulo compilato, ffmpeg assente; prima della spec 11 erano 1013), smoke, flussi, secret-scan, cartelle temporanee. T01 non tocca `crates/aw_core`: nessuna funzione Rust nuova, la parità resta quella di prima.
+- **`npm run test:browser`: 266 verifiche su 266, ALL OK** in 4 min 58 s, a 108 fps, con `known-red.json` vuoto. Le 5 nuove sono la fase `budget` (criterio `T01`).
+- **Mutazioni:** 8 sul backend e 1 sulla UI, tutte prese (spec 11 §3.4).
+- QA visivo a 1920×1080 dagli screenshot della fase `budget` (`--shots`): la richiesta nel pannello di sinistra con "Go on (one more block)" e "Stop the run", la run "running · paused" con "250/250 paid calls" e "≈ $1.23 of $5.00"; le Impostazioni con "Run budget".
 
 ### Ticket aperti
-- N8, N10 e il backlog della spec 03 (sezione 4).
+- Spec 11: nessuno; tutte le decisioni (D1–D35) confermate dall'utente.
+- N22 (bersagli da un URL git o da un archivio), N21 (il roster a 1920 con 18 agenti), N20 (le note `hire` con ⚠️), N18 (le anteprime dalla rete), N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
+- **La Fase 2 con il Rust compilato:** su una macchina con `rustc` e maturin, `test_deconstructor.py` non deve più saltare il test del gemello compilato, e la probe d'avvio deve accettare `deconstruct.rs` (oggi provato solo nella struttura).
+- **La Fase 2 con chiavi vere:** una missione per ciascuno dei tre intenti su un provider vero, con un bersaglio vero (una cartella con un'app piccola): la classificazione della CEO, il blueprint che passa `write_blueprint`, la ricostruzione che non vede l'originale, `PARITY.md`. Finora solo il simulatore.
+- **T05 con provider veri:** `curl -N` su `/v1/chat/completions` con `"stream": true` verso un provider compatibile OpenAI (Groq o OpenRouter, che manda i suoi errori dentro il flusso), verso Anthropic e verso un modello reasoning con `<think>`; poi un client vero (l'SDK `openai` con `stream=True` e `base_url` sul gateway). I provider finti dei test seguono la documentazione dei formati, non sono stati confrontati con un flusso vero.
+- **T03 con il Rust compilato:** su una macchina con `rustc` e maturin, `uv run maturin develop --manifest-path ../crates/aw_core/Cargo.toml`, poi `test_search_rust.py`: i test di parità del tokenizer e dei vettori non devono più essere saltati, e la probe d'avvio deve accettare il modulo.
+- **T02 da un dispositivo vero della rete** (un telefono): `server.host` `0.0.0.0`, `AGENT_WORLD_ALLOWED_HOSTS` con l'indirizzo del PC, `AGENT_WORLD_API_KEY`; il login, il cookie, il flusso di eventi, un'anteprima. Il firewall di Windows chiede il permesso a Python la prima volta. Il runner lo prova con `lan.localhost`, che per il server è un nome della rete ma arriva da questa macchina.
+- **T01 con chiavi vere:** una run LIVE con `maxCallsPerRun` basso (per esempio 10, dalle Impostazioni) per vedere la pausa, "Prosegui" e "Ferma la run" con un provider vero, e confrontare il costo stimato con la fattura del provider.
 - **Spec 10 con chiavi vere:** una run LIVE con modelli di famiglie diverse (un locale o `:free`, un reasoning, un coder) per vedere le quattro forme del prompt e un subentro vero per credito finito. Finora solo server finti.
 - La voce in una run LIVE senza credito OpenAI ed ElevenLabs: deve parlare edge-tts, senza `uv add`. Senza rete, o con `media.providers.edgetts.enabled: false`, la voce di sistema (SAPI).
 - La scoperta dei modelli con Ollama o LM Studio attivi.
@@ -280,6 +411,9 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
-2. Le verifiche qui sopra, a partire dalla run LIVE della spec 10.
-3. Il prossimo ciclo SDD, dal backlog.
+1. **T01, T02 e T03 approvati** con D1–D15 (19/10): restano da unire in locale, con N19, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
+2. **T04 approvato** con D16–D19 (19/10, spec 11 §6.3, "così come sono"): resta da unire in locale con il resto (unire `claude/t04-tasker-checkpointing-90fa3a` porta T01–T04 e N19).
+3. **T05 approvato** con D20–D25 (20/10, spec 11 §7.3, "così come sono"): resta da unire in locale con il resto.
+4. **Fase 2 approvata** con D26–D35 (20/10, spec 11 §8.4, "così come sono"): resta da unire in locale con il resto (unire `claude/laughing-gates-c8d3a0` porta T01–T10 e N19).
+5. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
+6. Le verifiche qui sopra.

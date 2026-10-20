@@ -110,12 +110,16 @@ async def test_the_loopback_names_are_accepted(app_and_config, host):
 
 
 async def test_more_hosts_can_be_allowed_for_a_lan_setup(tmp_path, monkeypatch):
+    # spec 11 T02 (D8): an allowed LAN host also needs the access key (test_zero_trust.py)
     monkeypatch.setenv("AGENT_WORLD_ALLOWED_HOSTS", "studio.lan, 192.168.1.20")
+    key = "t02-access-key-0123456789abcdef"
+    monkeypatch.setenv("AGENT_WORLD_API_KEY", key)
     cfg_dir = tmp_path / "config"
     cfg_dir.mkdir()
     shutil.copy(ROOT / "config" / "default.json", cfg_dir / "default.json")
     app = create_app(config=Config(cfg_dir), store=Store(tmp_path), brain=Brain(tmp_path / "brain.json"))
     async with client(app, "http://192.168.1.20:4300") as c:
+        c.headers["authorization"] = f"Bearer {key}"
         assert (await c.get("/api/config")).status_code == 200
         assert (await c.get("/api/config", headers={"host": "studio.lan:4300"})).status_code == 200
         assert (await c.get("/api/config", headers={"host": "evil.example"})).status_code == 403
