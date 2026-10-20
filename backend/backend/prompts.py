@@ -31,7 +31,9 @@ def bullet_list(items) -> str:
 
 
 def work_teams(cfg: dict) -> list[str]:
-    return [id for id, t in cfg["teams"].items() if t.get("kind") == "work" and t.get("lead")]
+    """The teams the CEO plans a build with. Spec 11 T08: not the reverse team
+    ("reverse": true), which works only on the missions that deconstruct."""
+    return [id for id, t in cfg["teams"].items() if t.get("kind") == "work" and t.get("lead") and not t.get("reverse")]
 
 
 def team_lines(cfg: dict) -> str:
@@ -65,6 +67,10 @@ TOOL_DOCS = {
     "use_attachment": 'use_attachment {"from": "attachments/photo.jpg", "path": "assets/hero.jpg"}: put one of the owner\'s files where the plan expects it. It keeps its real format (a .jpg stays .jpg) and counts as the expected file. Use it instead of generate_image or generate_speech whenever the owner gave you the material.',
     "read_document": 'read_document {"path": "attachments/menu.pdf", "query": "..."}: read the text of a PDF, DOCX, CSV or text file the owner gave; with a query, only the passages that match.',
     "inspect_image": 'inspect_image {"path": "attachments/photo.jpg", "question": "..."}: see what an image shows (subject, colours, light, framing) to fit it in the design.',
+    # spec 11 T07: the Reverse Engineering team
+    "scan_target_tree": 'scan_target_tree {"path": "target"}: map the application to deconstruct (target/, or attachments/ for the files the owner gave): its files, languages, entry points, dependencies (package.json, pyproject.toml, Cargo.toml) and sizes. Start here.',
+    "extract_code_skeleton": 'extract_code_skeleton {"path": "target/src/app.py"}: the structural X-ray of one file, about a tenth of read_file: imports and exports, signatures without bodies, API routes, state variables and internal call graph; for a built artifact (binary, archive, bundle) its format, sections, symbols, strings and entropy; for a log, a trace or a HAR file its endpoints, payload schemas and sequence of states. It never runs anything.',
+    "write_blueprint": 'write_blueprint {"data": {"name": "...", "summary": "what it does, for whom", "architecture": {"style": "...", "components": [{"name": "...", "kind": "...", "responsibility": "...", "files": ["..."]}], "stack": ["..."]}, "dataModels": [{"name": "...", "fields": [{"name": "...", "type": "...", "required": true}]}], "endpoints": [{"method": "GET", "path": "/...", "purpose": "...", "request": {}, "response": {}}], "businessRules": ["..."], "edgeCases": ["..."], "parityCriteria": ["checkable statements the rebuild must satisfy"]}}: validate and save blueprint.json and blueprint.md, the neutral document the clean-room rebuild starts from. Describe the behaviour, never copy source code.',
 }
 
 BASE_TOOLS = ["list_files", "read_file", "write_file", "search_skills", "read_skill", "recall", "remember", "ask_lead", "ask_user", "finish"]
@@ -347,9 +353,12 @@ Tools:
 Rules: paths are relative to the project folder. Read teammates' files before building on them. Follow the assigned skills. Re-read what you wrote before finishing. When you learn something reusable, remember it. {language_rule(language)}{shape_rule}{skills_block}{contract}"""
 
 
-def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str, shared: str = "", owner_files: str = "", lead: str = "") -> str:
+def tasker_brief(*, goal: str, ws: dict, task: dict, inputs: list[dict], files: str, memory: str, shared: str = "", owner_files: str = "", lead: str = "", blueprint: str = "") -> str:
     input_lines = [f"{i['id']} \"{i['title']}\" by {i['agent']}: {i['summary'] or '(no summary)'}" + (f"\n  files: {', '.join(i['files'])}" if i["files"] else "") for i in inputs]
     brief = f"\nBRIEF FROM THE PROMPT LAB:\n{task['brief']}" if task.get("brief") else ""
+    if blueprint:
+        # spec 11 T09: the clean-room build knows the original only through its blueprint
+        brief += f"\nBLUEPRINT CONTRACT (clean room: the only description of the original application you may use; never look for its code, rebuild its behaviour):\n{blueprint}"
     pitfalls = f"\nPITFALLS:\n{bullet_list(task['pitfalls'])}" if task.get("pitfalls") else ""
     skills = ", ".join(s["name"] for s in task.get("skills") or []) or "none"
     return f"""GOAL: {goal}
@@ -490,4 +499,100 @@ CURRENT CONTEXT:
         },
         *[{"role": "user" if h["from"] == "user" else "assistant", "content": h["text"]} for h in history],
         {"role": "user", "content": text},
+    ]
+
+
+# ---------- spec 11 T09: the intent of the mission and the clean-room handover ----------
+
+
+def intent_prompt(*, ceo: dict, goal: str, target: str = "", owner_files: str = "", language: str | None = None) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:intent]]
+You are {ceo['name']}, the CEO of an autonomous AI company. Before planning, decide what kind of mission the owner is asking for:
+- "direct_build": build something new (a site, an app, a document, media): the usual work;
+- "reverse_only": analyse, deconstruct, audit or document an EXISTING application (a folder, a repository, code, a binary, a bundle, a trace) and deliver its blueprint, without rebuilding it;
+- "deconstruct_and_build": deconstruct an existing application, then rebuild it from scratch, clean-room, from its blueprint alone (a clone, a rewrite, a port to another stack).
+The last two need an existing application: the TARGET below, or code among the owner's files. {language_rule(language)}
+Answer with ONLY this JSON object: {{"intent": "direct_build" | "reverse_only" | "deconstruct_and_build", "why": "one sentence"}}""",
+        },
+        {"role": "user", "content": f"GOAL:\n{goal}\n\nTARGET:\n{target or '- (no folder given)'}" + (f"\n\nOWNER FILES ({OWNER_NOTE}):\n{owner_files}" if owner_files else "")},
+    ]
+
+
+def reverse_plan_prompt(*, cfg: dict, ceo: dict, goal: str, intent: str, target: str, memory: str, language: str | None = None, owner_files: str = "") -> list[dict]:
+    t = cfg["teams"]["reverse"]
+    after = " A clean-room rebuild follows: the blueprint must let another team rebuild the application without the original." if intent == "deconstruct_and_build" else ""
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:planner]]
+You are {ceo['name']}, the CEO of an autonomous AI company. This mission deconstructs an existing application.{after} Plan the work of the {t['label']} team (lead {t['lead']['name']}: {t['brief']}).
+- Between 1 and 3 workstreams, all for the team "reverse": map the target, X-ray its code, artifacts and traces, write the blueprint.
+- The last workstream delivers "blueprint.json" and "blueprint.md" (written with the write_blueprint tool); the others deliver notes in reverse/ (markdown files).
+- "acceptance" are 2 to 4 criteria checkable by reading the files.
+{language_rule(language)}
+
+Answer with ONLY this JSON object:
+{{"complexity": "simple" | "complex", "summary": "one sentence: the approach", "workstreams": [{{"id": "w1", "team": "reverse", "title": "max 6 words", "objective": "...", "deliverables": ["path/file.ext"], "acceptance": ["..."], "dependsOn": []}}]}}""",
+        },
+        {
+            "role": "user",
+            "content": f"GOAL:\n{goal}\n\nINTENT: {intent}\n\nTARGET:\n{target or '- (no folder given: look in attachments/)'}\n\nCOMPANY MEMORY (earlier lessons):\n{memory or '- (empty)'}" + (f"\n\nOWNER FILES ({OWNER_NOTE}):\n{owner_files}" if owner_files else ""),
+        },
+    ]
+
+
+def build_team_lines(cfg: dict, teams: list[str]) -> str:
+    return "\n".join(f"- {id} ({cfg['teams'][id]['label']}; lead {cfg['teams'][id]['lead']['name']}): {cfg['teams'][id]['brief']}" for id in teams)
+
+
+def rebuild_plan_prompt(*, cfg: dict, ceo: dict, goal: str, blueprint: str, teams: list[str], language: str | None = None) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:rebuilder]]
+You are {ceo['name']}, the CEO. The Reverse Engineering team delivered the blueprint of an existing application and QA approved it. Plan its clean-room rebuild: new work written from the blueprint alone, never from the original.
+1. Judge it "simple" or "complex".
+2. Split the rebuild into workstreams (between 1 and {cfg['limits']['maxWorkstreams']}):
+- "team" must be one of: {', '.join(teams)};
+- "deliverables" are the files of the new application (relative paths), covering every component, endpoint and screen of the blueprint;
+- "acceptance": 2 to 4 criteria, taken from the blueprint's parity criteria where they apply;
+- depend on another workstream only when you need its files.
+{language_rule(language)}
+
+Answer with ONLY this JSON object:
+{{"complexity": "simple" | "complex", "summary": "one sentence: the approach", "workstreams": [{{"id": "w1", "team": "{teams[0]}", "title": "max 6 words", "objective": "...", "deliverables": ["path/file.ext"], "acceptance": ["..."], "dependsOn": []}}]}}""",
+        },
+        {"role": "user", "content": f"GOAL:\n{goal}\n\nBLUEPRINT (approved by QA, the only source of truth):\n{blueprint}\n\nTEAMS:\n{build_team_lines(cfg, teams)}"},
+    ]
+
+
+def handover_prompt(*, pe: dict, goal: str, workstreams: list[dict], blueprint: str, language: str | None = None) -> list[dict]:
+    lines = "\n".join(f"- {w['id']} | team {w['team']} | {w['title']} | files: {', '.join(w['deliverables']) or 'none'} | {w['objective']}" for w in workstreams)
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:handover]]
+You are {pe['name']}, prompt engineer of the Prompt Lab. The CEO split a clean-room rebuild into workstreams. For each one write the brief its team works from: the parts of the blueprint it implements (data models, endpoints, rules, edge cases, screens), quoted precisely, the parity criteria it must satisfy, and the clean-room constraint (no access to the original application: the blueprint is the only source). Add up to 2 sharper acceptance criteria each. {language_rule(language)}
+Answer with ONLY this JSON object: {{"briefs": [{{"id": "w1", "brief": "...", "acceptance": ["..."]}}]}}""",
+        },
+        {"role": "user", "content": f"GOAL: {goal}\n\nWORKSTREAMS:\n{lines}\n\nBLUEPRINT:\n{blueprint}"},
+    ]
+
+
+def parity_prompt(*, judge: dict, goal: str, criteria: list[str], blueprint: str, tasks: list[dict], file_dump: str, language: str | None = None) -> list[dict]:
+    task_lines = "\n".join(f"- {t['id']} | {t['title']} | files: {', '.join(t.get('files') or t['outputs']) or 'none'}" for t in tasks)
+    return [
+        {
+            "role": "system",
+            "content": f"""[[role:parity]]
+You are {judge['name']}, QA & security reviewer. The team rebuilt an application clean-room from its blueprint. Check the delivered files against every parity criterion, one by one, in order: "ok" is true only when the files show that behaviour. For every criterion that fails name the task to send back (its id from TASKS) with a precise instruction. The verdict is "pass" only when every criterion is met. {language_rule(language)}
+Answer with ONLY this JSON object: {{"verdict": "pass" | "revise", "criteria": [{{"criterion": "...", "ok": true, "note": "..."}}], "fix": [{{"taskId": "...", "instruction": "..."}}]}}""",
+        },
+        {
+            "role": "user",
+            "content": f"GOAL: {goal}\n\nPARITY CRITERIA:\n" + "\n".join(f"{i}. {c}" for i, c in enumerate(criteria, 1)) + f"\n\nTASKS:\n{task_lines}\n\nBLUEPRINT:\n{blueprint}\n\nFILES:\n{file_dump or '(no files)'}",
+        },
     ]

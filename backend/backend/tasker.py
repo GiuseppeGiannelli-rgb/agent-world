@@ -109,6 +109,7 @@ REQUIRED_ARGS = {
     "use_attachment": ("from", "path"),
     "read_document": ("path",),
     "inspect_image": ("path",),
+    "extract_code_skeleton": ("path",),  # spec 11 T07; write_blueprint validates its own data
 }
 
 
@@ -225,7 +226,8 @@ class Tasker:
             owner = run.owner_files_text(task)
         self.messages = [
             {"role": "system", "content": tasker_system(agent=agent, team_cfg=cfg["teams"][task["team"]], lead=run.team.lead(task["team"]), tools=self.tools, skills_text=ctx["skills"], language=run.data.get("language"), json_contract=ctx["jsonContract"], shape=self.shape)},
-            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await run.ws.list_text(), memory=ctx["memory"], shared=ctx["shared"], owner_files=owner, lead=ctx.get("lead") or "")},
+            # spec 11 T09: a clean-room builder never sees the original application
+            {"role": "user", "content": tasker_brief(goal=run.data["goal"], ws=ws, task=task, inputs=inputs, files=await (run.project_files(task) if hasattr(run, "project_files") else run.ws.list_text()), memory=ctx["memory"], shared=ctx["shared"], owner_files=owner, lead=ctx.get("lead") or "", blueprint=task.get("blueprint") or "")},
         ]
         if hasattr(run, "memory_cursor"):
             self.cross_cursor = run.memory_cursor()  # spec 10: the brief holds what came before
@@ -458,5 +460,7 @@ class Tasker:
             self.steps += 1
             if action["tool"] in WRITE_TOOLS and action["args"].get("path"):
                 self.written.append((len(self.messages) - 2, str(action["args"]["path"])))
+            elif action["tool"] == "write_blueprint":
+                self.written.append((len(self.messages) - 2, "blueprint.json"))  # spec 11 T07
             self.snapshot()
         return {"stepLimit": True}

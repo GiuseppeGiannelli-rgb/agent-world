@@ -1,7 +1,7 @@
 """Spec 11 T06: the structural extractor of the Reverse Engineering team.
 
 Three pure functions, each with an exact twin in crates/aw_core (rule 2 of the
-spec, D20):
+spec, D26):
 - extract_skeleton(source, ext): the skeleton of a source file (Python,
   JavaScript/TypeScript, Rust, HTML, CSS): imports and exports, the signatures
   of classes, functions and methods without their bodies, the API routes it
@@ -710,7 +710,8 @@ def _js_routes(ks: str, line: int, out: _Out) -> None:
                     client = recv in JS_CLIENTS
                     if client or lit[0].startswith("/"):
                         handler = ""
-                        if not client:
+                        rest = ks[lit[1] :]
+                        if not client and "=>" not in rest and "function" not in rest:  # an inline function has no name
                             close = ks.rfind(")")
                             args = ks[lit[1] : close] if close > lit[1] else ks[lit[1] :]
                             last = _strip(args.split(",")[-1]) if "," in args else ""

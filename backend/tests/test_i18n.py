@@ -471,10 +471,13 @@ DATA_LITERALS = {
     "prompts.py": (", the CEO of an autonomous AI company",),
     "router/providers.py": ("per ?minute",),
     "search.py": ("the and for with", "Più cose per una pizza", "ricetta della tradizione", "il la di un per"),
+    # spec 11 T06-T07: a probe of readable strings in bytes, an npm script name
+    "deconstructor.py": ("città",),
+    "tools.py": ("serve",),
 }
 # the language tables themselves, the demo's goal keywords and (spec 10) the
 # hiring matcher's subtask keywords, both in five languages
-TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py", "router/hiring.py"}
+TABLES = {"i18n.py", "router/mock_texts.py", "router/mock.py", "router/hiring.py", "intent.py"}  # spec 11 T09: the intent cues, five languages
 LOG_WORDS = re.compile(r"\b(riprovo|rispost\w*|porta|indicizzat\w*|scaricat\w*|predefinit\w*|valutat\w*|approvat\w*|fallit\w*|giro|spent[io]|ignorat\w*)\b", re.IGNORECASE)
 
 

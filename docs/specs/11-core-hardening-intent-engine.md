@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 confermate dall'utente. Prossimo: T06.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 confermate dall'utente; Fase 2, T06–T10, fatta in un'unica passata su richiesta dell'utente (20/10/2026, §8), con le decisioni D26–D35 da confermare. Prossimo: la revisione della Fase 2 da parte dell'utente.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -34,18 +34,18 @@
 2. `reverse_only`: analisi, decodifica architetturale, estrazione di API e logica, audit di un bersaglio esistente (cartella locale, repo o codice fornito); si consegna il Blueprint;
 3. `deconstruct_and_build`: inversione + ricostruzione clean-room. Il sistema decodifica l'applicazione bersaglio, ne estrae la logica di business in un documento neutrale (`blueprint.json` + specifica Markdown) e poi i team di sviluppo la ricreano da zero dal Blueprint.
 
-- [ ] **T06 — Estrattore strutturale** (`aw_core` + fallback Python in `deconstructor.py`): `extract_skeleton(source, ext)` estrae da Python, JS/TS, Rust, HTML/CSS firme di funzioni e classi, import/export, route API, variabili di stato e grafo delle chiamate interne, senza i corpi pesanti.
-- [ ] **T07 — Tool di Reverse Engineering** (`tools.py`):
+- [x] **T06 — Estrattore strutturale** (`aw_core` + fallback Python in `deconstructor.py`): `extract_skeleton(source, ext)` estrae da Python, JS/TS, Rust, HTML/CSS firme di funzioni e classi, import/export, route API, variabili di stato e grafo delle chiamate interne, senza i corpi pesanti. Fatto: §8.
+- [x] **T07 — Tool di Reverse Engineering** (`tools.py`). Fatto: §8.
   - `scan_target_tree(path)`: file, linguaggi, entry point, dipendenze (`package.json`, `pyproject.toml`, `Cargo.toml`) e dimensione del bersaglio;
   - `extract_code_skeleton(path)`: la radiografia strutturale di un file (il 90% di token in meno di `read_file`);
   - `write_blueprint(data)`: valida e salva in `data/workspace/<run_id>/blueprint.json` la logica decodificata (architettura, modelli dati, endpoint, regole di business, casi limite, criteri di parità).
-- [ ] **T08 — Team Reverse Engineering** (`config/default.json`, `public/js/world/`): il team `reverse` (lead *Kira*, worker *Zero*, combo `code`, tool `scan_target_tree`, `extract_code_skeleton`, `write_blueprint` più quelli di base), la sua postazione nell'ufficio 3D e le traduzioni nei 5 dizionari.
-- [ ] **T09 — Orchestrazione dell'inversione** (`run.py`), con `run.mode == "deconstruct_and_build"`:
+- [x] **T08 — Team Reverse Engineering** (`config/default.json`, `public/js/world/`): il team `reverse` (lead *Kira*, worker *Zero*, combo `code`, tool `scan_target_tree`, `extract_code_skeleton`, `write_blueprint` più quelli di base), la sua postazione nell'ufficio 3D e le traduzioni nei 5 dizionari. Fatto: §8.
+- [x] **T09 — Orchestrazione dell'inversione** (`run.py`), con `run.mode == "deconstruct_and_build"` (nel codice `run.intent`, §8.3). Fatto: §8.
   1. **Fase A (Deconstruct):** la CEO assegna i primi workstream solo al team `reverse`;
   2. **Fase B (Handover):** quando il QA approva `blueprint.json`, `run.py` lo passa al Prompt Lab (Pia) e alla CEO per i workstream di ricostruzione;
   3. **Fase C (Clean-Room Build):** Sviluppo (Leo, Nina), Design (Iris, Ugo) e Contenuti ricevono nei brief le specifiche del Blueprint e ricreano l'applicazione;
   4. **Fase D (Parity QA):** il QA (Bruno, Vera) confronta il codice generato punto per punto con i requisiti funzionali del Blueprint.
-- [ ] **T10 — Simulatore demo e test** (`router/mock.py`, `tests/`): `mock.py` e `mock_texts.py` (5 lingue) simulano anche `deconstruct_and_build` senza chiavi; `tests/test_deconstructor.py` (con la parità Python/Rust di `extract_skeleton`) e i test end-to-end del doppio binario.
+- [x] **T10 — Simulatore demo e test** (`router/mock.py`, `tests/`): `mock.py` e `mock_texts.py` (5 lingue) simulano anche `deconstruct_and_build` senza chiavi; `tests/test_deconstructor.py` (con la parità Python/Rust di `extract_skeleton`) e i test end-to-end del doppio binario. Fatto: §8.
 
 ## 3. T01 — Budget e circuit breaker (fatto il 19/10/2026)
 
@@ -452,3 +452,116 @@
 - **Il gateway non conta nel budget delle run** (spec 11 §3.6), in streaming come prima.
 - **Un client che chiude prima delle prime parole** chiude il flusso del provider, ma la chiamata non risulta nelle statistiche, né riuscita né fallita.
 - **Un corpo JSON rotto** su `/v1` dà ancora un 500, come su `/api` (HANDOFF §7, limiti accettati).
+
+## 8. Fase 2 — Intent Engine, T06–T10 (fatta il 20/10/2026)
+
+Su richiesta dell'utente la Fase 2 è stata chiusa in un'unica passata, invece di un ticket per sessione: si riprende il lavoro parcheggiato sul branch `claude/spec11-phase2-wip`, si completa e si verifica una volta sola alla fine (`npm test` e `npm run test:browser`). I commit sono due: `50ddcb5` (T06, il cherry-pick di `4581acc`) e quello della Fase 2 (T07–T10, dal cherry-pick di `9fc9f02` più il completamento).
+
+### 8.1 Il punto di partenza (misurato su `5a8cd96`, T05 confermato)
+
+- **Nessun reverse engineering.** La CEO pianificava sempre una costruzione da zero; non c'era né un team, né un tool, né un posto dove mettere il bersaglio. L'unico modo di far leggere del codice a un agente era allegarlo e farlo leggere con `read_file`, che si ferma a 12000 caratteri.
+- **Il lavoro parcheggiato.** `4581acc` (T06) era completo, con i suoi 38 test verdi. `9fc9f02` (T07–T09) aveva il codice dei tool, del team, del modulo dell'intento e della clean room in `run.py`, ma non il simulatore demo né i test, e la suite non era mai stata eseguita su quello stato ("WIP, not verified").
+- **Cosa mancava per finirlo** (trovato verificando, §8.6): un conflitto in `i18n.py`, la HAR del campione in una cartella ignorata da git, un obiettivo italiano classificato male, la clean room che bloccava i file dei costruttori, il blueprint in inglese in ogni lingua, una route JS con handler inline letta male, due difetti visti solo dal runner del browser.
+
+### 8.2 Cosa fa
+
+- **T06 — `backend/backend/deconstructor.py`** e il gemello **`crates/aw_core/src/deconstruct.rs`** (tre `pyfunction` nuove in `lib.rs`, che restituiscono JSON; `serde_json` in `Cargo.toml`):
+  - `extract_skeleton(source, ext)`: Python, JavaScript/TypeScript, Rust, HTML, CSS. Import ed export, firme di classi, funzioni e metodi senza i corpi, route API servite (FastAPI/Flask, Express, axum e gli attributi di actix/rocket) e chiamate (`fetch`, `axios`…), variabili di stato (comprese quelle di React), grafo delle chiamate interne, con `self.x()` risolto sul metodo della classe;
+  - `inspect_artifact_metadata(data, name)`: ELF, PE, Mach-O, WebAssembly, zip/jar/wheel, tar, gzip, PDF, immagini, SQLite e bundle di testo: formato, sezioni, simboli esportati e importati, stringhe leggibili, entropia. Niente si esegue;
+  - `summarize_runtime_trace(text)`: HAR, eventi JSON, JSON lines, tracce di Chrome, log di testo: endpoint (i numeri e gli id nei percorsi diventano `{id}`), lo schema dei payload (solo i tipi, mai i valori) e la sequenza degli stati;
+  - `DECONSTRUCT_PROBES` e `_load_native()`: il modulo nativo si usa solo se dà esattamente lo stesso risultato su ogni probe (D26); `render_skeleton`, `render_artifact`, `render_trace`: il testo compatto che legge un agente.
+- **T07 — `backend/backend/tools.py`:**
+  - `scan_target_tree(path)`: file, linguaggi, entry point, dipendenze (`package.json`, `pyproject.toml`, `requirements.txt`, `Cargo.toml`…) e dimensione, senza quello che la clean room nasconde;
+  - `extract_code_skeleton(path)`: lo scheletro di un file di codice, i metadati di un artefatto o il riassunto di una traccia, secondo il file;
+  - `write_blueprint(data)`: valida, normalizza e salva `blueprint.json` e `blueprint.md` (con i titoli nella lingua della run) nella cartella della run (D29); `read_blueprint()`, `blueprint_problems()` per il controllo meccanico;
+  - `copy_target()`: la copia del bersaglio in `target/` (D31).
+- **T08 — il team `reverse`** (`config/default.json`): *Reverse Engineering*, lead **Kira**, worker **Zero**, combo `code`, al più 2 sotto-agenti, i tre tool nuovi più quelli di base, `"reverse": true` (D35). La sua stanza nell'ufficio 3D (`public/js/world/office.js`: la nona zona, a nord-ovest, con il prop `scanner`), le etichette nei 5 dizionari (`i18n.py`, `public/js/i18n.js`), il badge dell'intento nell'intestazione della missione (`public/js/main.js`) e la skill `skills/architecture-deconstruction/SKILL.md`.
+- **T09 — l'orchestrazione** (`backend/backend/intent.py`, `run.py`, `prompts.py`, `plan.py`, `tasker.py`, `routes/runs.py`):
+  - `POST /api/runs` accetta `intent` (uno dei tre; altrimenti 400 `intent_unsupported`) e `target`, una cartella locale (altrimenti 400 `target_not_found`);
+  - all'avvio: `prepare_target()` copia il bersaglio, `classify()` decide l'intento (D30), `plan()` con un intento di reverse dà i primi workstream solo al team `reverse`, e l'ultimo consegna sempre `blueprint.json`;
+  - `reverse_only`: finita la decodifica, la missione consegna il blueprint;
+  - `deconstruct_and_build`: Fase A (Deconstruct), poi `clean_room()`: Fase B `handover()` (D33), Fase C la ricostruzione con i brief del Prompt Lab e il "BLUEPRINT CONTRACT", Fase D `parity_review()` (D34). `run.data` ha `intent`, `intentWhy`, `phase` e `target`, e una run ripresa riparte dalla sua fase;
+  - durante la ricostruzione `hidden_for()` e `clean_room_refusal()` tengono l'originale fuori dalla vista dei costruttori (D32); `write_file` non scrive `blueprint.*`.
+- **T10 — il simulatore demo** (`router/mock.py`, `router/mock_texts.py` nelle 5 lingue): l'intento, il piano di decodifica, lo scan e gli scheletri del campione, un blueprint vero, il piano di ricostruzione, i brief del passaggio, il codice ricostruito (con un `server.js` quando il blueprint ha degli endpoint) e il verdetto di parità. Il campione è `backend/backend/demo_target/` (*todo-board*: `server.js`, `public/`, `traces/session.har`), usato da una missione demo che non ha un bersaglio.
+
+### 8.3 Scostamenti dal testo dei ticket
+
+- **`run.intent`, non `run.mode`:** `mode` c'era già (`demo` o `live`).
+- **La cartella della run** è `data/workspace/<slug>-<id>/`, come per tutti i file delle run, non `data/workspace/<run_id>/`.
+- **Niente AST:** scanner a caratteri (D26). Il Python segue il parser vero (verificato su 102 file durante lo sviluppo; il test lo rifà su 5 file del backend).
+- **T06 fa anche artefatti e tracce** (`inspect_artifact_metadata`, `summarize_runtime_trace`), come chiesto nella richiesta di T05–T10.
+- **"Quando il QA approva `blueprint.json`"** è la review del task che lo scrive: un task `done` ha passato la review (D33).
+- **La ricostruzione** usa Sviluppo, Design, Contenuti e IA generativa, cioè i team che costruiscono (`BUILD_TEAMS`).
+
+### 8.4 Decisioni (da confermare)
+
+- **D26 — Scanner a caratteri con regole ASCII, non `ast` né regex.** Il gemello Rust deve dare gli stessi byte: `ast` in Rust non esiste, e la `re` di Python e la crate `regex` non trattano Unicode allo stesso modo. Python e Rust hanno le stesse funzioni con gli stessi nomi, riga per riga. La probe di avvio usa `aw_core` solo se coincide su tutte le `DECONSTRUCT_PROBES` (ogni linguaggio, formato e tipo di traccia), con tolleranza zero; altrimenti lavora Python. Il prezzo: è un'euristica, e solo per Python c'è un parser di riferimento con cui confrontarla.
+- **D27 — Lo scheletro è piccolo e dice quando taglia.** Al più 20000 righe lette; 80 import, 80 export, 300 simboli, 80 route, 120 variabili di stato, 300 chiamate; firme fino a 160 caratteri. Quando taglia, lo scrive. Misurato sul codice del repository: circa il 10% di quello che darebbe `read_file` (il test vuole meno dell'11,5% su 8 file, e ognuno sotto il 16%).
+- **D28 — Artefatti e tracce senza eseguirli.** Si leggono solo le intestazioni e l'indice: niente si esegue, niente si decomprime oltre l'elenco delle voci; un'intestazione bugiarda o tronca non fa mai alzare un'eccezione. Delle tracce si tengono gli endpoint, i tipi dei payload e la sequenza, mai i valori (che possono contenere dati personali o token).
+- **D29 — Il blueprint è il confine della clean room.** `write_blueprint` lo rifiuta (e l'agente riceve l'elenco dei problemi) se non è un oggetto, se supera 200 KB, se un campo contiene codice copiato (4 righe o più, almeno metà con la forma del codice), se manca `summary`, se manca `architecture.components`, se ha meno di 2 `parityCriteria`, se non ha né `endpoints` né `dataModels` né `businessRules`, se un endpoint non ha un metodo HTTP e un percorso che comincia con `/`. Si scrive solo con `write_blueprint`; il controllo meccanico di un task del team `reverse` rilegge `blueprint.json`.
+- **D30 — La CEO classifica solo quando c'è un motivo.** Un obiettivo senza parole di reverse engineering o di ricostruzione (nelle 5 lingue), senza bersaglio e senza codice tra i file del proprietario è `direct_build` senza nessuna chiamata: le missioni di prima costano e si comportano come prima. Altrimenti la CEO risponde con l'intento e il perché; una risposta inutilizzabile vale quello che dice `guess()`, la regola delle parole. Il proprietario può fissare l'intento con `intent` in `POST /api/runs`.
+- **D31 — Il bersaglio si copia nella run.** `target` è una cartella della macchina del server; prima che la CEO guardi la missione, `copy_target()` la copia in `target/` della run, e gli agenti la leggono con le regole dei percorsi della run, senza uscirne mai. Non si copiano: i link, le cartelle nascoste (`.git`, `.ssh`…), i file nascosti che non sono configurazione, quelli con il nome o l'estensione di un segreto (`.env`, `id_rsa`, `.pem`, `.key`…), le cartelle delle dipendenze e delle build; al più 3000 file e 50 MB. Anche il codice tra gli allegati del proprietario conta come bersaglio. Una missione demo senza bersaglio usa il campione *todo-board*.
+- **D32 — Cosa nasconde la clean room.** In `deconstruct_and_build`, dalla Fase C in poi, i task che non sono del team `reverse` non vedono `target/`, il codice tra gli allegati e le note di lavoro del team `reverse`: i tool di lettura rifiutano, e la lista dei file del brief e `scan_target_tree` li tacciono. Passano il confine solo `blueprint.json` e `blueprint.md`, più il "BLUEPRINT CONTRACT" (al più 6000 caratteri) nel brief.
+- **D33 — Il passaggio di consegne vuole un blueprint approvato.** Serve un task del team `reverse` finito (cioè passato dalla review del QA) che abbia scritto `blueprint.json`, e un blueprint valido. Altrimenti la fase diventa `failed` e non si ricostruisce niente. La CEO pianifica la ricostruzione dal solo blueprint e con i soli team che costruiscono; Pia (Prompt Lab) scrive i brief clean-room dei nuovi workstream.
+- **D34 — La QA di parità rimanda indietro una volta sola.** Un revisore del QA (la CEO, se il QA non c'è) controlla ogni criterio di parità sui file della ricostruzione e scrive `PARITY.md`. Un verdetto `revise` con delle correzioni riapre quei task una volta, con l'istruzione del QA; il secondo verdetto è definitivo. I criteri rimasti aperti non fanno fallire la run: restano in `PARITY.md` e nel messaggio finale.
+- **D35 — Il team `reverse` non costruisce.** Con `"reverse": true` resta fuori dai piani di `direct_build` e da quelli della ricostruzione, e lavora solo nella Fase A. La sua stanza è la nona zona dell'ufficio, a nord-ovest; il runner del browser ricava dal config quanti worker e quanti posti nelle bay deve vedere, invece di 7 e 14 scritti a mano.
+
+### 8.5 Test
+
+- **`backend/tests/test_deconstructor.py`** (nuovo, 85 test: 84 passano e 1 si salta).
+  - T06 (39, uno saltato): Python con firme, route, stato e chiamate senza i corpi; Python contro il parser vero sui file del backend; TypeScript con classi, interfacce, export, route e stato React; Rust con impl, trait, campi, attributi e route axum, e un'intestazione su più righe; HTML con script, stili, form e campi; CSS; la lingua dall'estensione; stringhe che sembrano codice; i limiti; lo scheletro al 10%. ELF, PE, wasm, archivi, bundle con entropia e stringhe, intestazioni bugiarde. HAR, eventi JSON, JSONL, tracce Chrome, log di testo; quello che non è JSON per `serde` non lo è nemmeno qui. Le probe coprono ogni linguaggio, formato e tipo di traccia; la probe di avvio prende solo un gemello che coincide; il ripiego su Python quando la chiamata nativa fallisce; il Rust è collegato al modulo; il gemello compilato coincide (saltato qui: `aw_core` non è compilato).
+  - T07 (16): `scan_target_tree`, anche con quello che la clean room nasconde; `extract_code_skeleton` su codice, artefatti e tracce; `write_blueprint` con il Markdown nella lingua della run (en, it, de) e 8 modi di rifiutarlo; `copy_target` senza segreti, link, cartelle nascoste e build; la run scrive il blueprint solo con `write_blueprint` e lo controlla.
+  - T08 (4): il team nel config e fuori dai piani di costruzione; le 5 lingue; una zona per ogni team e il prop; la skill.
+  - T09 (18): la regola delle parole nelle 5 lingue (10 obiettivi); gli obiettivi di prima non chiedono niente alla CEO; un obiettivo semplice è `direct_build` senza chiamata, uno con un indizio la chiama; il proprietario fissa intento e bersaglio; `POST /api/runs` con `intent` e `target`; la clean room nasconde l'originale; il passaggio vuole un blueprint approvato; la QA di parità rimanda indietro una volta; una run ripresa riparte dalla sua fase.
+  - T10 (8): il simulatore risponde ai ruoli nuovi; una missione demo `reverse_only` consegna il blueprint del campione (nelle 5 lingue); una `deconstruct_and_build` passa per le quattro fasi; una `direct_build` è il flusso di prima.
+- **Altri file:** `test_i18n.py` (i testi di `deconstructor.py`, `tools.py` e `intent.py` nella guardia dei dizionari), `test_prompts.py` (i tre tool nuovi), `test_run.py` (la forma di `run.data`).
+- **Mutazioni:** 14, ognuna deve far diventare rosso `test_deconstructor.py`, e lo fa. Lo script rimette i byte esatti di ogni file mutato e ne confronta l'hash prima e dopo.
+
+  | Mutazione | Primo test che la prende | Rosso in |
+  |---|---|---|
+  | T06: le stringhe Python a tre apici non sono stringhe | Python con firme, route, stato e chiamate | 2 s |
+  | T06: `self.x()` non si risolve sul metodo | Python con firme, route, stato e chiamate | 2 s |
+  | T06: l'entropia con il segno sbagliato | bundle con entropia e stringhe | 3 s |
+  | T06: la probe prende qualunque modulo nativo | la probe di avvio | 2 s |
+  | T07: il codice copiato passa il controllo del blueprint | i rifiuti di `write_blueprint` | 3 s |
+  | T07: i segreti si copiano con il bersaglio | `copy_target` | 3 s |
+  | T07: `write_file` scrive `blueprint.json` | la run scrive il blueprint solo con `write_blueprint` | 3 s |
+  | T08: la CEO pianifica le costruzioni con il team `reverse` | il team nel config e fuori dai piani | 3 s |
+  | T09: ogni obiettivo chiama la CEO | un obiettivo semplice senza chiamata | 4 s |
+  | T09: la clean room non nasconde niente | la clean room nasconde l'originale | 5 s |
+  | T09: il passaggio non aspetta il QA | il passaggio vuole un blueprint approvato | 7 s |
+  | T09: la QA di parità non rimanda mai indietro | la QA di parità rimanda indietro una volta | 6 s |
+  | T10: il simulatore non trova il modello dati nelle tracce | il simulatore risponde ai ruoli nuovi | 6 s |
+  | T10: il simulatore ignora l'intento del piano | la missione demo `reverse_only` (en) | 9 s |
+
+  I tempi sono quelli di `test_deconstructor.py` fermato al primo rosso (`-x`).
+
+### 8.6 Difetti trovati verificando, e corretti
+
+- **Un conflitto in `i18n.py`** nel cherry-pick di `9fc9f02`: tenuti i testi di T05 e quelli della Fase 2.
+- **La HAR del campione era in `logs/`**, che `.gitignore` esclude: un clone pulito non l'avrebbe avuta. Ora è in `demo_target/traces/`.
+- **"Decodifica questa applicazione esistente e ricostruiscila"** era `direct_build`: mancavano "decodifica" e le forme di "applicazione esistente" nelle 5 lingue. Aggiunte.
+- **La clean room rifiutava `index.html` ai costruttori**: un nome senza cartella si leggeva come un allegato del proprietario anche quando quell'allegato non c'era. Ora vale come allegato solo se il file esiste.
+- **`blueprint.md` aveva i titoli in inglese** in ogni lingua: ora vengono da `BLUEPRINT_MD` in `i18n.py`.
+- **Una route Express con l'handler inline** (`app.get("/x", (req, res) => …)`) prendeva come nome dell'handler un pezzo della funzione: ora non ha nome, in Python e in Rust.
+- **Il runner del browser:** la stanza nuova copriva un'etichetta a 1440×900 (E2): zona spostata. Due verifiche contavano 7 worker e 14 posti scritti a mano: ora i numeri vengono dal config.
+- **I numeri delle decisioni nei commenti del codice** (D20…) si scontravano con quelli di T05: ora sono D26–D35.
+
+### 8.7 Verifiche
+
+- **Le missioni demo**, senza chiavi: `reverse_only` in inglese, 23 chiamate, blueprint del campione; `deconstruct_and_build` in italiano (64 chiamate) e in inglese (55), fasi A–D, `PARITY.md` con 6 criteri su 6.
+- **`npm test` verde in 7 min 24 s**: mondo 3D, dizionari, launcher, avvio, **pytest 1232 passati e 5 saltati** (prima 1148 e 4: gli 85 di `test_deconstructor.py`, uno saltato), smoke, flussi, secret-scan, cartelle temporanee.
+- **`npm run test:browser`: 275 verifiche su 275**, ALL OK, in 5 min 13 s a 98,7 fps; `known-red.json` vuoto. Il primo giro intero aveva 3 rossi (E2 a 1440×900 e i due conteggi scritti a mano, §8.6): corretti, la fase delle etichette rifatta da sola (verde) e poi il giro intero.
+- **Dopo `npm test`** sono cambiati solo la zona della stanza, i conteggi del runner e i numeri delle decisioni nei commenti: rifatti `world-test`, `i18n-test` e pytest intero, verdi.
+- **QA visivo a 1920×1080:** la stanza *Reverse Engineering* a nord-ovest, Kira e Zero alle scrivanie, lo scanner, l'etichetta leggibile.
+- **Il Rust non è compilato qui** (niente toolchain MSVC): la parità di `deconstruct.rs` è provata solo dalla struttura (test) e lo sarà dalla probe di avvio quando `aw_core` verrà compilato.
+
+### 8.8 Limiti noti
+
+- **`deconstruct.rs` non è mai stato compilato:** finché non lo è, lavora il Python; se una volta compilato non coincide su una probe, la probe lo scarta e lavora ancora il Python.
+- **Gli scanner sono euristiche** (D26): per JS/TS, Rust, HTML e CSS non c'è un parser di riferimento; macro, template annidati e sintassi rare possono sfuggire.
+- **Il bersaglio è solo una cartella locale** o del codice allegato: niente URL git e niente archivi da estrarre (ticket N22). Con l'accesso in LAN (T02) serve la chiave, ma chi la ha può far copiare qualunque cartella che il processo del server sa leggere.
+- **La clean room vale per i tool della run**, non per quello che un modello sa già: un'applicazione pubblica può essere nota al modello. Il controllo del codice copiato nel blueprint è un'euristica: un frammento di 3 righe passa.
+- **La QA di parità legge i file**, non esegue la ricostruzione; i criteri rimasti aperti non fanno fallire la run (D34).
+- **Il roster a 1920×1080** con 18 agenti non entra in larghezza (ticket N21).
+- **Nessuna missione vera** dei tre intenti con un provider: solo il simulatore.

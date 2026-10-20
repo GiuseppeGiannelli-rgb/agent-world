@@ -514,10 +514,14 @@ async function labels(cdp) {
   results.drawnVariant = drawnAs.join(', ');
   report('model', 'the drawn room labels match a variant of the model within 1 px', all['model check'].value <= 1, all['model check']);
   report('model', 'the app draws variant B (D8)', drawnAs.length === 1 && drawnAs[0] === 'B', { drawnAs });
+  // spec 11 T08: the counts follow the teams of the config (a ninth team added a worker and 2 bay seats)
+  const teams = Object.values(JSON.parse(readFileSync(join(ROOT, 'config', 'default.json'), 'utf8')).teams);
+  const workers = teams.reduce((n, t) => n + Math.min(2, (t.workers ?? []).length), 0);
+  const seats = teams.reduce((n, t) => n + Math.min(3, t.maxSubAgents ?? 0), 0);
   const s01 = runs['1920x1080 vuote'].spec01;
-  report('model', 'spec 01 numbers: 7/7 workers under their room label, full view LR', s01?.workers === 7 && s01.covered === 7, s01);
+  report('model', 'spec 01 numbers: every worker under its room label, full view LR', s01?.workers === workers && s01.covered === workers, { ...s01, expected: workers });
   const subs = runs[`${LABEL_SIZES[0]} piene`].subAgents;
-  report('model', 'every bay seat taken', subs === 14, { subAgents: subs });
+  report('model', 'every bay seat taken', subs === seats, { subAgents: subs, expected: seats });
   await viewport(cdp, size('1920x1080'));
   const byCss = await cdp.eval('__checks.labels.checkVariants()');
   report('model', 'every variant computed within 1 px of the same variant drawn by CSS', Object.values(byCss).every((d) => d.worstPx <= 1), byCss);

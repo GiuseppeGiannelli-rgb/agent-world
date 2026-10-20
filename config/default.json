@@ -244,6 +244,13 @@
       "tools": [],
       "lead": { "id": "bruno", "name": "Bruno" },
       "workers": [{ "id": "vera", "name": "Vera" }]
+    },
+    "reverse": {
+      "label": "Reverse Engineering", "title": "Reverse engineer", "color": "#5f7387", "kind": "work", "reverse": true, "combo": "code", "prop": "scanner", "maxSubAgents": 2,
+      "brief": "Deconstructs an existing application without running it: maps its files, reads the skeletons of its code, artifacts and traces, and writes a neutral blueprint (architecture, data models, endpoints, business rules, edge cases, parity criteria). Describes behaviour, never copies code.",
+      "tools": ["scan_target_tree", "extract_code_skeleton", "write_blueprint"],
+      "lead": { "id": "kira", "name": "Kira" },
+      "workers": [{ "id": "zero", "name": "Zero" }]
     }
   }
 }

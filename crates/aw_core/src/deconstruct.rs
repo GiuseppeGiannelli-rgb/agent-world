@@ -1,5 +1,5 @@
 //! Spec 11 T06: the twin of `backend/backend/deconstructor.py` (rule 2 of the
-//! spec, D20). Every function here has the name of its Python original without
+//! spec, D26). Every function here has the name of its Python original without
 //! the leading underscore, and follows it line by line: the same character
 //! scanners, the same ASCII-only rules, the same limits, the same order. The
 //! three entry points return JSON; the Python side compares it with its own
@@ -1049,7 +1049,8 @@ fn js_routes(ks: &[char], line: i64, out: &mut Out) {
                     let client = JS_CLIENTS.contains(&sv(&recv).as_str());
                     if client || starts(&l.0, "/") {
                         let mut handler: C = Vec::new();
-                        if !client {
+                        let rest = tail(ks, l.1);
+                        if !client && !has(rest, "=>") && !has(rest, "function") {
                             let args: &[char] = match rfind(ks, ")") {
                                 Some(close) if close > l.1 => &ks[l.1..close],
                                 _ => tail(ks, l.1),

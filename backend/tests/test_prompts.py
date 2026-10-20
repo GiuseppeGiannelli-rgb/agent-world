@@ -28,6 +28,8 @@ def test_tool_docs_cover_exactly_the_node_set():
         "recall", "ask_lead", "ask_user", "finish",
         # spec 09: the owner's files (only in a run that has them)
         "use_attachment", "read_document", "inspect_image",
+        # spec 11 T07: the Reverse Engineering team
+        "scan_target_tree", "extract_code_skeleton", "write_blueprint",
     }
 
 

@@ -28,12 +28,13 @@
 8. [Il router OmniRoute](#il-router-omniroute)
 9. [Ogni sotto-task assume il suo modello](#ogni-sotto-task-assume-il-suo-modello)
 10. [File, dialogo e ripresa](#file-dialogo-e-ripresa)
-11. [Tech stack](#tech-stack)
-12. [Lingue supportate](#lingue-supportate)
-13. [Configurazione](#configurazione)
-14. [Sicurezza](#sicurezza)
-15. [Test](#test)
-16. [Struttura del repository](#struttura-del-repository)
+11. [Reverse Engineering e ricostruzione clean-room](#reverse-engineering-e-ricostruzione-clean-room)
+12. [Tech stack](#tech-stack)
+13. [Lingue supportate](#lingue-supportate)
+14. [Configurazione](#configurazione)
+15. [Sicurezza](#sicurezza)
+16. [Test](#test)
+17. [Struttura del repository](#struttura-del-repository)
 
 ---
 
@@ -216,7 +217,7 @@ flowchart TD
     R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
 ```
 
-- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk). Dalla spec 11 il tokenizer tiene i token del codice e ogni scrittura (serve il crate `unicode-general-category`), e la probe d'avvio controlla anche lui: un `aw_core` compilato prima della spec 11 viene ignorato.
+- **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk). Dalla spec 11 il tokenizer tiene i token del codice e ogni scrittura (serve il crate `unicode-general-category`), e la probe d'avvio controlla anche lui: un `aw_core` compilato prima della spec 11 viene ignorato. Dalla spec 11 (T06) c'è anche il gemello del deconstructor (`deconstruct.rs`: `extract_skeleton_json`, `inspect_artifact_json`, `summarize_trace_json`, che restituiscono JSON): il backend lo usa solo se dà esattamente quello che dà `deconstructor.py` su ogni probe. È scritto ma non ancora compilato.
 - **Stessa interfaccia:** chi chiama non sa quale implementazione sta usando.
 - **Due livelli di sicurezza:**
   - all'avvio, una *probe di parità* confronta Rust e Python su un piccolo corpus: se id, ordine o punteggi differiscono (tolleranza 1e-9), il modulo nativo viene ignorato;
@@ -243,8 +244,8 @@ uv run python bench/bm25_bench.py
 ```mermaid
 flowchart TD
     U(["Tu"]) -->|missione · chat · risposte| CEO["Ada · CEO<br/>pianifica e coordina"]
-    CEO -->|workstream con dipendenze| LEADS["Lead dei team di lavoro<br/>Rino · Leo · Teo · Iris · Luna · Pia"]
-    LEADS -->|sotto-task| WK["Worker<br/>Sara · Nina · Gaia · Ugo · Dario · Max"]
+    CEO -->|workstream con dipendenze| LEADS["Lead dei team di lavoro<br/>Rino · Leo · Teo · Iris · Luna · Pia · Kira"]
+    LEADS -->|sotto-task| WK["Worker<br/>Sara · Nina · Gaia · Ugo · Dario · Max · Zero"]
     LEADS -->|più lavoro che persone| SUB["Sub-agenti temporanei<br/>nella sub-agent bay"]
     SH["Skill Hub · Otto<br/>bibliotecario"] -.->|1–3 skill per sotto-task| WK
     SH -.-> SUB
@@ -278,6 +279,7 @@ flowchart TD
 | Design | Iris, Ugo | — | 2 |
 | AI Generativa | Luna, Dario | `generate_image`, `generate_speech` | 3 |
 | Prompt Lab | Pia, Max | — | 1 |
+| Reverse Engineering | Kira, Zero | `scan_target_tree`, `extract_code_skeleton`, `write_blueprint` (spec 11, solo nelle missioni di reverse engineering) | 2 |
 
 Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `read_skill`, `recall`, `remember`, `ask_lead`, `ask_user` e `finish`.
 
@@ -297,6 +299,7 @@ Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `rea
 | **Router** | `backend/backend/router/` | OmniRoute (sotto): combo, fallback, cooldown, adapter dei provider e il simulatore demo. |
 | **Brain** | `backend/backend/brain.py` | Memoria condivisa che sopravvive ai run (fino a 5000 note), con ricerca BM25. |
 | **Skill Hub** | `backend/backend/skills.py` | Indice di ogni `SKILL.md` delle fonti configurate, più le repo GitHub predefinite. |
+| **Deconstructor** | `backend/backend/deconstructor.py`, `intent.py` | Scheletri del codice, metadati degli artefatti e riassunti delle tracce, con il gemello Rust (spec 11 T06); l'intento della missione (T09). |
 | **Media** | `backend/backend/media.py` | Immagini e voce dai provider, oppure PNG e WAV veri generati in demo. |
 | **Store** | `backend/backend/store.py` | Un file JSON per run in `data/runs/`, con un salvataggio raggruppato ogni 400 ms; accanto, in `data/runs/sessions/`, le conversazioni dei worker non finiti, scritte a ogni passo valido (spec 11 T04). Ogni scrittura passa da un file temporaneo: una scrittura interrotta lascia il file di prima, non uno rotto. |
 | **Web** | `backend/backend/web.py` | Ricerca su DuckDuckGo, letture mirate di GitHub, Reddit e Hacker News. |
@@ -493,13 +496,35 @@ Una missione non resta mai ferma ad aspettare un'API esaurita o un passo che un 
 | Endpoint | Che cosa fa |
 |---|---|
 | `POST /api/uploads?name=…` | carica un file prima della missione (il corpo sono i byte del file) |
-| `POST /api/runs {goal, attachments}` | avvia la missione con i file caricati: sono nella run prima che il CEO pianifichi |
+| `POST /api/runs {goal, attachments, intent, target}` | avvia la missione con i file caricati: sono nella run prima che il CEO pianifichi. `intent` e `target` (spec 11) fissano il tipo di missione e la cartella da decodificare |
 | `POST /api/runs/{id}/attachments?name=…&taskId=…` | aggiunge un file a una run, attiva o salvata, e facoltativamente a un task |
 | `POST /api/runs/{id}/tasks/{task}/interact {text, attachments, resume}` | parla con un task; `resume: true` riprende anche la run ferma |
 | `POST /api/runs/{id}/answer {itemId, text}` o `{itemId, solve: true}` | risponde a una domanda, anche di una run salvata, o la fa decidere alla squadra |
 | `POST /api/runs/{id}/resume` | riprende una run salvata dal punto di blocco (su una run in pausa toglie la pausa) |
 | `POST /api/runs/{id}/refine {text, attachments, taskId}` | chiede una modifica: i task coinvolti ripartono e il QA li rivede |
 | `POST /api/providers` · `DELETE /api/providers/{id}` | registra o toglie un provider compatibile OpenAI senza riavviare |
+
+---
+
+## Reverse Engineering e ricostruzione clean-room
+
+Dalla spec 11 (Fase 2, [§8](docs/specs/11-core-hardening-intent-engine.md)) la CEO capisce che tipo di missione ha davanti:
+
+| Intento | Che cosa succede |
+|---|---|
+| `direct_build` | costruire qualcosa di nuovo: il flusso di sempre, senza nessuna chiamata in più |
+| `reverse_only` | decodificare un'applicazione esistente: il team Reverse Engineering consegna `blueprint.json` e `blueprint.md` |
+| `deconstruct_and_build` | decodificarla e poi ricostruirla da zero, in clean-room, dal solo blueprint |
+
+- **Quando la CEO decide.** Solo se c'è un motivo: parole di reverse engineering o di ricostruzione nell'obiettivo (nelle 5 lingue), un bersaglio, del codice tra i tuoi file. Altrimenti la missione è `direct_build` e costa come prima. Puoi fissare l'intento tu: `POST /api/runs {goal, intent, target}`.
+- **Il bersaglio.** `target` è una cartella della macchina del server. Prima che la CEO guardi la missione viene copiata in `target/` della run, senza link, cartelle nascoste, file con il nome di un segreto (`.env`, `id_rsa`, `*.pem`…), dipendenze e build; al più 3000 file e 50 MB. Vale come bersaglio anche il codice tra i tuoi file. Una missione demo senza bersaglio usa il campione *todo-board* (`backend/backend/demo_target/`).
+- **Le quattro fasi** di `deconstruct_and_build`:
+  1. **Deconstruct:** Kira e Zero mappano il bersaglio (`scan_target_tree`), ne leggono gli scheletri (`extract_code_skeleton`, circa un decimo di quello che darebbe `read_file`; anche binari, archivi, HAR e log, senza eseguirli) e scrivono il blueprint (`write_blueprint`), che il QA rivede;
+  2. **Handover:** con il blueprint approvato la CEO pianifica la ricostruzione con Sviluppo, Design, Contenuti e AI Generativa, e Pia (Prompt Lab) scrive i brief clean-room;
+  3. **Clean-Room Build:** i costruttori lavorano dal "BLUEPRINT CONTRACT" del loro brief e da `blueprint.md`; `target/`, il codice tra i tuoi file e le note del team Reverse Engineering per loro non esistono, e i tool rifiutano di leggerli;
+  4. **Parity QA:** il QA controlla ogni criterio di parità del blueprint e scrive `PARITY.md`; un criterio mancato rimanda indietro il suo task una volta.
+- **Il blueprint è il confine.** `write_blueprint` rifiuta un blueprint senza sommario, senza componenti, con meno di 2 criteri di parità o con del codice copiato dal bersaglio; `write_file` non può scriverlo.
+- **Nell'ufficio** il team ha la sua stanza a nord-ovest, con lo scanner, e l'intestazione della missione mostra l'intento (🔍 reverse engineering, 🔁 decodifica e ricostruzione).
 
 ---
 
@@ -622,7 +647,7 @@ Lo Skiller è un job in background (`backend/backend/skiller.py`). Il primo giro
 |---|---|---|
 | **Python** 3.13 | `backend/` (codice 4.400, test e benchmark 3.200) | 7.500 |
 | **JavaScript** (ES modules) | `public/js/` (front-end 4.200), `scripts/` (strumenti di test 3.700) | 7.900 |
-| **Rust** (edition 2021) | `crates/aw_core/` | 200 |
+| **Rust** (edition 2021) | `crates/aw_core/` | 3.400 |
 | **HTML / CSS** | `public/` | 500 |
 | **JSON** | `config/default.json` | — |
 | **Markdown** | `docs/specs/`, `skills/*/SKILL.md` | — |
@@ -737,7 +762,7 @@ npm run test:browser   # runner headless: 275 verifiche sul front-end vero (~5-6
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
-- **`pytest` (1148 test, più 4 saltati: la parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`); il tokenizer per il codice e ogni scrittura, la sua probe, il consolidamento e il decadimento del Brain (`test_search.py`, `test_search_rust.py`, `test_brain.py`); gli snapshot del Tasker, il ritorno all'ultimo punto pulito all'escalation, le sessioni su disco a ogni passo valido e le scritture atomiche dello store (`test_tasker.py`, `test_store.py`, `test_checkpoint.py`); lo streaming vero di `/v1`: i chunk man mano che il provider scrive (provato su un server vero, con un provider finto che aspetta il test), OpenAI, Anthropic e simulatore, il failover prima delle prime parole, un'interruzione a metà, `<think>` spezzati tra i chunk, un client che se ne va, un modello sconosciuto (`test_gateway_stream.py`).
+- **`pytest` (1232 test, più 5 saltati: i test della parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`); il tokenizer per il codice e ogni scrittura, la sua probe, il consolidamento e il decadimento del Brain (`test_search.py`, `test_search_rust.py`, `test_brain.py`); gli snapshot del Tasker, il ritorno all'ultimo punto pulito all'escalation, le sessioni su disco a ogni passo valido e le scritture atomiche dello store (`test_tasker.py`, `test_store.py`, `test_checkpoint.py`); lo streaming vero di `/v1`: i chunk man mano che il provider scrive (provato su un server vero, con un provider finto che aspetta il test), OpenAI, Anthropic e simulatore, il failover prima delle prime parole, un'interruzione a metà, `<think>` spezzati tra i chunk, un client che se ne va, un modello sconosciuto (`test_gateway_stream.py`); la Fase 2: gli scheletri in ogni linguaggio (il Python anche contro il parser vero), artefatti e tracce, la probe del gemello Rust, i tool del bersaglio e del blueprint, il team Reverse Engineering, l'intento nelle 5 lingue, la clean room, il passaggio di consegne, la QA di parità e le missioni demo dei tre intenti (`test_deconstructor.py`).
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.
@@ -765,7 +790,8 @@ Quello che trova lo stampa oscurato.
 ```
 agent-world/
 ├─ backend/                 backend FastAPI (progetto uv)
-│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py · crossbus.py · rag_budget.py
+│  ├─ backend/              app.py · bus.py · run.py · tasker.py · team.py · tools.py · i18n.py · security.py · attachments.py · arbiter.py · crossbus.py · rag_budget.py · deconstructor.py · intent.py
+│  │  ├─ demo_target/       il campione todo-board delle missioni demo di reverse engineering (spec 11)
 │  │  ├─ routes/            api_state · runs · providers · skills_brain · events (SSE) · gateway (/v1) · static
 │  │  └─ router/            index (OmniRoute) · providers · profiler · hiring (spec 10) · mock (demo)
 │  ├─ tests/                pytest
@@ -780,4 +806,4 @@ agent-world/
    └─ assets/               screenshot del README
 ```
 
-Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md).
+Il progetto è cresciuto per cicli di Specs Driven Development. Ogni cambio importante ha in [`docs/specs/`](docs/specs/) la sua spec, i ticket, il report "prima e dopo", la review e la retro. Il porting a FastAPI e Rust è la [spec 04](docs/specs/04-backend-port.md); le lingue sono la [spec 06](docs/specs/06-language.md), il controllo di sicurezza la [spec 07](docs/specs/07-security.md), router, RAG e media la [spec 08](docs/specs/08-router-rag-media.md), file del proprietario, dialogo, ripresa e failover la [spec 09](docs/specs/09-multimodal-interactive-recovery.md), l'assunzione dei modelli per sotto-task e il bus a incrocio la [spec 10](docs/specs/10-parametric-hiring-cross-rag.md), il core hardening e l'intent engine la [spec 11](docs/specs/11-core-hardening-intent-engine.md).

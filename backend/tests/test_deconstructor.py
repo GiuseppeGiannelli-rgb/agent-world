@@ -9,6 +9,7 @@ the clean-room handover (Deconstruct -> Handover -> Build -> Parity QA).
 T10: the demo simulator plays the three missions in the five languages."""
 
 import ast
+import asyncio
 import gzip
 import io
 import json
@@ -448,3 +449,493 @@ def test_the_compiled_twin_matches_python_exactly():
     for text in TRACES:
         assert json.loads(mod.summarize_trace_json(text)) == d.summarize_runtime_trace_py(text)
     assert d.ENGINE == "rust"
+
+
+# ---------- T07: the tools of the Reverse Engineering team ----------
+
+from test_attachments import ctx  # noqa: E402,F401 -- the run fixture (FAST demo, no keys)
+from test_runs import FakeRun, app_and_store, client  # noqa: E402,F401 -- the route fixtures
+
+from backend import tools  # noqa: E402
+from backend.tools import Workspace  # noqa: E402
+
+BLUEPRINT_OK = {
+    "name": "todo-board",
+    "summary": "A small to-do board: a JSON API and a one-page front-end.",
+    "architecture": {"style": "single page + JSON API", "components": [{"name": "API server", "kind": "service", "responsibility": "serves the to-dos", "files": ["target/server.js"]}, "Front-end"], "stack": ["JavaScript", "express"]},
+    "dataModels": [{"name": "Todo", "fields": [{"name": "id", "type": "number", "required": True}, {"name": "title", "type": "string"}, "done"]}],
+    "endpoints": [{"method": "get", "path": "/api/todos", "purpose": "list"}, {"method": "POST", "path": "/api/todos", "request": {"title": "string"}}],
+    "businessRules": ["A title is required and at most 120 characters.", {"rule": "A new to-do is open."}],
+    "edgeCases": ["An unknown id answers 404."],
+    "parityCriteria": ["POST /api/todos with an empty title answers 400.", "GET /api/todos lists the to-dos in creation order."],
+    "secret": "dropped: not a blueprint field",
+}
+
+
+def write_tree(root: Path, files: dict) -> None:
+    for rel, content in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
+
+
+def test_scan_target_tree_maps_languages_entry_points_dependencies_and_sizes(tmp_path):
+    write_tree(tmp_path, {
+        "target/package.json": json.dumps({"main": "server.js", "bin": {"todo": "cli.js"}, "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4.19.2"}, "devDependencies": {"jest": "29"}}),
+        "target/server.js": "const x = 1;\n",
+        "target/api/pyproject.toml": '[project]\ndependencies = ["fastapi>=0.110"]\n[project.scripts]\ntodo = "api.main:run"\n',
+        "target/api/requirements.txt": "uvicorn==0.30  # server\n-e .\n",
+        "target/api/main.py": "def run(): pass\n",
+        "target/core/Cargo.toml": '[package]\nname = "core"\n[dependencies]\nserde = { version = "1" }\nregex = "1.10"\n[[bin]]\nname = "core"\npath = "src/main.rs"\n',
+        "target/core/src/main.rs": "fn main() {}\n",
+        "target/core/target/CACHEDIR.TAG": "cargo build output",
+        "target/core/target/debug/big.bin": b"\x00" * 1000,
+        "target/node_modules/express/index.js": "module.exports = 1;\n",
+        "target/.git/HEAD": "ref: refs/heads/main\n",
+        "target/dist/app.min.js": "!function(){}();\n",
+        "target/logs/session.har": "{}",
+    })
+    scan = tools.scan_tree(Workspace(tmp_path), "target")
+    paths = [f["path"] for f in scan["files"]]
+    assert "target/node_modules/express/index.js" not in paths and "target/.git/HEAD" not in paths and "target/core/target/debug/big.bin" not in paths
+    assert scan["skipped"] == {".git": 1, "node_modules": 1, "target": 1} and "target/dist/app.min.js" in paths
+    assert {"JavaScript", "Python", "Rust", "TOML", "JSON", "trace"} <= set(scan["languages"])
+    assert "target/package.json: main server.js" in scan["entries"] and "target/package.json: bin cli.js" in scan["entries"] and "target/package.json: npm run start = node server.js" in scan["entries"]
+    assert "target/api/pyproject.toml: script todo = api.main:run" in scan["entries"] and "target/core/Cargo.toml: bin core = src/main.rs" in scan["entries"]
+    assert {"target/server.js", "target/api/main.py", "target/core/src/main.rs"} <= set(scan["entries"])
+    assert {"npm express ^4.19.2", "npm jest 29 (dev)", "python fastapi>=0.110", "python uvicorn==0.30", "rust serde 1", "rust regex 1.10"} <= set(scan["deps"])
+    text = tools.render_scan(scan)
+    assert text.startswith("TARGET target: 9 files in 5 folders") and "SKIPPED: .git x1, node_modules x1, target x1" in text and "DEPENDENCIES: " in text and "  target/server.js (13 B)" in text
+
+
+def test_scan_target_tree_leaves_out_what_the_clean_room_hides(tmp_path):
+    write_tree(tmp_path, {"target/server.js": "x", "index.html": "<p>", "reverse/map.md": "notes"})
+    hidden = lambda rel: rel.startswith("target") or rel.startswith("reverse/map.md")  # noqa: E731
+    scan = tools.scan_tree(Workspace(tmp_path), ".", hidden)
+    assert [f["path"] for f in scan["files"]] == ["index.html"]
+    with pytest.raises(ValueError):
+        tools.scan_tree(Workspace(tmp_path), "index.html")
+
+
+async def test_extract_code_skeleton_x_rays_code_artifacts_and_traces(tmp_path):
+    write_tree(tmp_path, {
+        "target/app.py": PROBE["py"],
+        "target/logs/session.har": TRACES[1],
+        "target/lib/libtodo.so": elf64(),
+        "target/dist/app.jar": zipped({"META-INF/MANIFEST.MF": "x"}),
+        "target/main.go": "package main\n\nfunc main() {}\n",
+    })
+    ws = Workspace(tmp_path)
+    code = await tools.extract_code_skeleton(ws, "target/app.py")
+    assert code.startswith("SKELETON target/app.py: python, 38 lines") and "ROUTES: GET /api/todos/{id} -> get_todo" in code and "% less to read)" in code
+    assert "self.items.append" not in code
+    assert (await tools.extract_code_skeleton(ws, "target/logs/session.har")).startswith("TRACE: har, 3 HTTP requests")
+    assert (await tools.extract_code_skeleton(ws, "target/lib/libtodo.so")).startswith("ARTIFACT libtodo.so: elf, 512 bytes")
+    assert "Java archive (jar), 1 entries" in await tools.extract_code_skeleton(ws, "target/dist/app.jar")
+    go = await tools.extract_code_skeleton(ws, "target/main.go")
+    assert go.startswith("ARTIFACT main.go: text") and "FIRST LINES (no skeleton for .go" in go and "func main()" in go
+    for bad in ("target/missing.py", "../outside.py", "target"):
+        with pytest.raises(ValueError):
+            await tools.extract_code_skeleton(ws, bad)
+
+
+@pytest.mark.parametrize(("lang", "heading"), [("en", "## Endpoints"), ("it", "## Endpoint"), ("de", "## Endpunkte")])
+async def test_write_blueprint_saves_the_normalized_json_and_the_markdown_in_the_run_language(tmp_path, lang, heading):
+    ws = Workspace(tmp_path)
+    r = await tools.write_blueprint(ws, json.dumps(BLUEPRINT_OK), lang)
+    assert r["ok"] and r["problems"] == [] and [f["path"] for f in r["files"]] == ["blueprint.json", "blueprint.md"]
+    bp = json.loads((tmp_path / "blueprint.json").read_text(encoding="utf-8"))
+    assert "secret" not in bp and bp["endpoints"][0]["method"] == "GET" and bp["endpoints"][1]["request"] == {"title": "string"}
+    assert [c["name"] for c in bp["architecture"]["components"]] == ["API server", "Front-end"]
+    assert bp["dataModels"][0]["fields"] == [{"name": "id", "type": "number", "required": True, "notes": ""}, {"name": "title", "type": "string", "required": False, "notes": ""}, {"name": "done", "type": "any", "required": False, "notes": ""}]
+    assert bp["businessRules"] == ["A title is required and at most 120 characters.", "A new to-do is open."]
+    md = (tmp_path / "blueprint.md").read_text(encoding="utf-8")
+    assert md.startswith("# Blueprint - todo-board") and heading in md and "| GET | `/api/todos` | list |" in md
+    assert tools.read_blueprint(ws) == bp and tools.blueprint_problems(ws) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"summary": ""}, '"summary" is missing'),
+        ({"architecture": {}}, '"architecture.components" is missing'),
+        ({"parityCriteria": ["only one"]}, '"parityCriteria" needs at least 2'),
+        ({"endpoints": [], "dataModels": [], "businessRules": []}, "at least one of"),
+        ({"endpoints": [{"method": "FETCH", "path": "api/todos"}]}, "endpoint FETCH api/todos"),
+        ({"dataModels": [{"fields": []}]}, "every data model needs a name"),
+        ({"edgeCases": ["app.get('/x', (req, res) => {\n  const t = db.find();\n  if (!t) return res.status(404).end();\n  res.json(t);\n});"]}, "source code copied from the target"),
+    ],
+)
+async def test_write_blueprint_refuses_what_is_not_a_clean_room_blueprint(tmp_path, change, problem):
+    r = await tools.write_blueprint(Workspace(tmp_path), {**BLUEPRINT_OK, **change})
+    assert not r["ok"] and any(problem in p for p in r["problems"]) and not (tmp_path / "blueprint.json").exists()
+
+
+async def test_write_blueprint_refuses_what_is_no_object(tmp_path):
+    for raw, problem in (("{not json", "data is not JSON"), ([1, 2], "data must be an object")):
+        r = await tools.write_blueprint(Workspace(tmp_path), raw)
+        assert not r["ok"] and r["problems"][0].startswith(problem)
+
+
+def test_copy_target_leaves_secrets_links_hidden_folders_and_builds_out(tmp_path, monkeypatch):
+    src = tmp_path / "app"
+    write_tree(src, {
+        "server.js": "x", "public/index.html": "<p>", ".gitignore": "node_modules\n", ".env": "OPENAI_API_KEY=sk-x", ".env.local": "x",
+        "deploy/id_rsa": "key", "certs/site.pem": "pem", "config/credentials.json": "{}", ".git/config": "x", ".ssh/known_hosts": "x",
+        "node_modules/a/index.js": "x", "__pycache__/m.pyc": b"\x00", ".npmrc": "token",
+    })
+    info = tools.copy_target(src, tmp_path / "run" / "target")
+    copied = sorted(str(p.relative_to(tmp_path / "run" / "target")).replace("\\", "/") for p in (tmp_path / "run" / "target").rglob("*") if p.is_file())
+    assert copied == [".gitignore", "public/index.html", "server.js"]
+    assert info["name"] == "app" and info["files"] == 3 and info["skipped"] == 10 and not info["truncated"]
+    monkeypatch.setattr(tools, "TARGET_MAX_FILES", 2)
+    capped = tools.copy_target(src, tmp_path / "capped")
+    assert capped["files"] == 2 and capped["truncated"]
+
+
+async def test_the_run_writes_the_blueprint_only_through_write_blueprint_and_checks_it(ctx):  # noqa: F811
+    from backend.plan import new_task
+    from backend.run import Run
+
+    run = Run(goal="Reverse engineer the todo app", ctx=ctx, options={"language": "en"})
+    await run.ws.ensure()
+    task = new_task({"id": "w2.1", "wsId": "w2", "team": "reverse", "title": "Blueprint", "description": "d", "acceptance": [], "outputs": ["blueprint.json", "blueprint.md"], "dependsOn": []})
+    agent = next(a for a in ctx.team.list() if a["team"] == "reverse" and a["kind"] == "worker")
+    act = lambda tool, **args: {"thought": tool, "tool": tool, "args": args}  # noqa: E731
+    refused = await run.exec_tool(task, agent, act("write_file", path="blueprint.json", content="{}"))
+    assert refused.startswith("ERROR: blueprint.json and blueprint.md are written with write_blueprint")
+    bad = await run.exec_tool(task, agent, act("write_blueprint", data={"summary": "x"}))
+    assert bad.startswith("ERROR: blueprint.json not saved") and '"architecture.components" is missing' in bad
+    ok = await run.exec_tool(task, agent, act("write_blueprint", **BLUEPRINT_OK))  # the fields beside the tool, without "data"
+    assert ok.startswith("Saved blueprint.json and blueprint.md: 2 components, 1 data models, 2 endpoints")
+    assert [p["path"] for t, p in ctx.events if t == "file"] == ["blueprint.json", "blueprint.md"]
+    assert await run.machine_check(task) == []
+    (run.ws.root / "blueprint.json").write_text('{"summary": "broken"}', encoding="utf-8")
+    assert any(p.startswith("blueprint.json: ") for p in await run.machine_check(task))
+
+
+# ---------- T08: the reverse team ----------
+
+
+def test_the_reverse_team_in_the_config_and_out_of_the_build_plans():
+    from backend.plan import normalize_plan
+    from backend.prompts import TOOL_DOCS, tools_for, work_teams
+
+    cfg = json.loads((REPO / "config" / "default.json").read_text(encoding="utf-8"))
+    team = cfg["teams"]["reverse"]
+    assert team["lead"] == {"id": "kira", "name": "Kira"} and team["workers"] == [{"id": "zero", "name": "Zero"}] and team["combo"] == "code" and team["reverse"] is True
+    assert team["tools"] == ["scan_target_tree", "extract_code_skeleton", "write_blueprint"] and all(t in TOOL_DOCS for t in team["tools"])
+    assert {"scan_target_tree", "extract_code_skeleton", "write_blueprint", "read_file", "finish"} <= set(tools_for({**cfg, "limits": {**cfg["limits"], "allowShell": False}}, "reverse"))
+    assert "reverse" not in work_teams(cfg)  # the CEO never plans a build with it
+    plan = normalize_plan({"workstreams": [{"team": "reverse", "title": "t"}]}, cfg)
+    assert plan["workstreams"][0]["team"] == "dev"
+    assert normalize_plan({"workstreams": [{"team": "anything", "title": "t"}]}, cfg, teams=["reverse"])["workstreams"][0]["team"] == "reverse"
+
+
+def test_the_reverse_team_speaks_every_language():
+    from backend.i18n import TEAM_LABELS, team_label
+
+    cfg = json.loads((REPO / "config" / "default.json").read_text(encoding="utf-8"))
+    assert {lang: team_label(cfg, "reverse", lang) for lang in ("en", "it", "es", "fr", "de")} == {"en": "Reverse Engineering", "it": "Reverse Engineering", "es": "Ingeniería inversa", "fr": "Rétro-ingénierie", "de": "Reverse Engineering"}
+    assert all("reverse" in TEAM_LABELS[lang] for lang in ("en", "es", "fr", "de"))
+    ui = (REPO / "public" / "js" / "i18n.js").read_text(encoding="utf-8")
+    assert ui.count("'team.reverse'") == 4  # Italian takes the config's label
+    for key in ("tool.scan_target_tree", "tool.extract_code_skeleton", "tool.write_blueprint", "intent.reverse_only", "intent.deconstruct_and_build", "phase.handover", "phase.parity", "kind.parity"):
+        assert ui.count(f"'{key}'") == 5, key
+
+
+def test_the_office_has_a_zone_for_every_team_and_a_prop_for_the_reverse_team():
+    import re as re_
+
+    cfg = json.loads((REPO / "config" / "default.json").read_text(encoding="utf-8"))
+    office = (REPO / "public" / "js" / "world" / "office.js").read_text(encoding="utf-8")
+    zones = re_.search(r"const ZONES = \[(.*?)\];", office, re_.S).group(1)
+    assert len(re_.findall(r"\{ x: -?[\d.]+, z: -?[\d.]+ \}", zones)) == len(cfg["teams"]) == 9
+    assert list(cfg["teams"])[-1] == "reverse" and cfg["teams"]["reverse"]["prop"] == "scanner" and "case 'scanner':" in office
+
+
+def test_the_architecture_deconstruction_skill():
+    text = (REPO / "skills" / "architecture-deconstruction" / "SKILL.md").read_text(encoding="utf-8")
+    head = text.split("---")[1]
+    assert "name: architecture-deconstruction" in head and "description: Deconstruct an existing application" in head
+    assert all(t in text for t in ("scan_target_tree", "extract_code_skeleton", "write_blueprint", "parityCriteria"))
+
+
+# ---------- T09: the intent and the clean-room handover ----------
+
+from backend import intent as intents  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("goal", "has_target", "want"),
+    [
+        ("Reverse engineer the existing app and write its blueprint", False, "reverse_only"),
+        ("Analizza il codice e dimmi come funziona", False, "reverse_only"),
+        ("Decodifica l'app esistente e ricostruiscila da zero in clean-room", False, "deconstruct_and_build"),
+        ("Reconstruye la aplicación existente", False, "deconstruct_and_build"),
+        ("Déconstruis l'application existante et reconstruis-la", False, "deconstruct_and_build"),
+        ("Baue die bestehende Anwendung neu", False, "deconstruct_and_build"),
+        ("Rewrite this in Rust", True, "deconstruct_and_build"),
+        ("Tell me what is in there", True, "reverse_only"),
+        ("Rewrite my landing page copy", False, "direct_build"),
+        ("A simple document about coffee", False, "direct_build"),
+    ],
+)
+def test_the_intent_rule_in_the_five_languages(goal, has_target, want):
+    assert intents.guess(goal, has_target) == want
+
+
+def test_the_goals_of_before_never_ask_the_ceo():
+    """The examples of the UI and the goals of the demo tests: no cue, so no call."""
+    ui = (REPO / "public" / "js" / "i18n.js").read_text(encoding="utf-8")
+    import re as re_
+
+    examples = [e for block in re_.findall(r"examples: \[(.*?)\]", ui, re_.S) for e in re_.findall(r"'([^']{10,})'", block)]
+    assert len(examples) >= 15
+    goals = [*examples, "A simple document about coffee", "Un documento di analisi per il bar", "Il sito della pizzeria", "Una landing page per il mio studio di yoga"]
+    assert [g for g in goals if intents.cue(g, False)] == []
+
+
+async def test_a_plain_goal_is_direct_build_without_a_call_and_a_cue_asks_the_ceo(ctx):  # noqa: F811
+    from backend.run import Run
+
+    plain = Run(goal="A landing page for my yoga studio", ctx=ctx, options={"language": "en"})
+    calls = []
+    real = plain.chat
+
+    async def spy(**kw):
+        calls.append(kw["messages"][0]["content"].split("\n")[0])
+        return await real(**kw)
+
+    plain.chat = spy
+    await plain.classify()
+    assert plain.data["intent"] == "direct_build" and plain.data["phase"] is None and calls == []
+    cue = Run(goal="Reverse engineer the existing app", ctx=ctx, options={"language": "en"})
+    real2 = cue.chat
+
+    async def spy2(**kw):
+        calls.append(kw["messages"][0]["content"].split("\n")[0])
+        return await real2(**kw)
+
+    cue.chat = spy2
+    await cue.ws.ensure()
+    await cue.classify()
+    assert calls == ["[[role:intent]]"] and cue.data["intent"] == "reverse_only" and cue.data["phase"] == "deconstruct"
+    assert cue.data["target"]["source"] == "demo" and (cue.ws.root / "target" / "server.js").is_file()
+
+
+async def test_the_owner_sets_the_intent_and_the_target(ctx, tmp_path):  # noqa: F811
+    from backend.run import Run
+
+    src = tmp_path / "my-app"
+    write_tree(src, {"main.py": "def main(): pass\n", ".env": "SECRET=1"})
+    run = Run(goal="Make it better", ctx=ctx, options={"language": "it", "intent": "reverse_only", "target": str(src)})
+    await run.ws.ensure()
+    await run.prepare_target()
+    await run.classify()
+    assert run.data["target"] == {"name": "my-app", "files": 1, "bytes": 17, "skipped": 1, "source": "folder"}
+    assert (run.ws.root / "target" / "main.py").is_file() and not (run.ws.root / "target" / ".env").exists()
+    assert run.data["intent"] == "reverse_only" and run.data["phase"] == "deconstruct"
+    texts = [m["text"] for m in run.data["messages"]]
+    from backend.i18n import tr
+
+    assert tr("it", "intent_forced", kind=tr("it", "intent_reverse_only")) in texts and any(t.startswith('Bersaglio "my-app" copiato in target/: 1 file') for t in texts)
+
+
+async def test_post_api_runs_takes_the_intent_and_a_target_folder(client, tmp_path):  # noqa: F811
+    from backend.i18n import http_error
+
+    async with client as c:
+        bad = await c.post("/api/runs", json={"goal": "Un sito per il bar", "intent": "clone"})
+        assert bad.status_code == 400 and bad.json()["error"] == http_error("en", "intent_unsupported", value=repr("clone"), choices="direct_build, reverse_only, deconstruct_and_build")
+        missing = await c.post("/api/runs", json={"goal": "Un sito per il bar", "target": str(tmp_path / "nope")})
+        assert missing.status_code == 400 and missing.json()["error"] == http_error("en", "target_not_found", value=repr(str(tmp_path / "nope")))
+        assert FakeRun.instances == []
+        ok = await c.post("/api/runs", json={"goal": "Analizza la mia app", "intent": "deconstruct_and_build", "target": str(tmp_path)})
+        assert ok.status_code == 201
+        assert FakeRun.instances[0].options["intent"] == "deconstruct_and_build" and FakeRun.instances[0].options["target"] == str(tmp_path.resolve())
+
+
+def clean_room_run(ctx, phase: str = "build"):  # noqa: F811
+    from backend.plan import new_task
+    from backend.run import Run
+
+    run = Run(goal="Decodifica l'app esistente e ricostruiscila", ctx=ctx, options={"language": "it", "intent": "deconstruct_and_build"})
+    run.data["phase"] = phase
+    write_tree(run.ws.root, {"target/server.js": "app.get('/x')", "reverse/map.md": "notes", "blueprint.md": "# Blueprint", "attachments/old.py": "x", "attachments/photo.jpg": b"\xff\xd8\xff", "index.html": "<p>"})
+    run.data["attachments"] = [{"id": "a1", "path": "attachments/old.py"}, {"id": "a2", "path": "attachments/photo.jpg"}]
+    rev = new_task({"id": "w1.1", "wsId": "w1", "team": "reverse", "title": "Map", "description": "d", "acceptance": [], "outputs": ["reverse/map.md"], "dependsOn": [], "status": "done", "files": ["reverse/map.md"]})
+    dev = new_task({"id": "w3.1", "wsId": "w3", "team": "dev", "title": "App", "description": "d", "acceptance": [], "outputs": ["index.html"], "dependsOn": []})
+    run.data["tasks"] = [rev, dev]
+    return run, rev, dev
+
+
+async def test_the_clean_room_hides_the_original_from_the_builders(ctx):  # noqa: F811
+    run, rev, dev = clean_room_run(ctx)
+    agent = next(a for a in ctx.team.list() if a["team"] == "dev" and a["kind"] == "worker")
+    act = lambda tool, **args: {"thought": tool, "tool": tool, "args": args}  # noqa: E731
+    for path in ("target/server.js", "target", "reverse/map.md", "attachments/old.py", "old.py"):
+        out = await run.exec_tool(dev, agent, act("read_file", path=path))
+        assert out.startswith(f"ERROR: {path} belongs to the original application"), path
+    assert await run.exec_tool(dev, agent, act("read_file", path="blueprint.md")) == "# Blueprint"
+    assert await run.exec_tool(dev, agent, act("read_file", path="index.html")) == "<p>"  # a bare name is no attachment unless one exists
+    assert (await run.exec_tool(dev, agent, act("write_file", path="target/server.js", content="x"))).startswith("ERROR: target/server.js belongs")
+    listing = await run.exec_tool(dev, agent, act("list_files", path="."))
+    assert "target/" not in listing and "reverse/map.md" not in listing and "attachments/old.py" not in listing
+    assert "attachments/photo.jpg" in listing and "blueprint.md" in listing and "index.html" in listing
+    assert (await run.project_files(dev)).split("\n") == [line for line in listing.split("\n")]
+    assert (await run.exec_tool(rev, agent, act("read_file", path="target/server.js"))) == "app.get('/x')"  # the reverse team reads it
+    early, _, dev2 = clean_room_run(ctx, phase="deconstruct")
+    assert early.hidden_for(dev2) is None  # before the handover nothing is hidden: there are no builders yet
+
+
+async def test_the_handover_needs_a_blueprint_the_qa_approved(ctx):  # noqa: F811
+    from backend.i18n import tr
+
+    run, rev, _ = clean_room_run(ctx, phase="deconstruct")
+    assert await run.handover() is False and run.data["phase"] == "failed"
+    assert run.data["messages"][-1]["text"] == tr("it", "handover_failed")
+    await tools.write_blueprint(run.ws, BLUEPRINT_OK, "it")
+    rev["outputs"] = rev["files"] = ["blueprint.json"]
+    rev["status"] = "review"  # written but not approved yet
+    run.data["phase"] = "deconstruct"
+    assert await run.handover() is False
+
+
+async def test_the_parity_qa_sends_a_failing_task_back_once_then_gives_its_verdict(ctx, monkeypatch):  # noqa: F811
+    from backend.i18n import tr
+
+    run, rev, dev = clean_room_run(ctx)
+    await tools.write_blueprint(run.ws, BLUEPRINT_OK, "it")
+    run.data["workstreams"] = [{"id": "w3", "team": "dev", "title": "App", "objective": "o", "deliverables": ["index.html"], "acceptance": [], "dependsOn": [], "status": "done", "cleanRoom": True}]
+    dev.update(status="done", files=["index.html"])
+    answers = iter([
+        {"verdict": "revise", "criteria": [{"criterion": "c1", "ok": False, "note": "400 missing"}, {"criterion": "c2", "ok": True}], "fix": [{"taskId": "w3.1", "instruction": "Answer 400 to an empty title."}, {"taskId": "nope", "instruction": "x"}]},
+        {"verdict": "pass", "criteria": [{"ok": True}, {"ok": True}], "fix": []},
+    ])
+    prompts = []
+
+    async def chat_json(opts, validate=None, tries=2):
+        prompts.append(opts["messages"][0]["content"].split("\n")[0])
+        return next(answers)
+
+    rounds = []
+
+    async def schedule():
+        rounds.append((dev["status"], dev.get("parityFix")))
+        dev["status"] = "done"
+
+    monkeypatch.setattr(run, "chat_json", chat_json)
+    monkeypatch.setattr(run, "schedule", schedule)
+    await run.parity_review()
+    assert prompts == ["[[role:parity]]", "[[role:parity]]"]
+    assert rounds == [("queued", "Answer 400 to an empty title.")]  # sent back with the QA's words, as a revision
+    assert run.data["parity"]["verdict"] == "pass" and run.data["parity"]["round"] == 2 and run.data["parity"]["met"] == 2 and run.data["phase"] == "done"
+    texts = [m["text"] for m in run.data["messages"]]
+    assert tr("it", "parity_revise", ok=1, n=2, ids="w3.1") in texts and tr("it", "parity_final", ok=2, n=2) in texts
+    assert (run.ws.root / "PARITY.md").read_text(encoding="utf-8").startswith(f"# {tr('it', 'parity_title')}")
+
+
+async def test_a_resumed_clean_room_run_goes_on_from_its_phase(ctx, monkeypatch):  # noqa: F811
+    run, _, _ = clean_room_run(ctx, phase="build")
+    seen = []
+
+    async def handover():
+        seen.append("handover")
+        return True
+
+    async def parity_review(round_=1):
+        seen.append("parity")
+
+    monkeypatch.setattr(run, "handover", handover)
+    monkeypatch.setattr(run, "parity_review", parity_review)
+    await run.clean_room()
+    assert seen == ["parity"]
+
+
+# ---------- T10: the demo simulator plays the three missions ----------
+
+from backend.router import mock  # noqa: E402
+
+
+def test_the_simulator_answers_the_new_roles():
+    from backend.tools import validate_blueprint
+
+    assert mock.intent_answer("GOAL:\nRebuild the existing app in Go\n\nTARGET:\n- (no folder given)", "en")["intent"] == "deconstruct_and_build"
+    assert mock.intent_answer("GOAL:\nTell me about it\n\nTARGET:\n- target/: a copy of \"x\", 3 files", "en")["intent"] == "reverse_only"
+    assert mock.intent_answer("GOAL:\nTell me about it\n\nTARGET:\n- (no folder given)\n\nOWNER FILES (x):\n- attachments/app.zip (zip)", "en")["intent"] == "reverse_only"
+    assert [w["team"] for w in mock.reverse_plan("x", "fr")["workstreams"]] == ["reverse", "reverse"]
+    plan = mock.rebuild_plan("GOAL: x\n\nBLUEPRINT:\n## Endpoint\n\n| GET | `/api/todos` | list | |\n", "it")
+    assert [(w["team"], w["deliverables"]) for w in plan["workstreams"]] == [("design", ["css/style.css"]), ("content", ["content/copy.md"]), ("dev", ["index.html", "js/app.js", "server.js"])]
+    assert "server.js" not in mock.rebuild_plan("GOAL: x\n\nBLUEPRINT:\n# no endpoints\n", "en")["workstreams"][2]["deliverables"]
+    briefs = mock.handover_briefs("WORKSTREAMS:\n- w3 | team design | Look | files: css/style.css | o\n- w4 | team dev | App | files: index.html, server.js | o\n", "en")["briefs"]
+    assert [b["id"] for b in briefs] == ["w3", "w4"] and "index.html, server.js" in briefs[1]["brief"]
+    parity = mock.parity_answer("PARITY CRITERIA:\n1. first\n2. second\n\nTASKS:\n- w3.1", "de")
+    assert parity["verdict"] == "pass" and [c["criterion"] for c in parity["criteria"]] == ["first", "second"]
+    js = mock.server_js([("GET", "/api/todos"), ("DELETE", "/api/todos/{id}")], "en")
+    assert "['DELETE', '/api/todos/{id}']" in js and "no original code was read" in js
+    messages = [{"role": "system", "content": ""}, {"role": "user", "content": "brief"}, {"role": "user", "content": "RESULT of extract_code_skeleton:\nSKELETON target/server.js: javascript, 5 lines\nROUTES: GET /api/todos -> listTodos; PATCH /api/todos/:id; GET /api/me (calls out)"},
+                {"role": "user", "content": "RESULT of extract_code_skeleton:\nTRACE: har, 1 HTTP requests\n  GET /api/todos ×1 -> 200 | response [{\"done\": \"boolean\", \"id\": \"number\"}]"}]
+    bp = mock.demo_blueprint(messages, "en")
+    assert validate_blueprint(bp)[1] == []
+    assert [(e["method"], e["path"]) for e in bp["endpoints"]] == [("GET", "/api/todos"), ("PATCH", "/api/todos/{id}")]
+    assert bp["dataModels"] == [{"name": "Todo", "fields": [{"name": "done", "type": "boolean", "required": True}, {"name": "id", "type": "number", "required": True}]}]
+
+
+@pytest.mark.parametrize("lang", ["en", "it", "es", "fr", "de"])
+async def test_a_demo_reverse_only_mission_delivers_the_blueprint_of_the_sample(ctx, lang):  # noqa: F811
+    from backend.run import Run
+    from backend.tools import read_blueprint
+
+    goals = {"en": "Reverse engineer the existing app and write its blueprint", "it": "Analizza il codice dell'app esistente e scrivi il suo blueprint", "es": "Analiza el código de la aplicación existente", "fr": "Analyse le code de l'application existante", "de": "Analysiere den Code der bestehenden Anwendung"}
+    run = Run(goal=goals[lang], ctx=ctx, options={"language": lang})
+    await asyncio.wait_for(run.start(), timeout=120)
+    d = run.data
+    assert d["status"] == "completed" and d["intent"] == "reverse_only" and d["phase"] == "done" and d["target"]["source"] == "demo"
+    assert {w["team"] for w in d["workstreams"]} == {"reverse"} and all(t["status"] == "done" for t in d["tasks"])
+    bp = read_blueprint(run.ws)
+    assert bp is not None and ("GET", "/api/todos") in [(e["method"], e["path"]) for e in bp["endpoints"]] and "Todo" in [m["name"] for m in bp["dataModels"]]
+    assert (run.ws.root / "REPORT.md").is_file() and not (run.ws.root / "index.html").exists()
+    assert any(t["status"] == "done" and "blueprint.json" in t["files"] for t in d["tasks"])
+
+
+async def test_a_demo_deconstruct_and_build_mission_goes_through_the_four_phases(ctx):  # noqa: F811
+    from backend.i18n import tr
+    from backend.run import Run
+
+    phases = []
+    real = ctx.bus.emit
+
+    def emit(t, p=None):
+        if t == "run" and isinstance(p, dict) and (not phases or phases[-1] != p.get("phase")):
+            phases.append(p.get("phase"))
+        return real(t, p)
+
+    ctx.bus.emit = emit
+    run = Run(goal="Decodifica l'app esistente e ricostruiscila da zero in clean-room", ctx=ctx, options={"language": "it"})
+    await asyncio.wait_for(run.start(), timeout=180)
+    d = run.data
+    assert d["status"] == "completed" and d["intent"] == "deconstruct_and_build"
+    assert [p for p in phases if p] == ["deconstruct", "handover", "build", "parity", "done"]
+    assert [(w["id"], w["team"], bool(w.get("cleanRoom"))) for w in d["workstreams"]] == [("w1", "reverse", False), ("w2", "reverse", False), ("w3", "design", True), ("w4", "content", True), ("w5", "dev", True)]
+    builders = [t for t in d["tasks"] if t["team"] != "reverse"]
+    assert builders and all("/api/todos" in t["blueprint"] and t["brief"] for t in builders)  # Pia's brief and the contract
+    assert d["blueprint"]["endpoints"] == 4 and d["parity"]["verdict"] == "pass" and d["parity"]["met"] == d["parity"]["total"] == 6
+    server = (run.ws.root / "server.js").read_text(encoding="utf-8")
+    assert "['PATCH', '/api/todos/{id}']" in server and "nessun codice originale" in server
+    kinds = {m["kind"] for m in d["messages"]}
+    assert {"intent", "handover", "parity"} <= kinds
+    texts = [m["text"] for m in d["messages"]]
+    assert tr("it", "parity_pass", ok=6, n=6) in texts and tr("it", "target_demo") in texts
+    assert (run.ws.root / "PARITY.md").is_file() and (run.ws.root / "blueprint.md").read_text(encoding="utf-8").count("## Endpoint") == 1
+
+
+async def test_a_demo_direct_build_mission_is_the_flow_of_before(ctx):  # noqa: F811
+    from backend.run import Run
+
+    run = Run(goal="A simple document about coffee", ctx=ctx, options={"language": "en"})
+    await asyncio.wait_for(run.start(), timeout=120)
+    d = run.data
+    assert d["status"] in ("completed", "completed_with_failures") and d["intent"] == "direct_build" and d["phase"] is None and d["target"] is None
+    assert "reverse" not in {w["team"] for w in d["workstreams"]} and not (run.ws.root / "target").exists()
+    assert not [m for m in d["messages"] if m["kind"] in ("intent", "handover", "parity")]

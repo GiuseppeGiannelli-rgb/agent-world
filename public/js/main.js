@@ -403,7 +403,7 @@ function renderCurrent() {
   el.innerHTML = `
     <h3>${S.view ? `${t('current.selected')} · <a href="#" data-act="back">${t('current.back')}</a>` : t('current.title')}</h3>
     <div class="goal">${esc(run.goal)}</div>
-    <div class="row" style="flex-wrap:wrap"><span class="status ${run.status}">${label('status', run.status)}${run.paused ? t('current.paused') : ''}</span>${run.complexity ? `<span class="badge cx">${run.complexity === 'complex' ? t('current.complex') : t('current.simple')}</span>` : ''}${run.mode === 'demo' ? '<span class="badge">demo</span>' : ''}</div>
+    <div class="row" style="flex-wrap:wrap"><span class="status ${run.status}">${label('status', run.status)}${run.paused ? t('current.paused') : ''}</span>${run.complexity ? `<span class="badge cx">${run.complexity === 'complex' ? t('current.complex') : t('current.simple')}</span>` : ''}${run.intent && run.intent !== 'direct_build' ? `<span class="badge intent" title="${esc(run.intentWhy ?? '')}">${label('intent', run.intent)}${run.phase ? ` · ${label('phase', run.phase)}` : ''}</span>` : ''}${run.mode === 'demo' ? '<span class="badge">demo</span>' : ''}</div>
     ${run.planSummary ? `<div class="plan-summary">${esc(run.planSummary)}</div>` : ''}
     <div class="progress"><div style="width:${(done / total) * 100}%"></div></div>
     <div class="meta"><span>${done}/${run.tasks.length} task</span><span>⏱ ${dur(run.createdAt, run.finishedAt)}</span><span>${t('current.calls', { n: run.usage?.calls ?? 0 })}</span>${spend}${run.usage?.escalations ? `<span>⬆️ ${run.usage.escalations}</span>` : ''}</div>

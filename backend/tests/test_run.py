@@ -77,7 +77,7 @@ class TestDataShape:
         run = make_run("Apri un bar sulla luna!")
         d = run.data
         # spec 09 adds "attachments" (the owner's files), spec 11 "budget"; the rest is the Node shape
-        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "attachments", "report", "error", "usage", "budget", "workspace"}
+        assert set(d) == {"id", "slug", "goal", "status", "complexity", "paused", "approvePlan", "language", "mode", "createdAt", "finishedAt", "planSummary", "workstreams", "tasks", "messages", "waiting", "attachments", "report", "error", "usage", "budget", "workspace", "intent", "intentWhy", "phase", "target"}
         assert d["attachments"] == []
         assert d["status"] == "planning" and d["paused"] is False and d["mode"] == "demo"
         assert len(d["id"]) == 8
