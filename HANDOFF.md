@@ -1,9 +1,9 @@
 # HANDOFF — Agent World
 
 *Aggiornato il 2026-10-20. In breve:*
-- ***Fase 2 della spec 11 fatta (T06–T10, l'Intent Engine)** sul branch `claude/laughing-gates-c8d3a0`, in un'unica passata chiesta dall'utente: ripreso il lavoro parcheggiato su `claude/spec11-phase2-wip` (cherry-pick di `4581acc` per T06, commit `50ddcb5`, e di `9fc9f02` per T07–T10), completato (simulatore demo, 85 test, 8 difetti corretti) e verificato una volta alla fine. Decisioni D26–D35 (spec 11 §8.4) confermate dall'utente il 20/10 ("così come sono"). Prima, sullo stesso branch: T05 (streaming vero su `/v1`), con D20–D25 confermate dall'utente il 20/10 ("così come sono"). Il branch porta T01–T10 e N19; niente unito, niente spinto.*
-- *Spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`), un ticket per sessione. **T01 fatto** (budget e circuit breaker della run, branch `claude/core-hardening-intent-engine-cdd150`) e **T02 fatto** (shell senza chiavi, chiave d'accesso dalla rete, N13 chiuso del tutto) sul branch `claude/youthful-bun-b80533`, che parte dal commit di T01 e quindi li porta tutti e due. Sullo stesso branch, un commit a parte chiude N19 (il test di avvio che scriveva nel checkout), e poi **T03 fatto** (tokenizer per il codice e ogni scrittura, consolidamento e decadimento del Brain). **T04 fatto** (checkpoint del Tasker e ritorno all'ultimo punto pulito all'escalation) sul branch `claude/t04-tasker-checkpointing-90fa3a`, che parte da `0db28e2` (la punta di `claude/youthful-bun-b80533`) e quindi porta T01–T04 e N19. Niente unito né spinto; decisioni D1–D5 (T01), D6–D11 (T02), D12–D15 (T03) e D16–D19 (T04) confermate dall'utente. **Prossimo:** sezione 3.*
-- *`main` = il merge `--no-ff` in locale (identità `agent-world-dev`) del branch `claude/spec10-parametric-hiring`, sopra `937673a` (il debito tecnico N13/N17). Le spec 01–10 sono chiuse (la 03 congelata dopo T2).*
+- ***Spec 11 CHIUSA e UNITA in `main`** (T01–T10 + N19): il 20/10 il merge `--no-ff` in locale `43ad2b7` (identità `agent-world-dev`) del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`), sopra `33c6135` (la spec 10). Tutte le decisioni D1–D35 confermate dall'utente; `npm run scan:secrets` pulito dopo il merge. **Non ancora spinto** su `origin`.*
+- *La spec 11 (`docs/specs/11-core-hardening-intent-engine.md`). Fase 1, Core Hardening: T01 budget e circuit breaker della run, T02 shell senza chiavi e chiave d'accesso dalla rete (N13 chiuso del tutto), N19 (il test di avvio che scriveva nel checkout), T03 tokenizer per il codice e consolidamento del Brain, T04 checkpoint del Tasker, T05 streaming vero su `/v1`. Fase 2, Intent Engine (in un'unica passata, su richiesta dell'utente): T06 il deconstructor con il gemello Rust, T07 i tool di Reverse Engineering e il blueprint, T08 il team `reverse` (Kira, Zero), T09 l'intento della missione con la clean room e la QA di parità, T10 il simulatore demo. Il branch parcheggiato `claude/spec11-phase2-wip` è stato cancellato il 20/10. **Prossimo:** sezione 3.*
+- *`main` = `43ad2b7`, il merge `--no-ff` in locale (identità `agent-world-dev`) della spec 11, sopra `33c6135` (la spec 10, a sua volta sopra `937673a`, il debito tecnico N13/N17). Le spec 01–11 sono chiuse (la 03 congelata dopo T2).*
 - *La spec 10: ogni sotto-task assume il suo modello (matrice di competenza, catena dedicata, subentro senza fermate), il bus a incrocio tra agenti (`[LIVE CROSS-AGENT UPDATE]`), il prompt nella forma del modello assunto (piccolo, reasoning, coder, generale), il badge del modello nella scheda Task e il catalogo profilato nella scheda Router.*
 - *`npm run scan:secrets` è pulito: da `71c46c6` la scansione della history lascia passare i merge che GitHub ha fatto per le PR (l'utente ha scelto di non riscriverli).*
 - *Lo stato dettagliato e le verifiche sono in fondo, in "Stato al 20/10/2026".*
@@ -27,8 +27,9 @@
   - 07 sicurezza;
   - 08 router, RAG e media;
   - 09 file del proprietario, dialogo, ripresa e failover;
-  - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt.
-- **Spec aperta:** 11, Core Hardening e Intent Engine a doppia modalità (`docs/specs/11-core-hardening-intent-engine.md`, ticket T01–T10). Si fa **un ticket per sessione**, e si passa al successivo solo con `npm test` verde al 100% (regole di sessione dell'utente, §1 della spec). T01 è fatto sul branch `claude/core-hardening-intent-engine-cdd150`, T02 e T03 sul branch `claude/youthful-bun-b80533`, che parte da T01, T04 sul branch `claude/t04-tasker-checkpointing-90fa3a`, che parte dalla punta del precedente, e T05 più la Fase 2 (T06–T10) sul branch `claude/laughing-gates-c8d3a0`, che parte da T04 (worktree omonimi in `.claude/worktrees/`): non ancora uniti né spinti. Unire l'ultimo porta tutto.
+  - 10 assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt;
+  - 11 core hardening (budget, fiducia zero, tokenizer, checkpoint, streaming) e intent engine (reverse engineering e ricostruzione clean-room).
+- **Spec aperta:** nessuna. La 11 (`docs/specs/11-core-hardening-intent-engine.md`, T01–T10 e N19) è unita in `main` dal 20/10 con il merge `43ad2b7`, non ancora spinto. I branch dei suoi ticket (`claude/core-hardening-intent-engine-cdd150`, `claude/youthful-bun-b80533`, `claude/t04-tasker-checkpointing-90fa3a`, `claude/laughing-gates-c8d3a0`) sono tutti contenuti in `main`; i loro worktree sono ancora in `.claude/worktrees/`.
 - **Rust:** `aw_core` non è compilato su questa macchina, perché mancano rustc, cargo e i Build Tools MSVC. Gira il fallback Python, con gli stessi test. Dei 5 test saltati di pytest, 4 sono la parità Rust (dalla Fase 2 della spec 11 anche quella del deconstructor) e 1 vuole ffmpeg, che qui non c'è.
 - **Chiavi:** quelle vere stanno in `.env`, ignorato da git (ruotate dall'utente il 14/10). Con `.env` pieno `npm start` va in LIVE e costa. I test e il runner passano tutti da `demoEnv()` (`scripts/lib/backend-launcher.js`), che svuota ogni chiave.
 - **Da fare per l'utente:**
@@ -54,7 +55,7 @@ La storia completa sta nei documenti delle spec; qui solo i punti fermi.
 - **17–18/10:** spec 09 (failover senza fermate, provider registrati a runtime, arbitro TypeSafe, file del proprietario, dialogo con un task, ripresa, modifiche dopo la fine), unita con la PR #6. Poi il debito tecnico (N13, N17, le attese del runner contate in frame), unito in locale.
 - **18/10, sera e notte:** spec 10 in due parti (`docs/specs/10-parametric-hiring-cross-rag.md`, decisioni D1–D12): assunzione dei modelli per sotto-task, bus a incrocio, forma del prompt per famiglia di modello, interfaccia. Unita in locale.
 - **19/10:** spec 11 aperta (`docs/specs/11-core-hardening-intent-engine.md`). T01, budget e circuit breaker della run (decisioni D1–D5 confermate dall'utente). T02, shell a fiducia zero e chiave d'accesso dalla rete, più la chiusura di N13 (decisioni D6–D11 confermate dall'utente). N19 chiuso subito dopo. T03, tokenizer per il codice e consolidamento del Brain (decisioni D12–D15 confermate dall'utente). T04, checkpoint del Tasker e time-travel all'escalation (decisioni D16–D19 confermate dall'utente).
-- **20/10:** T05, streaming vero su `/v1` (decisioni D20–D25 confermate dall'utente). La sessione aveva ricevuto prima una richiesta di fare T05–T10 in un colpo solo, poi quella di fare solo T05: il lavoro già scritto per la fase 2 è stato parcheggiato su un branch a parte. Poi, su richiesta dell'utente, la Fase 2 intera (T06–T10, l'Intent Engine) in un'unica passata, ripartendo da quel lavoro (decisioni D26–D35 confermate dall'utente).
+- **20/10:** T05, streaming vero su `/v1` (decisioni D20–D25 confermate dall'utente). La sessione aveva ricevuto prima una richiesta di fare T05–T10 in un colpo solo, poi quella di fare solo T05: il lavoro già scritto per la fase 2 è stato parcheggiato su un branch a parte. Poi, su richiesta dell'utente, la Fase 2 intera (T06–T10, l'Intent Engine) in un'unica passata, ripartendo da quel lavoro (decisioni D26–D35 confermate dall'utente). Infine la spec 11 chiusa e unita in `main` in locale (`43ad2b7`), e il branch `claude/spec11-phase2-wip` cancellato.
 
 Lezioni del porting ancora valide:
 - `load_env` riempie da `.env` solo le chiavi **assenti**: per questo `demoEnv()` le mette a `""` invece di cancellarle. Due run di QA, prima del fix, avevano consumato API vere.
@@ -63,10 +64,10 @@ Lezioni del porting ancora valide:
 
 ## 3. Prossimo passo
 
-0. **T05 approvato** con D20–D25 (spec 11 §7.3, confermate dall'utente il 20/10, "così come sono").
-1. **Fase 2 (T06–T10) approvata** con D26–D35 (spec 11 §8.4, confermate dall'utente il 20/10, "così come sono"). Tutti i ticket della spec 11 sono fatti e approvati: resta da unire in locale il branch `claude/laughing-gates-c8d3a0`, che porta T01–T10 e N19, quando l'utente lo chiede (passo 3).
-2. **Il branch `claude/spec11-phase2-wip`** (non unito, non spinto) è superato: il suo lavoro è nel branch qui sopra (`50ddcb5` e il commit della Fase 2). Si cancella quando l'utente lo dice.
-3. **I branch si uniscono in locale** con `git merge --no-ff` e l'identità `agent-world-dev`, poi `git push origin main` (Git Credential Manager chiede l'account: sezione 1).
+0. **Spec 11 chiusa e unita** in `main` il 20/10 (`43ad2b7`): T01–T10 e N19, decisioni D1–D35 confermate dall'utente.
+1. **`git push origin main`**, quando l'utente lo chiede: Git Credential Manager chiede l'account (sezione 1); il push si lancia in background.
+2. **I branch e i worktree della spec 11** (sezione 1, "Spec aperta") sono tutti in `main`: si tolgono quando l'utente lo dice.
+3. **I merge successivi** si fanno allo stesso modo: in locale, `git -C <checkout principale> merge --no-ff <branch>` con l'identità `agent-world-dev`, mai con il pulsante di GitHub.
 4. **Le verifiche con chiavi vere** (in fondo, "Da verificare"), compresa una run LIVE della spec 10 con modelli di famiglie diverse.
 5. **Il prossimo ciclo SDD** dal backlog (sezione 4), quando l'utente lo sceglie.
 6. **Ogni sonda nuova** usa `scripts/browser/headless.js` (`launch`, `close`), mai una copia dell'avvio. Dopo un giro interrotto: `npm run sweep` (`--dry-run` per vedere prima).
@@ -259,12 +260,10 @@ npm run screenshots                          # gli screenshot del README
 
 ## Stato al 20/10/2026
 
-- **Branch `claude/core-hardening-intent-engine-cdd150`** (worktree in `.claude/worktrees/core-hardening-intent-engine-cdd150`), partito da `main` = `33c6135`: un commit per T01 (`f66d1d7`), con codice, test e documenti, più `349f903` (i documenti: D1–D5 confermate dall'utente).
-- **Branch `claude/youthful-bun-b80533`** (worktree omonimo), portato in avanti senza merge su `349f903`: sopra c'è un commit per T02. Unire questo branch porta T01 e T02 insieme. Niente unito, niente spinto: si unisce in locale come la spec 10 (sezione 3), quando l'utente approva.
-- **Branch `claude/t04-tasker-checkpointing-90fa3a`** (worktree omonimo), portato in avanti senza merge su `0db28e2` (la punta di `claude/youthful-bun-b80533`): sopra c'è un commit per T04. Unire questo branch porta T01, T02, N19, T03 e T04.
-- **Branch `claude/laughing-gates-c8d3a0`** (worktree omonimo), portato in avanti senza merge su `848dcde` (la punta di `claude/t04-tasker-checkpointing-90fa3a`): sopra ci sono il commit di T05, quello della conferma di D20–D25 (`5a8cd96`), T06 (`50ddcb5`) e il commit della Fase 2 (T07–T10). Unire questo branch porta T01–T10 e N19.
-- **Branch `claude/spec11-phase2-wip`** (nessun worktree), da `1b40c97` (la prima versione del commit di T05): la bozza di T06 e un WIP non verificato di T07–T10. Il suo lavoro è stato ripreso, completato e verificato su `claude/laughing-gates-c8d3a0`: non va unito, e si può cancellare quando l'utente lo dice.
-- `main` resta il merge della spec 10 (`33c6135`), già su `origin`.
+- **`main` = `43ad2b7`** (20/10): il merge `--no-ff` in locale, con l'identità `agent-world-dev` per autore e committer, del branch `claude/laughing-gates-c8d3a0` (punta `d9d23d9`) sopra `33c6135` (la spec 10). L'albero del merge è identico a `d9d23d9`, quello verificato (`npm test` verde, runner 275/275). **Non ancora spinto** su `origin`, che resta a `33c6135`.
+- **I branch dei ticket**, tutti contenuti in `main`, con i loro worktree omonimi in `.claude/worktrees/`: `claude/core-hardening-intent-engine-cdd150` (T01: `f66d1d7`, `349f903`), `claude/youthful-bun-b80533` (T02, N19 `a918f4d`, T03 `1c64ba7`), `claude/t04-tasker-checkpointing-90fa3a` (T04 `1a028ce`, `848dcde`), `claude/laughing-gates-c8d3a0` (T05 `6b99d20`, `5a8cd96`, T06 `50ddcb5`, T07–T10 `d6162f9`, `d9d23d9`).
+- **`claude/spec11-phase2-wip` cancellato** il 20/10, su richiesta dell'utente: era `9fc9f02` (sopra `4581acc` e `1b40c97`), lavoro ripreso nel branch unito. Finché git non ripulisce i commit irraggiungibili si ricrea con `git branch claude/spec11-phase2-wip 9fc9f02`.
+- **`npm run scan:secrets` pulito** prima e dopo il merge.
 
 ### Completato: spec 11, Fase 2 — T06–T10, l'Intent Engine (dettagli: spec 11 §8)
 - **Come:** su richiesta dell'utente in un'unica passata, non un ticket per sessione. Il punto di partenza è il lavoro parcheggiato su `claude/spec11-phase2-wip`: `4581acc` (T06, completo) è diventato `50ddcb5`; `9fc9f02` (T07–T09, mai verificato) è nel commit della Fase 2, con il simulatore, i test e le correzioni.
@@ -393,7 +392,7 @@ npm run screenshots                          # gli screenshot del README
 - QA visivo a 1920×1080 dagli screenshot della fase `budget` (`--shots`): la richiesta nel pannello di sinistra con "Go on (one more block)" e "Stop the run", la run "running · paused" con "250/250 paid calls" e "≈ $1.23 of $5.00"; le Impostazioni con "Run budget".
 
 ### Ticket aperti
-- Spec 11: nessuno; tutte le decisioni (D1–D35) confermate dall'utente.
+- Spec 11: chiusa e unita in `main` (`43ad2b7`).
 - N22 (bersagli da un URL git o da un archivio), N21 (il roster a 1920 con 18 agenti), N20 (le note `hire` con ⚠️), N18 (le anteprime dalla rete), N8, N10 e il backlog della spec 03 (sezione 4).
 
 ### Da verificare su Windows (o con chiavi vere)
@@ -411,9 +410,8 @@ npm run screenshots                          # gli screenshot del README
 - Il trascinamento di un file dal Desktop nella UI vera.
 
 ### Prossimi passi
-1. **T01, T02 e T03 approvati** con D1–D15 (19/10): restano da unire in locale, con N19, quando l'utente lo chiede. Confermata anche la decisione di N19 (la guardia di `pytest` vede anche le cartelle vuote).
-2. **T04 approvato** con D16–D19 (19/10, spec 11 §6.3, "così come sono"): resta da unire in locale con il resto (unire `claude/t04-tasker-checkpointing-90fa3a` porta T01–T04 e N19).
-3. **T05 approvato** con D20–D25 (20/10, spec 11 §7.3, "così come sono"): resta da unire in locale con il resto.
-4. **Fase 2 approvata** con D26–D35 (20/10, spec 11 §8.4, "così come sono"): resta da unire in locale con il resto (unire `claude/laughing-gates-c8d3a0` porta T01–T10 e N19).
-5. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
-6. Le verifiche qui sopra.
+1. **Spec 11 chiusa e unita** in `main` (`43ad2b7`, 20/10): T01–T10 e N19, decisioni D1–D35 confermate dall'utente.
+2. **`git push origin main`**, quando l'utente lo chiede (sezione 1).
+3. Svuotare il Cestino, con dentro il backup del 14/10 (lo fa l'utente).
+4. Le verifiche qui sopra.
+5. Il prossimo ciclo dal backlog (N18–N22, la spec 03; sezione 4), quando l'utente lo sceglie.
