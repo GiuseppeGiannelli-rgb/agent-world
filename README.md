@@ -41,7 +41,7 @@
 
 ## Screenshot
 
-Sono catture vere dell'app in modalità demo, a 1920×1080, durante una missione. Si rigenerano con `npm run screenshots` (vedi [`docs/assets/README.md`](docs/assets/README.md)).
+Sono catture vere dell'app in modalità demo, in italiano, a 1920×1080, durante due missioni: un sito da costruire e, dalla spec 11, un'applicazione esistente da decodificare e ricostruire in clean-room. Si rigenerano con `npm run screenshots` (vedi [`docs/assets/README.md`](docs/assets/README.md)).
 
 | | |
 |---|---|
@@ -53,6 +53,12 @@ Sono catture vere dell'app in modalità demo, a 1920×1080, durante una missione
 | *Lo Skill Hub: ricerca tra tutte le skill indicizzate* | *Il Brain: lezioni del QA e riassunti delle missioni* |
 | ![Router e combo](docs/assets/router.png) | ![Report finale](docs/assets/final-report.png) |
 | *Il router: provider, combo, chiamate e cooldown* | *Il report finale della CEO e i file consegnati* |
+| ![La stanza del team Reverse Engineering](docs/assets/reverse-team.png) | ![Ricostruzione clean-room in corso](docs/assets/clean-room-build.png) |
+| *Kira e Zero decodificano l'app d'esempio, accanto allo scanner (spec 11)* | *La ricostruzione clean-room: il badge dice intento e fase* |
+| ![Messaggi di una missione clean-room](docs/assets/clean-room-messages.png) | ![Il blueprint](docs/assets/blueprint.png) |
+| *Intento, passaggio di consegne e QA di parità nei messaggi* | *Il blueprint: architettura, endpoint, regole, criteri di parità* |
+| ![La QA di parità](docs/assets/parity-qa.png) | |
+| *`PARITY.md`: ogni criterio del blueprint, verificato* | |
 
 ---
 
@@ -93,49 +99,35 @@ Il browser non sa niente del cambio di motore: stesse route, stesso JSON, stessi
 
 ```mermaid
 flowchart LR
-    subgraph Browser["Browser · front-end senza build"]
-        UI["UI e pannelli<br/>public/js/main.js"]
-        W3D["Ufficio 3D · three.js<br/>public/js/world/"]
-        ES["EventSource"]
-    end
-
+    UI["Browser<br/>pannelli · ufficio 3D three.js<br/>EventSource"]
+    CLI["Client compatibili OpenAI<br/>SDK · script"]
     subgraph Py["Backend · FastAPI + uvicorn (1 processo, asyncio)"]
-        API["Route REST<br/>/api/* · /v1/* · statici"]
+        GUARD["Guard<br/>Host · CSRF · chiave dalla LAN"]
+        API["Route REST<br/>/api/* · statici"]
         SSE["/api/events<br/>StreamingResponse"]
+        GW["Gateway /v1<br/>chat/completions, anche in stream"]
         BUS["Bus<br/>seq + code per client"]
-        ENG["Engine<br/>Run · Tasker · Team · Tools"]
-        RT["Router OmniRoute<br/>combo · fallback · cooldown"]
-        MEM["Brain + Skill Hub"]
-        SRCH["search.bm25()"]
-        PYB["Bm25 in Python puro"]
+        ENG["Engine<br/>Run · Tasker · Team · Tools<br/>intento · budget · checkpoint"]
+        RT["Router OmniRoute<br/>combo · fallback · cooldown · stream"]
+        MEM["Brain + Skill Hub<br/>BM25 · vettori · RRF · decadimento"]
+        DEC["Deconstructor<br/>scheletri · artefatti · tracce"]
+        PY["Python puro<br/>BM25 · tokenizer · vettori · deconstructor"]
     end
-
-    subgraph Rs["Rust · opzionale"]
-        AW["aw_core<br/>PyO3 · BM25 · n-gram · coseno"]
-    end
-
-    subgraph Disk["File locali"]
-        DATA[("data/runs · brain.json · calls")]
-        WS[("data/workspace/ · un run per cartella")]
-        CFG[("config/*.json · .env")]
-    end
-
+    AW["Rust · aw_core (opzionale)<br/>stesse funzioni, senza GIL"]
     LLM["Provider LLM e media<br/>Anthropic · OpenAI · Gemini · Groq · …"]
+    FILES[("File locali<br/>data/ · config/ · .env<br/>una cartella per run, con target/ e blueprint")]
 
-    UI -->|fetch JSON| API
-    ES -->|text/event-stream| SSE
-    SSE --> BUS
-    API --> ENG
-    ENG -->|emit| BUS
+    UI <-->|fetch JSON · eventi SSE| GUARD
+    CLI <-->|Bearer · chunk SSE| GUARD
+    GUARD --> API --> ENG
+    GUARD --> SSE
+    GUARD --> GW --> RT
+    ENG -->|emit| BUS --> SSE
     ENG --> RT --> LLM
-    ENG --> MEM --> SRCH
-    SRCH -.->|se compilato e conforme| AW
-    SRCH -->|altrimenti| PYB
-    ENG --> WS
-    API --> DATA
-    API --> CFG
-    BUS --> ES
-    ES --> W3D
+    ENG --> MEM --> PY
+    ENG --> DEC --> PY
+    PY -.->|se compilato e uguale su ogni probe| AW
+    ENG --> FILES
 ```
 
 **I principi:**
@@ -158,21 +150,28 @@ sequenceDiagram
     participant Q as QA
     participant E as Bus → SSE
 
-    U->>B: scrive la missione
+    U->>B: scrive la missione (e, se vuole, intento e bersaglio)
     B->>F: POST /api/runs
     F-->>B: 201 + id del run
-    F->>C: pianifica (Brain: note utili)
-    C->>E: plan · workstream
+    F->>F: copia il bersaglio in target/ (se c'è)
+    F->>C: che missione è? (solo con un motivo, altrimenti direct_build)
+    C->>E: plan · workstream (Brain, note utili. In reverse, solo il team Reverse Engineering)
     E-->>B: la CEO va alla lavagna
     L->>L: scompone in sotto-task, Skill Hub sceglie le skill
     L->>E: subtasks · agent.spawn
     loop finché il QA non approva
-        W->>W: pensa → tool → risultato … → finish
+        W->>W: pensa → tool → risultato … → finish (snapshot a ogni passo valido)
         W->>E: agent · file · message
         W->>Q: consegna
         Q-->>W: revise con feedback (dopo 2: escalation a "frontier", dall'ultimo passo pulito)
     end
+    Note over F,W: al limite del budget la run va in pausa e chiede se proseguire
     Q->>E: task done (lezione nel Brain)
+    opt deconstruct_and_build
+        C->>E: handover, la ricostruzione pianificata dal solo blueprint
+        W->>Q: ricostruzione clean-room, senza vedere l'originale
+        Q->>E: PARITY.md (un criterio mancato rimanda il task indietro una volta)
+    end
     C->>E: report finale · run.done
     E-->>B: l'ufficio 3D anima ogni passaggio
 ```
@@ -209,13 +208,15 @@ Il crate [`crates/aw_core`](crates/aw_core/) è un modulo nativo Python scritto 
 
 ```mermaid
 flowchart TD
-    C["Brain / Skill Hub"] --> F["search.bm25(k1, b)"]
+    C["Brain / Skill Hub"] --> F["BM25 · tokenizer · vettori"]
+    X["Team Reverse Engineering"] --> D["deconstructor<br/>scheletri · artefatti · tracce"]
     F --> I{"import aw_core<br/>riuscito?"}
-    I -->|no| P["Bm25 in Python puro"]
-    I -->|sì| PR{"probe di parità<br/>id, ordine, punteggi"}
-    PR -->|fallisce| P
-    PR -->|passa| R["aw_core.Bm25 (Rust)"]
-    R --> G["tokenizzazione e scoring<br/>senza GIL (allow_threads)"]
+    D --> I
+    I -->|no| P["Python puro"]
+    I -->|sì| PR{"probe di parità all'avvio<br/>una per funzione"}
+    PR -->|non coincide| P
+    PR -->|coincide| R["aw_core (Rust)"]
+    R --> G["calcolo senza GIL<br/>(allow_threads)"]
 ```
 
 - **Cosa contiene:** `Bm25` (`add`, `search`), `tokenize`, e dalla spec 05 `ngram_vector` (i vettori locali) e `cosine_top_k` (il coseno su tutti i chunk). Dalla spec 11 il tokenizer tiene i token del codice e ogni scrittura (serve il crate `unicode-general-category`), e la probe d'avvio controlla anche lui: un `aw_core` compilato prima della spec 11 viene ignorato. Dalla spec 11 (T06) c'è anche il gemello del deconstructor (`deconstruct.rs`: `extract_skeleton_json`, `inspect_artifact_json`, `summarize_trace_json`, che restituiscono JSON): il backend lo usa solo se dà esattamente quello che dà `deconstructor.py` su ogni probe. È scritto ma non ancora compilato.
@@ -258,6 +259,8 @@ flowchart TD
     WK <-->|recall · remember| BR
     WK -->|ask_lead| LEADS
     WK -->|ask_user| U
+    WK -.->|write_blueprint del team Reverse Engineering| BP[("blueprint")]
+    BP -.->|handover clean-room| PL
 ```
 
 | Ruolo | Chi | Cosa fa |
@@ -287,6 +290,16 @@ Tutti hanno anche `list_files`, `read_file`, `write_file`, `search_skills`, `rea
 **Revisioni ed escalation.** Dopo 2 revisioni il worker passa alla combo `frontier` (`escalateAfter`). Oltre `maxRevisions` (3) decide il lead.
 
 **Checkpoint e time-travel** (spec 11, T04). Il worker prende uno snapshot leggero del suo sotto-task dopo il brief e dopo ogni passo valido (un tool che ha funzionato, un finish accettato); il primo errore (una risposta non JSON, un tool fallito, un finish rifiutato, una bocciatura) sporca il contesto. Quando passa a `frontier` non si porta dietro i tentativi bocciati: la conversazione torna all'ultimo snapshot pulito, con sopra le tue parole e i tuoi file arrivati dopo e le tue risposte alle sue domande, e una sola revisione che riassume ogni bocciatura e nomina i file lasciati nella cartella (che non tornano indietro). La scheda del task lo dice con ⏪ subito dopo ⬆️. Misurato sulla demo: la prima chiamata del modello più forte passa da 18 messaggi con 2 revisioni a 10 con una.
+
+```mermaid
+flowchart LR
+    B["brief"] --> S0(("snapshot"))
+    S0 --> P1["passo valido"] --> S1(("snapshot"))
+    S1 --> E1["errore o bocciatura<br/>il contesto si sporca"]
+    E1 --> E2["seconda bocciatura"]
+    E2 -->|escalation a frontier| RW["torna all'ultimo snapshot pulito<br/>+ parole, file e risposte del proprietario<br/>+ una revisione con tutte le bocciature"]
+    S1 -.->|punto pulito| RW
+```
 
 ### Le utility
 
@@ -368,7 +381,7 @@ flowchart LR
     VEC --> COS
     Q --> BM["BM25"]
     COS --> RRF["RRF: Σ w / (60 + rank)"]
-    BM --> RRF --> K["top-k"]
+    BM --> RRF --> DCY["× decadimento nel tempo<br/>(note degli agenti del Brain)"] --> K["top-k"]
 ```
 
 **Embedding.** `rag.embeddings` in `config/default.json` è una lista ordinata, come una combo. Si usa il primo provider pronto, attraverso il suo endpoint `/embeddings` compatibile OpenAI:
@@ -516,6 +529,26 @@ Dalla spec 11 (Fase 2, [§8](docs/specs/11-core-hardening-intent-engine.md)) la 
 | `direct_build` | costruire qualcosa di nuovo: il flusso di sempre, senza nessuna chiamata in più |
 | `reverse_only` | decodificare un'applicazione esistente: il team Reverse Engineering consegna `blueprint.json` e `blueprint.md` |
 | `deconstruct_and_build` | decodificarla e poi ricostruirla da zero, in clean-room, dal solo blueprint |
+
+```mermaid
+flowchart TB
+    G["missione"] --> CL{"CEO · intento"}
+    CL -->|direct_build| B0["il flusso di sempre"]
+    CL -->|reverse_only o deconstruct_and_build| T[("target/")]
+    subgraph A["A · Deconstruct · Kira, Zero"]
+        T --> S["scan_target_tree"] --> K["extract_code_skeleton<br/>codice · build · tracce"] --> WB["write_blueprint"]
+    end
+    WB --> QA1{"review del QA"}
+    QA1 -->|reverse_only| OUT["blueprint.json + blueprint.md"]
+    QA1 -->|deconstruct_and_build| HB["B · Handover<br/>la CEO pianifica, Pia scrive i brief"]
+    subgraph CR["Clean room · niente target/, niente codice originale"]
+        CB["C · Build<br/>Sviluppo · Design · Contenuti · AI Generativa"] --> PQ["D · Parity QA<br/>PARITY.md"]
+        PQ -->|criterio mancato, una volta| CB
+    end
+    HB --> CB
+```
+
+![Il team Reverse Engineering al lavoro sull'app d'esempio](docs/assets/reverse-team.png)
 
 - **Quando la CEO decide.** Solo se c'è un motivo: parole di reverse engineering o di ricostruzione nell'obiettivo (nelle 5 lingue), un bersaglio, del codice tra i tuoi file. Altrimenti la missione è `direct_build` e costa come prima. Puoi fissare l'intento tu: `POST /api/runs {goal, intent, target}`.
 - **Il bersaglio.** `target` è una cartella della macchina del server. Prima che la CEO guardi la missione viene copiata in `target/` della run, senza link, cartelle nascoste, file con il nome di un segreto (`.env`, `id_rsa`, `*.pem`…), dipendenze e build; al più 3000 file e 50 MB. Vale come bersaglio anche il codice tra i tuoi file. Una missione demo senza bersaglio usa il campione *todo-board* (`backend/backend/demo_target/`).
@@ -707,6 +740,16 @@ I limiti delle spec 09 e 11 stanno in `limits` di `config/default.json`; il temp
 
 **Il budget della run** (spec 11, T01). Una run conta le chiamate a cui ha risposto un provider vero e ne stima il costo: `router.pricing.models` dà i dollari per milione di token `[input, output]` di un modello (la chiave esatta, poi il primo pattern glob che corrisponde), altrimenti vale il prezzo del suo livello di costo (`router.pricing.tiers`: locale e gratuito a 0). Le risposte del simulatore, in demo o d'emergenza, non costano e non contano. Quando la run raggiunge `maxCallsPerRun` o `maxCostUSD` non fallisce: va in pausa, manda l'evento `waiting` con una richiesta di tipo `budget` e ogni chiamata del lavoro aspetta. "Prosegui" (o il pulsante Riprendi) aggiunge un altro blocco uguale, contato da dove la run è arrivata; "Ferma la run" la ferma, e la ripresa dal punto di blocco porta con sé un blocco nuovo. Ogni chiamata in volo tiene il suo posto, quindi i worker in parallelo non superano insieme il limite delle chiamate; il costo di una chiamata si conosce solo quando risponde. Le chiamate chieste dal proprietario ("💡 Trova tu una soluzione", una modifica, la risposta di un task) si contano ma non si fermano mai. I prezzi di serie sono listini indicativi da verificare; i livelli gratuiti di Groq, Cerebras, NVIDIA, Cloudflare e Gemini Flash valgono 0: se li paghi, aggiungili a `router.pricing.models`. Il pannello della missione mostra le chiamate pagate e il costo stimato rispetto al budget.
 
+```mermaid
+flowchart LR
+    C["chiamata al modello"] --> G{"chiamate sotto maxCallsPerRun<br/>e costo sotto maxCostUSD?"}
+    G -->|sì| P["provider"]
+    G -->|no| W["waiting · budget<br/>la run va in pausa"]
+    W -->|Prosegui| N["un altro blocco uguale"] --> P
+    W -->|Ferma la run| S["stopped, riprendibile"]
+    O["chiamate chieste dal proprietario"] -->|contate, mai fermate| P
+```
+
 Per aggiungere persone o team modifica `teams` in `config/default.json`. Ogni team ha `label`, `color`, `kind` (`work` o `service`), `combo`, `brief`, `tools`, `lead`, `workers` e `maxSubAgents`.
 
 ---
@@ -748,6 +791,17 @@ Di default il server risponde solo a questa macchina. Per aprirlo ad altri dispo
    Al posto di `...` va la chiave: una così la dà `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Senza la prima riga ogni richiesta con un altro `Host` riceve 403 "Request refused: host not allowed"; senza la chiave la pagina si apre ma l'app risponde 403 "Access from the network is off: …" (nella lingua dell'app).
 3. Riavvia e apri `http://192.168.1.20:4300` dall'altro dispositivo. La pagina chiede la chiave d'accesso: con quella giusta il browser riceve un cookie di sessione (`aw_session`: `HttpOnly`, `SameSite=Strict`, 7 giorni) e l'app si apre. Uno script usa invece `Authorization: Bearer <chiave>`, anche su `/v1`.
 
+```mermaid
+flowchart LR
+    R["richiesta a /api, /api/events o /v1"] --> L{"Host e indirizzo<br/>di loopback?"}
+    L -->|sì| OK["passa, nessun login"]
+    L -->|no| K{"AGENT_WORLD_API_KEY<br/>sul server?"}
+    K -->|no| X["403 · l'accesso dalla rete è spento"]
+    K -->|sì| A{"Bearer o cookie<br/>aw_session valido?"}
+    A -->|no| Y["401 · la pagina chiede la chiave"]
+    A -->|sì| OK2["passa"]
+```
+
 Su questa macchina (`http://127.0.0.1:4300`, `localhost`, `[::1]`) non cambia niente: la chiave non serve. Cambiare la chiave chiude tutte le sessioni aperte.
 
 > **Da sapere.** Senza la chiave, dalla rete restano aperte la pagina (è il codice dell'app) e le anteprime dei siti generati: chi conosce l'id di una run (8 cifre esadecimali) vede `/preview/<id>/` (ticket N18). Su `http` la chiave e il cookie passano in chiaro: in una rete che non controlli metti davanti un proxy `https`, che passi l'`Host` originale o `X-Forwarded-For` (un proxy sulla stessa macchina che riscrive l'`Host` in `127.0.0.1` fa sembrare locale tutta la rete). Non c'è un limite ai tentativi: per questo la chiave va lunga.
@@ -757,13 +811,14 @@ Su questa macchina (`http://127.0.0.1:4300`, `localhost`, `[::1]`) non cambia ni
 ## Test
 
 ```sh
-npm test               # tutto: mondo 3D, dizionari delle lingue, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
+npm test               # tutto: mondo 3D, dizionari delle lingue, Markdown della UI, avvio del backend, pytest, smoke, flussi, scansione dei segreti, cartelle temporanee
 npm run test:backend   # solo il backend: avvio e pytest
 npm run test:browser   # runner headless: 275 verifiche sul front-end vero (~5-6 min)
 npm run scan:secrets   # audit di tutta la history: chiavi, percorsi assoluti, dati personali
 ```
 
 - **`pytest` (1232 test, più 5 saltati: i test della parità Rust senza il modulo compilato e ffmpeg assente):** route e file statici, configurazione, store, bus ed eventi SSE, router e adapter dei provider con server finti, gateway, piano, tasker, team, tools, web, media, Brain, Skill Hub, RAG, Skiller e download, lingue (`test_i18n.py`, compresi gli errori HTTP in tutte e cinque), sicurezza (`test_security.py`: CSRF, DNS rebinding, sandbox dell'anteprima, clickjacking, SSRF), parità Python/Rust; per la spec 09 failover senza fermate, file del proprietario, dialogo con un task e domande tra sessioni, ripresa, arbitro TypeSafe, modifiche dopo la fine, provider registrati (`test_failover.py`, `test_attachments.py`, `test_owner_files.py`, `test_resume.py`, `test_arbiter.py`, `test_refine.py`, `test_providers_api.py`); per la spec 10 matrice di competenza, assunzione, subentro, forma del prompt per famiglia di modello e bus a incrocio, anche in run live su mercati finti (`test_hiring.py`, `test_crossbus.py`); per la spec 11 il budget della run: prezzi, pausa al limite, "Prosegui" e "Ferma la run", chiamate in parallelo, ripresa, missioni intere su un provider a pagamento finto (`test_budget.py`); la shell senza chiavi, chi è locale, la chiave d'accesso dalla rete con il Bearer e con il cookie di sessione, il login, i rifiuti nella lingua dell'app (`test_zero_trust.py`, `test_i18n.py`); il tokenizer per il codice e ogni scrittura, la sua probe, il consolidamento e il decadimento del Brain (`test_search.py`, `test_search_rust.py`, `test_brain.py`); gli snapshot del Tasker, il ritorno all'ultimo punto pulito all'escalation, le sessioni su disco a ogni passo valido e le scritture atomiche dello store (`test_tasker.py`, `test_store.py`, `test_checkpoint.py`); lo streaming vero di `/v1`: i chunk man mano che il provider scrive (provato su un server vero, con un provider finto che aspetta il test), OpenAI, Anthropic e simulatore, il failover prima delle prime parole, un'interruzione a metà, `<think>` spezzati tra i chunk, un client che se ne va, un modello sconosciuto (`test_gateway_stream.py`); la Fase 2: gli scheletri in ogni linguaggio (il Python anche contro il parser vero), artefatti e tracce, la probe del gemello Rust, i tool del bersaglio e del blueprint, il team Reverse Engineering, l'intento nelle 5 lingue, la clean room, il passaggio di consegne, la QA di parità e le missioni demo dei tre intenti (`test_deconstructor.py`).
+- **Markdown della UI** (`scripts/md-test.js`): il visualizzatore dei file mostra titoli, liste, codice e tabelle (quelle di `blueprint.md`), e niente di quello che scrive un agente diventa HTML vivo.
 - **Dizionari della UI** (`scripts/i18n-test.js`): ogni lingua ha le chiavi e i segnaposto dell'inglese, una voce sua, ed è tradotta davvero; `index.html` è in inglese.
 - **Smoke:** un'intera missione complessa in demo, con sub-agenti, revisioni ed escalation.
 - **Flussi:** approvazione e rifiuto del piano, chat che guida il lavoro, pausa, ripresa e stop.

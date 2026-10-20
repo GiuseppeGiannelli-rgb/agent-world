@@ -362,6 +362,9 @@ body:not(.night) .primary { background: var(--ink); }
 .md pre code { background: none; color: inherit; }
 .md ul, .md ol { padding-left: 20px; }
 .md a { color: var(--info); }
+.md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 6px 0 12px; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { font-weight: 600; background: rgba(127, 127, 127, 0.08); }
 .files { display: grid; gap: 4px; margin: 6px 0 14px; }
 .file { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 9px; background: var(--card); border: 1px solid var(--line); cursor: pointer; font-family: var(--mono); font-size: 12px; }
 .file:hover { border-color: var(--ink-3); }

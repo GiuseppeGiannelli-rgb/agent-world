@@ -1,5 +1,5 @@
 // Small, safe Markdown renderer: everything is escaped first, then a few
-// constructs (headings, lists, code, emphasis, links) are turned into HTML.
+// constructs (headings, lists, tables, code, emphasis, links) are turned into HTML.
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 function inline(text) {
@@ -9,6 +9,10 @@ function inline(text) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
+
+// a GFM table: a row of cells, then a separator row with as many cells (|---|:--:|)
+const SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
 
 export function markdown(src) {
   const lines = esc(src).split(/\r?\n/);
@@ -24,7 +28,8 @@ export function markdown(src) {
     if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i)}</li>`).join('')}</${list.tag}>`);
     list = null;
   };
-  for (const line of lines) {
+  for (let n = 0; n < lines.length; n++) {
+    const line = lines[n];
     if (code) {
       if (/^```/.test(line)) {
         out.push(`<pre><code>${code.join('\n')}</code></pre>`);
@@ -36,6 +41,18 @@ export function markdown(src) {
       flushPara();
       flushList();
       code = [];
+      continue;
+    }
+    const next = lines[n + 1];
+    if (line.includes('|') && next !== undefined && SEPARATOR.test(next) && cells(next).length === cells(line).length) {
+      flushPara();
+      flushList();
+      const head = cells(line);
+      const rows = [];
+      for (n += 2; n < lines.length && lines[n].trim() && lines[n].includes('|') && !/^```/.test(lines[n]); n++) rows.push(cells(lines[n]));
+      n--;
+      const row = (r, tag) => `<tr>${head.map((_, k) => `<${tag}>${inline(r[k] ?? '')}</${tag}>`).join('')}</tr>`;
+      out.push(`<table><thead>${row(head, 'th')}</thead><tbody>${rows.map((r) => row(r, 'td')).join('')}</tbody></table>`);
       continue;
     }
     const h = line.match(/^(#{1,4})\s+(.*)$/);
