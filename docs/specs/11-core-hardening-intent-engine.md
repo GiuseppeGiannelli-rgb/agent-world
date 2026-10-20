@@ -4,7 +4,7 @@
 - **Fase 1, Core Hardening (T01–T05):** budget e circuit breaker, shell e LAN a fiducia zero, tokenizer per il codice e consolidamento del Brain, checkpoint del Tasker, streaming vero su `/v1`.
 - **Fase 2, Intent Engine (T06–T10):** la CEO classifica la missione (`direct_build`, `reverse_only`, `deconstruct_and_build`); scheletri AST e tool di Reverse Engineering; il team `reverse`; il passaggio clean-room (Deconstruct → Handover → Build → Parity QA); il simulatore demo del flusso nuovo.
 - **Regole di sessione:** un macro-step (un ticket) per sessione; si va avanti solo con `npm test` verde al 100%; ogni funzione aggiunta in `crates/aw_core` ha il gemello Python in `backend/backend/` con parità esatta; a fine step si aggiornano README, questo documento e `HANDOFF.md`.
-- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 confermate dall'utente; Fase 2, T06–T10, fatta in un'unica passata su richiesta dell'utente (20/10/2026, §8), con le decisioni D26–D35 da confermare. Prossimo: la revisione della Fase 2 da parte dell'utente.
+- **Stato:** T01 fatto (19/10/2026, §3), con le decisioni D1–D5 confermate dall'utente; T02 fatto (19/10/2026, §4), con le decisioni D6–D11 confermate dall'utente; T03 fatto (19/10/2026, §5), con le decisioni D12–D15 confermate dall'utente; T04 fatto (19/10/2026, §6), con le decisioni D16–D19 confermate dall'utente; T05 fatto (20/10/2026, §7), con le decisioni D20–D25 confermate dall'utente; Fase 2, T06–T10, fatta in un'unica passata su richiesta dell'utente (20/10/2026, §8), con le decisioni D26–D35 confermate dall'utente. Tutti i ticket sono fatti e approvati; prossimo: l'unione in locale del branch, quando l'utente lo chiede.
 
 ## 1. Regole di sessione (dall'utente)
 
@@ -493,7 +493,7 @@ Su richiesta dell'utente la Fase 2 è stata chiusa in un'unica passata, invece d
 - **"Quando il QA approva `blueprint.json`"** è la review del task che lo scrive: un task `done` ha passato la review (D33).
 - **La ricostruzione** usa Sviluppo, Design, Contenuti e IA generativa, cioè i team che costruiscono (`BUILD_TEAMS`).
 
-### 8.4 Decisioni (da confermare)
+### 8.4 Decisioni (confermate dall'utente il 20/10/2026)
 
 - **D26 — Scanner a caratteri con regole ASCII, non `ast` né regex.** Il gemello Rust deve dare gli stessi byte: `ast` in Rust non esiste, e la `re` di Python e la crate `regex` non trattano Unicode allo stesso modo. Python e Rust hanno le stesse funzioni con gli stessi nomi, riga per riga. La probe di avvio usa `aw_core` solo se coincide su tutte le `DECONSTRUCT_PROBES` (ogni linguaggio, formato e tipo di traccia), con tolleranza zero; altrimenti lavora Python. Il prezzo: è un'euristica, e solo per Python c'è un parser di riferimento con cui confrontarla.
 - **D27 — Lo scheletro è piccolo e dice quando taglia.** Al più 20000 righe lette; 80 import, 80 export, 300 simboli, 80 route, 120 variabili di stato, 300 chiamate; firme fino a 160 caratteri. Quando taglia, lo scrive. Misurato sul codice del repository: circa il 10% di quello che darebbe `read_file` (il test vuole meno dell'11,5% su 8 file, e ognuno sotto il 16%).
